@@ -1,0 +1,27 @@
+apiVersion: cloud.aruba.it/v1alpha1
+kind: ArubaSecurityRule
+metadata:
+  name: aruba-resource-v45
+  namespace: default
+spec:
+  tenant: ARU-329997
+  tags:
+    - tag-1
+    - tag-2
+  location:
+    value: ITBG-Bergamo
+  protocol: TCP
+  port: '80-90'
+  direction: Egress
+  target:
+    kind: Ip
+    value: '0.0.0.0/0'
+  securityGroupReference:
+    name: aruba-resource-v45
+    namespace: default
+  vpcReference:
+    name: aruba-resource-v45
+    namespace: default
+  projectReference:
+    name: aruba-resource-v45
+    namespace: default

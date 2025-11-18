@@ -1,0 +1,18 @@
+apiVersion: cloud.aruba.it/v1alpha1
+kind: ArubaBlockStorage
+metadata:
+  name: aruba-resource-v45-data
+  namespace: default
+spec:
+  tenant: ARU-329997
+  tags:
+    - tag-1
+  location:
+    value: ITBG-Bergamo
+  sizeGb: 40
+  billingPeriod: Hour
+  dataCenter: ITBG-1
+  bootable: false
+  projectReference:
+    name: aruba-resource-v45
+    namespace: default

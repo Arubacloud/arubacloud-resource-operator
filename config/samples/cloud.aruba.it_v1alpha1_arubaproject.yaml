@@ -1,0 +1,12 @@
+apiVersion: cloud.aruba.it/v1alpha1
+kind: ArubaProject
+metadata:
+  name: aruba-resource-v45
+  namespace: default
+spec:
+  tenant: ARU-329997
+  description: Test project for local development
+  tags:
+    - test-ciao
+    - local
+  default: false

@@ -1,0 +1,18 @@
+apiVersion: cloud.aruba.it/v1alpha1
+kind: ArubaNetworkElasticIp
+metadata:
+  name: aruba-resource-v45
+  namespace: default
+spec:
+  tenant: ARU-329997
+  tags:
+    - sample
+    - elastic-ip
+    - test
+  location:
+    value: ITBG-Bergamo
+  billingPlan:
+    billingPeriod: Hour
+  projectReference:
+    name: aruba-resource-v45
+    namespace: default

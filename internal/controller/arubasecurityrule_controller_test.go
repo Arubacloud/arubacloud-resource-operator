@@ -27,7 +27,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	cloudarubaitv1alpha1 "gitlab.aruba.it/ingegneria/seca/operators/aruba-operator/api/v1alpha1"
+	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
 )
 
 var _ = Describe("ArubaSecurityRule Controller", func() {
@@ -40,13 +40,13 @@ var _ = Describe("ArubaSecurityRule Controller", func() {
 			Name:      resourceName,
 			Namespace: "default", // TODO(user):Modify as needed
 		}
-		arubasecurityrule := &cloudarubaitv1alpha1.ArubaSecurityRule{}
+		arubasecurityrule := &v1alpha1.ArubaSecurityRule{}
 
 		BeforeEach(func() {
 			By("creating the custom resource for the Kind ArubaSecurityRule")
 			err := k8sClient.Get(ctx, typeNamespacedName, arubasecurityrule)
 			if err != nil && errors.IsNotFound(err) {
-				resource := &cloudarubaitv1alpha1.ArubaSecurityRule{
+				resource := &v1alpha1.ArubaSecurityRule{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
 						Namespace: "default",
@@ -59,7 +59,7 @@ var _ = Describe("ArubaSecurityRule Controller", func() {
 
 		AfterEach(func() {
 			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &cloudarubaitv1alpha1.ArubaSecurityRule{}
+			resource := &v1alpha1.ArubaSecurityRule{}
 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
 			Expect(err).NotTo(HaveOccurred())
 

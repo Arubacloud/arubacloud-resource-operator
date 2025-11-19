@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"gitlab.aruba.it/ingegneria/seca/operators/aruba-operator/internal/controller"
+	"github.com/Arubacloud/arubacloud-resource-operator/internal/controller"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 

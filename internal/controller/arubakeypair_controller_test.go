@@ -27,7 +27,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	v1alpha1 "gitlab.aruba.it/ingegneria/seca/operators/aruba-operator/api/v1alpha1"
+	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
 )
 
 var _ = Describe("ArubaKeyPair Controller", func() {

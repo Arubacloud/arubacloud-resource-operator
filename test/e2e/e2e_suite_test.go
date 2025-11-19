@@ -25,7 +25,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"gitlab.aruba.it/ingegneria/seca/operators/aruba-operator/test/utils"
+	"github.com/Arubacloud/arubacloud-resource-operator/test/utils"
 )
 
 var (

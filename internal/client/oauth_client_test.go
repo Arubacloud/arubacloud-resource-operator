@@ -5,11 +5,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Arubacloud/arubacloud-resource-operator/internal/client"
+	"github.com/Arubacloud/arubacloud-resource-operator/internal/mocks"
 	"github.com/Nerzal/gocloak/v13"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	"gitlab.aruba.it/ingegneria/seca/operators/aruba-operator/internal/client"
-	"gitlab.aruba.it/ingegneria/seca/operators/aruba-operator/internal/mocks"
 )
 
 func TestOauthLogin(t *testing.T) {

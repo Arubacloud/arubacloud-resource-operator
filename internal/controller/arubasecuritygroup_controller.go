@@ -21,7 +21,7 @@ import (
 
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	"gitlab.aruba.it/ingegneria/seca/operators/aruba-operator/api/v1alpha1"
+	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
 )
 
 // ArubaSecurityGroupReconciler reconciles a ArubaSecurityGroup object

@@ -5,8 +5,8 @@ import (
 
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	"gitlab.aruba.it/ingegneria/seca/operators/aruba-operator/internal/client"
-	"gitlab.aruba.it/ingegneria/seca/operators/aruba-operator/internal/util"
+	"github.com/Arubacloud/arubacloud-resource-operator/internal/client"
+	"github.com/Arubacloud/arubacloud-resource-operator/internal/util"
 )
 
 const (

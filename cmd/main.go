@@ -28,8 +28,8 @@ import (
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 
+	"github.com/Arubacloud/arubacloud-resource-operator/internal/config"
 	"github.com/go-logr/logr"
-	"gitlab.aruba.it/ingegneria/seca/operators/aruba-operator/internal/config"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -42,9 +42,9 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	"gitlab.aruba.it/ingegneria/seca/operators/aruba-operator/api/v1alpha1"
+	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
 
-	"gitlab.aruba.it/ingegneria/seca/operators/aruba-operator/internal/controller"
+	"github.com/Arubacloud/arubacloud-resource-operator/internal/controller"
 	// +kubebuilder:scaffold:imports
 )
 

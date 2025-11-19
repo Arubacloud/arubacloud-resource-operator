@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Arubacloud/arubacloud-resource-operator/internal/client"
+	"github.com/Arubacloud/arubacloud-resource-operator/internal/mocks"
 	vault "github.com/hashicorp/vault/api"
-	"gitlab.aruba.it/ingegneria/seca/operators/aruba-operator/internal/client"
-	"gitlab.aruba.it/ingegneria/seca/operators/aruba-operator/internal/mocks"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"

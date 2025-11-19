@@ -11,8 +11,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	"gitlab.aruba.it/ingegneria/seca/operators/aruba-operator/api/v1alpha1"
-	arubaClient "gitlab.aruba.it/ingegneria/seca/operators/aruba-operator/internal/client"
+	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
+	arubaClient "github.com/Arubacloud/arubacloud-resource-operator/internal/client"
 )
 
 const (

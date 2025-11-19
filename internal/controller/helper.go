@@ -12,10 +12,10 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"gitlab.aruba.it/ingegneria/seca/operators/aruba-operator/internal/util"
+	"github.com/Arubacloud/arubacloud-resource-operator/internal/util"
 
-	"gitlab.aruba.it/ingegneria/seca/operators/aruba-operator/api/v1alpha1"
-	arubaClient "gitlab.aruba.it/ingegneria/seca/operators/aruba-operator/internal/client"
+	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
+	arubaClient "github.com/Arubacloud/arubacloud-resource-operator/internal/client"
 )
 
 // HelperReconciler provides base functionality for all Aruba controllers

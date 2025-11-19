@@ -1,15 +1,15 @@
 apiVersion: cloud.aruba.it/v1alpha1
 kind: ArubaVpc
 metadata:
-  name: aruba-resource-v45
+  name: __NAME__
   namespace: default
 spec:
-  tenant: ARU-329997
+  tenant: __TENANT__
   tags:
     - tag-4
     - tag-3
   location:
     value: ITBG-Bergamo
   projectReference:
-    name: aruba-resource-v45
+    name: __NAME__
     namespace: default

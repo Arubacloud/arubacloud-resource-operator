@@ -1,10 +1,10 @@
 apiVersion: cloud.aruba.it/v1alpha1
 kind: ArubaBlockStorage
 metadata:
-  name: aruba-resource-v45-data
+  name: __NAME__-data
   namespace: default
 spec:
-  tenant: ARU-329997
+  tenant: __TENANT__
   tags:
     - tag-1
   location:
@@ -14,5 +14,5 @@ spec:
   dataCenter: ITBG-1
   bootable: false
   projectReference:
-    name: aruba-resource-v45
+    name: __NAME__
     namespace: default

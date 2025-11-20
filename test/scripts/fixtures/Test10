@@ -6,5 +6,5 @@ cloud.aruba.it_v1alpha1_arubasubnet.yaml
 cloud.aruba.it_v1alpha1_arubablockstorage.yaml
 cloud.aruba.it_v1alpha1_arubanetworkelasticip.yaml
 cloud.aruba.it_v1alpha1_arubakeypair.yaml
-blockstorage/cloud.aruba.it_v1alpha1_arubablockstorage.yaml
-blockstorage/cloud.aruba.it_v1alpha1_arubacloudserver.yaml
+cloud.aruba.it_v1alpha1_arubablockstorage-data-volume.yaml
+cloud.aruba.it_v1alpha1_arubacloudserver-with-data-volume.yaml

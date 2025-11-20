@@ -1,9 +1,8 @@
 #!/bin/bash
-# Usage: NN=9 TIM=240 ACTION=apply ./test_runner.sh
+# Usage: NN=9 ACTION=apply ./test_runner.sh
 
 set -e
 NN=${NN:-1}
-TIM=${TIM:-240}
 ACTION=${ACTION:-apply}
 TENANT=${TENANT:-ARU-329997}
 NAME=${NAME:-aruba-resource}

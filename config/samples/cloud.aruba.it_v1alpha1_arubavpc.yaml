@@ -13,6 +13,3 @@ spec:
   projectReference:
     name: __NAME__
     namespace: default
-properties:
-  preset: false
-  default: false

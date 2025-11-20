@@ -12,7 +12,6 @@ NN=10 TENANT=ARU-329997 NAME=aruba-resource ACTION=apply ./test_runner.sh
 - `TENANT`: valore che sostituisce il placeholder `__TENANT__` nei manifest
 - `NAME`: valore che sostituisce il placeholder `__NAME__` nei manifest
 - `ACTION`: azione kubectl (`apply`, `delete`, ...)
-- `TIM`: timeout (non usato direttamente nello script, puoi gestirlo esternamente)
 
 ## Funzionamento
 

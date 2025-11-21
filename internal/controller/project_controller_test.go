@@ -54,7 +54,6 @@ var _ = Describe("Project Controller", func() {
 						Namespace: "default",
 					},
 					Spec: v1alpha1.ProjectSpec{
-
 						Description: "Test project for basic reconciliation",
 						Tags:        []string{"test", "basic"},
 						Default:     false,
@@ -137,7 +136,6 @@ var _ = Describe("Project Controller Reconcile Method", func() {
 					Namespace: typeNamespacedName.Namespace,
 				},
 				Spec: v1alpha1.ProjectSpec{
-
 					Description: "Test project for reconciliation",
 					Tags:        []string{"test", "reconciliation"},
 					Default:     false,
@@ -167,7 +165,6 @@ var _ = Describe("Project Controller Reconcile Method", func() {
 					Namespace: "default",
 				},
 				Spec: v1alpha1.ProjectSpec{
-
 					Description: "Test project for deletion",
 					Tags:        []string{"test", "deletion"},
 					Default:     false,
@@ -222,7 +219,6 @@ var _ = Describe("Project Controller Reconcile Method", func() {
 						Namespace: "default",
 					},
 					Spec: v1alpha1.ProjectSpec{
-
 						Description: "Test project for deletion",
 						Tags:        []string{"test", "deletion"},
 						Default:     false,
@@ -265,7 +261,6 @@ var _ = Describe("Project Controller Reconcile Method", func() {
 						Namespace: "default",
 					},
 					Spec: v1alpha1.ProjectSpec{
-
 						Description: "Test project for phases",
 						Tags:        []string{"test", "phases"},
 						Default:     false,
@@ -299,7 +294,6 @@ var _ = Describe("Project Controller Reconcile Method", func() {
 					Namespace: "default",
 				},
 				Spec: v1alpha1.ProjectSpec{
-
 					Description: "Test project for Next method",
 					Tags:        []string{"test", "next-method"},
 					Default:     false,

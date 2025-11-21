@@ -125,7 +125,6 @@ var _ = Describe("BlockStorage Controller Reconcile Method", func() {
 					Namespace: typeNamespacedName.Namespace,
 				},
 				Spec: v1alpha1.BlockStorageSpec{
-
 					Tags: []string{"test", "reconciliation"},
 					Location: v1alpha1.Location{
 						Value: "ITBG-Bergamo",
@@ -325,7 +324,6 @@ var _ = Describe("BlockStorage Controller Reconcile Method", func() {
 					Namespace: "default",
 				},
 				Spec: v1alpha1.BlockStorageSpec{
-
 					Tags: []string{"test", "next-method"},
 					Location: v1alpha1.Location{
 						Value: "ITBG-Bergamo",
@@ -387,7 +385,6 @@ var _ = Describe("BlockStorage Controller Reconcile Method", func() {
 					Namespace: "default",
 				},
 				Spec: v1alpha1.BlockStorageSpec{
-
 					Location: v1alpha1.Location{
 						Value: "ITBG-Bergamo",
 					},

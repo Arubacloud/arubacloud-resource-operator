@@ -91,7 +91,6 @@ func VaultClient(address string) IVaultClient {
 
 // NewAppRoleClient creates and authenticates an AppRoleClient
 func NewAppRoleClient(namespace string, rolePath string, roleID string, secretID string, KVMount string, cli IVaultClient) (*AppRoleClient, error) {
-
 	c := &AppRoleClient{
 		client:    cli,
 		namespace: namespace,
@@ -243,6 +242,7 @@ func (v *VaultClientAPI) SetToken(token string) {
 func (v *VaultClientAPI) Logical() LogicalAPI {
 	return &logicalAPI{l: v.c.Logical()}
 }
+
 func (v *VaultClientAPI) KVv2(mount string) KvAPI {
 	return &kvAPI{kv: v.c.KVv2(mount)}
 }

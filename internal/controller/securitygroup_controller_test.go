@@ -53,7 +53,6 @@ var _ = Describe("SecurityGroup Controller", func() {
 						Namespace: "default",
 					},
 					Spec: v1alpha1.SecurityGroupSpec{
-
 						Tags: []string{"test"},
 						Location: v1alpha1.Location{
 							Value: "ITBG-Bergamo",

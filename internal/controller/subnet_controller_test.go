@@ -53,7 +53,6 @@ var _ = Describe("Subnet Controller", func() {
 						Namespace: "default",
 					},
 					Spec: v1alpha1.SubnetSpec{
-
 						Tags:    []string{"test"},
 						Type:    "Advanced",
 						Default: false,

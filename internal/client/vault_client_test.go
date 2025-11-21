@@ -40,7 +40,6 @@ func TestRenew(t *testing.T) {
 	mockAuthToken.AssertExpectations(t)
 	mockAuth.AssertExpectations(t)
 	mockClient.AssertExpectations(t)
-
 }
 
 func TestLogin(t *testing.T) {
@@ -101,7 +100,6 @@ func TestLogin(t *testing.T) {
 				assert.Error(t, err)
 			} else {
 				assert.NoError(t, err)
-
 			}
 
 			if !tt.expectedErr {
@@ -131,7 +129,7 @@ func TestAutoRenew_TriggersRenewal(t *testing.T) {
 
 	// Controlled fake timer
 	mockSleeper := new(mocks.MockSleeper)
-	//ch := make(chan time.Time, 1)
+	// ch := make(chan time.Time, 1)
 
 	mockSleeper.On("After", mock.Anything).Return(func(d time.Duration) <-chan time.Time {
 		ch := make(chan time.Time, 1)
@@ -143,7 +141,7 @@ func TestAutoRenew_TriggersRenewal(t *testing.T) {
 		return ch
 	})
 
-	//sleeper := &mockSleeper{ch: make(chan time.Time, 1)}
+	// sleeper := &mockSleeper{ch: make(chan time.Time, 1)}
 
 	c, _ := client.AutoRenewHelper("test-namespace", "test-role-path", "test-role-id", "test-secret-id", "kv", mockVault, 50, mockSleeper)
 

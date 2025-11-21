@@ -54,7 +54,6 @@ var _ = Describe("ElasticIp Controller", func() {
 						Namespace: "default",
 					},
 					Spec: v1alpha1.ElasticIpSpec{
-
 						Tags: []string{"test", "basic"},
 						Location: v1alpha1.Location{
 							Value: "ITBG-Bergamo",
@@ -145,7 +144,6 @@ var _ = Describe("ElasticIp Controller Reconcile Method", func() {
 					Namespace: typeNamespacedName.Namespace,
 				},
 				Spec: v1alpha1.ElasticIpSpec{
-
 					Tags: []string{"test", "reconciliation"},
 					Location: v1alpha1.Location{
 						Value: "ITBG-Bergamo",
@@ -185,7 +183,6 @@ var _ = Describe("ElasticIp Controller Reconcile Method", func() {
 					Namespace: "default",
 				},
 				Spec: v1alpha1.ElasticIpSpec{
-
 					Tags: []string{"test", "deletion"},
 					Location: v1alpha1.Location{
 						Value: "ITBG-Bergamo",
@@ -250,7 +247,6 @@ var _ = Describe("ElasticIp Controller Reconcile Method", func() {
 						Namespace: "default",
 					},
 					Spec: v1alpha1.ElasticIpSpec{
-
 						Tags: []string{"test", "deletion"},
 						Location: v1alpha1.Location{
 							Value: "ITBG-Bergamo",
@@ -304,7 +300,6 @@ var _ = Describe("ElasticIp Controller Reconcile Method", func() {
 						Namespace: "default",
 					},
 					Spec: v1alpha1.ElasticIpSpec{
-
 						Tags: []string{"test", "phases"},
 						Location: v1alpha1.Location{
 							Value: "ITBG-Bergamo",
@@ -350,7 +345,6 @@ var _ = Describe("ElasticIp Controller Reconcile Method", func() {
 					Namespace: "default",
 				},
 				Spec: v1alpha1.ElasticIpSpec{
-
 					Tags: []string{"test", "next-method"},
 					Location: v1alpha1.Location{
 						Value: "ITBG-Bergamo",
@@ -399,7 +393,6 @@ var _ = Describe("ElasticIp Controller Reconcile Method", func() {
 					Namespace: "default",
 				},
 				Spec: v1alpha1.ElasticIpSpec{
-
 					Location: v1alpha1.Location{
 						Value: "ITBG-Bergamo",
 					},

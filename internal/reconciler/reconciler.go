@@ -490,7 +490,6 @@ func (r *Reconciler) Authenticate(tenantId string) error {
 	r.TokenManager.SetClientIdAndSecret(clientId, clientSecret)
 
 	token, err = r.TokenManager.GetAccessToken(false, tenantId)
-
 	if err != nil {
 		return err
 	}

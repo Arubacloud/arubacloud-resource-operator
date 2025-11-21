@@ -14,6 +14,8 @@ MANAGER_DIR := config/manager
 # Generated env files (must match kustomization.yaml `envs:` entries)
 CFG_ENV_DYNAMIC := $(MANAGER_DIR)/dynamic-config.env
 SEC_ENV_DYNAMIC := $(MANAGER_DIR)/dynamic-secret.env
+TOOLS_GOMOD := -modfile=./tools/go.mod
+GO_TOOL := go run $(TOOLS_GOMOD)
 
 MOCKS_DIR := internal/mocks
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
@@ -61,14 +63,18 @@ manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and Cust
 	$(CONTROLLER_GEN) rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
 
 .PHONY: generate
-generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
+generate: controller-gen mock  ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./..."
-	mockery
+
+.PHONY: mock
+mock:
+	@echo "Generating mocks..."
+	$(GO_TOOL) github.com/vektra/mockery/v2
 
 .PHONY: fmt
 fmt: ## Run go fmt against code.
-	go fmt ./...
-
+	@echo "Formatting code..."
+	$(GO_TOOL) mvdan.cc/gofumpt -w .
 .PHONY: vet
 vet: ## Run go vet against code.
 	go vet ./...
@@ -102,15 +108,8 @@ cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
-	$(GOLANGCI_LINT) run
-
-.PHONY: lint-fix
-lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
-	$(GOLANGCI_LINT) run --fix
-
-.PHONY: lint-config
-lint-config: golangci-lint ## Verify golangci-lint linter configuration
-	$(GOLANGCI_LINT) config verify
+	@echo "Linting code..."
+	$(GO_TOOL) github.com/golangci/golangci-lint/cmd/golangci-lint run --verbose -c .golangci.yml
 
 ##@ Build
 
@@ -187,7 +186,7 @@ clean-installer:
 # Clean the generated files
 clean:
 	@echo "Cleaning generated files..."
-	@rm -f $(MOCKS_DIR)/*.go
+	@rm -f $(MOCKS_DIR)/*.go mock
 
 ##@ Deployment
 

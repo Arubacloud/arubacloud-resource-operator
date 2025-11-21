@@ -1,0 +1,28 @@
+run:
+  timeout: 5m
+
+linters:
+  disable-all: true
+  enable:
+    # Bug prevention
+    - errcheck      # Unchecked errors
+    - gosimple      # Simplify code
+    - govet         # Suspicious constructs
+    - ineffassign   # Ineffectual assignments
+    - staticcheck   # Static analysis checks
+    - typecheck     # Type-checking errors
+    - unused        # Unused code
+    # Code style
+    - gofmt         # Code formatting
+    - goimports     # Import formatting
+    - misspell      # Spelling mistakes
+    # Code quality
+    - dupl          # Code duplication
+    - goconst       # Repeated strings
+    - unconvert     # Unnecessary type conversions
+    # Safe code
+    - gosec         # Security issues
+
+linters-settings:
+  dupl:
+    threshold: 300

@@ -13,7 +13,6 @@ import (
 )
 
 func TestOauthLogin(t *testing.T) {
-
 	mockOauth := new(mocks.MockIOauth)
 	mockOauthClient := new(mocks.MockIOauthClient)
 
@@ -31,7 +30,6 @@ func TestOauthLogin(t *testing.T) {
 	assert.Equal(t, "access-token", jwt)
 
 	mockOauth.AssertExpectations(t)
-
 }
 
 func TestTokenManager_GetAccessToken(t *testing.T) {

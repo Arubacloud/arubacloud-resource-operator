@@ -53,7 +53,6 @@ var _ = Describe("CloudServer Controller", func() {
 						Namespace: "default",
 					},
 					Spec: v1alpha1.CloudServerSpec{
-
 						Tags: []string{"sample-tag"},
 						Location: v1alpha1.Location{
 							Value: "ITBG-Bergamo",
@@ -97,7 +96,6 @@ var _ = Describe("CloudServer Controller", func() {
 			By("Cleanup the specific resource instance CloudServer")
 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 		})
-
 	})
 })
 
@@ -141,7 +139,6 @@ var _ = Describe("CloudServer Controller Reconcile Method", func() {
 					Namespace: typeNamespacedName.Namespace,
 				},
 				Spec: v1alpha1.CloudServerSpec{
-
 					Tags: []string{"test", "reconciliation"},
 					Location: v1alpha1.Location{
 						Value: "ITBG-Bergamo",
@@ -191,7 +188,6 @@ var _ = Describe("CloudServer Controller Reconcile Method", func() {
 					Namespace: "default",
 				},
 				Spec: v1alpha1.CloudServerSpec{
-
 					Tags: []string{"test", "deletion"},
 					Location: v1alpha1.Location{
 						Value: "ITBG-Bergamo",
@@ -265,7 +261,6 @@ var _ = Describe("CloudServer Controller Reconcile Method", func() {
 						Namespace: "default",
 					},
 					Spec: v1alpha1.CloudServerSpec{
-
 						Tags: []string{"test", "deletion"},
 						Location: v1alpha1.Location{
 							Value: "ITBG-Bergamo",
@@ -329,7 +324,6 @@ var _ = Describe("CloudServer Controller Reconcile Method", func() {
 						Namespace: "default",
 					},
 					Spec: v1alpha1.CloudServerSpec{
-
 						Tags: []string{"test", "phases"},
 						Location: v1alpha1.Location{
 							Value: "ITBG-Bergamo",
@@ -385,7 +379,6 @@ var _ = Describe("CloudServer Controller Reconcile Method", func() {
 					Namespace: "default",
 				},
 				Spec: v1alpha1.CloudServerSpec{
-
 					Tags: []string{"test", "next-method"},
 					Location: v1alpha1.Location{
 						Value: "ITBG-Bergamo",
@@ -457,7 +450,6 @@ var _ = Describe("CloudServer Controller Reconcile Method", func() {
 					Namespace: "default",
 				},
 				Spec: v1alpha1.CloudServerSpec{
-
 					Location: v1alpha1.Location{
 						Value: "ITBG-Bergamo",
 					},

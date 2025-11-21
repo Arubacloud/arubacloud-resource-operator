@@ -1,4 +1,4 @@
-filename: "zz_generated.{{.InterfaceName}}.go"
+filename: 'zz_generated.{{.InterfaceName}}.go'
 with-expecter: true
 issue-845-fix: true
 resolve-type-alias: false

@@ -18,27 +18,27 @@ package v1alpha1
 
 import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-// Common phases for all Aruba resources
-type ArubaResourcePhase string
+// Common phases for all resources
+type ResourcePhase string
 
 const (
-	// ArubaResourcePhaseCreating indicates the resource is being created
-	ArubaResourcePhaseCreating ArubaResourcePhase = "Creating"
-	// ArubaResourcePhaseProvisioning indicates the resource is being provisioned remotely
-	ArubaResourcePhaseProvisioning ArubaResourcePhase = "Provisioning"
-	// ArubaResourcePhaseCreated indicates the resource has been created successfully
-	ArubaResourcePhaseCreated ArubaResourcePhase = "Created"
-	// ArubaResourcePhaseUpdating indicates the resource is being updated
-	ArubaResourcePhaseUpdating ArubaResourcePhase = "Updating"
-	// ArubaResourcePhaseDeleting indicates the resource is being deleted
-	ArubaResourcePhaseDeleting ArubaResourcePhase = "Deleting"
-	// ArubaResourcePhaseDeleted indicates the resource has been deleted
-	ArubaResourcePhaseDeleted ArubaResourcePhase = "Deleted"
-	// ArubaResourcePhaseFailed indicates the resource has failed
-	ArubaResourcePhaseFailed ArubaResourcePhase = "Failed"
+	// ResourcePhaseCreating indicates the resource is being created
+	ResourcePhaseCreating ResourcePhase = "Creating"
+	// ResourcePhaseProvisioning indicates the resource is being provisioned remotely
+	ResourcePhaseProvisioning ResourcePhase = "Provisioning"
+	// ResourcePhaseCreated indicates the resource has been created successfully
+	ResourcePhaseCreated ResourcePhase = "Created"
+	// ResourcePhaseUpdating indicates the resource is being updated
+	ResourcePhaseUpdating ResourcePhase = "Updating"
+	// ResourcePhaseDeleting indicates the resource is being deleted
+	ResourcePhaseDeleting ResourcePhase = "Deleting"
+	// ResourcePhaseDeleted indicates the resource has been deleted
+	ResourcePhaseDeleted ResourcePhase = "Deleted"
+	// ResourcePhaseFailed indicates the resource has failed
+	ResourcePhaseFailed ResourcePhase = "Failed"
 )
 
-// Condition types for Aruba resources
+// Condition types for resources
 const (
 	// ConditionTypeSynchronized indicates whether the resource is synchronized with the remote system
 	ConditionTypeSynchronized = "Synchronized"
@@ -61,11 +61,11 @@ type ResourceReference struct {
 	Namespace string `json:"namespace,omitempty"`
 }
 
-// Common status for all Aruba resources
-type ArubaResourceStatus struct {
+// Common status for all resources
+type ResourceStatus struct {
 	// Phase represents the current phase of the resource
 	// +kubebuilder:validation:Optional
-	Phase ArubaResourcePhase `json:"phase,omitempty"`
+	Phase ResourcePhase `json:"phase,omitempty"`
 
 	// Message provides human-readable information about the current state
 	// +kubebuilder:validation:Optional
@@ -83,7 +83,7 @@ type ArubaResourceStatus struct {
 	// +kubebuilder:validation:Optional
 	PhaseStartTime *metav1.Time `json:"phaseStartTime,omitempty"`
 
-	// Conditions represent the latest available observations of the Aruba Resource state
+	// Conditions represent the latest available observations of the Resource state
 	// +listType=map
 	// +listMapKey=type
 	// +patchStrategy=merge
@@ -92,10 +92,10 @@ type ArubaResourceStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
 }
 
-// ArubaObject is the common Schema for the aruba API.
-type ArubaObject struct {
+// Object is the common Schema for the API.
+type Object struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Status ArubaResourceStatus `json:"status,omitempty"`
+	Status ResourceStatus `json:"status,omitempty"`
 }

@@ -3,7 +3,7 @@
 # and allow the plugins properly work.
 # More info: https://book.kubebuilder.io/reference/project-config.html
 cliVersion: 4.6.0
-domain: cloud.aruba.it
+domain: arubacloud.com
 layout:
   - go.kubebuilder.io/v4
 projectName: aruba
@@ -13,81 +13,81 @@ resources:
       crdVersion: v1
       namespaced: true
     controller: true
-    domain: cloud.aruba.it
-    group: cloud.aruba.it
-    kind: ArubaProject
+    domain: arubacloud.com
+    group: arubacloud.com
+    kind: Project
     path: aruba/api/v1alpha1
     version: v1alpha1
   - api:
       crdVersion: v1
       namespaced: true
     controller: true
-    domain: cloud.aruba.it
-    group: cloud.aruba.it
-    kind: ArubaNetworkElasticIp
+    domain: arubacloud.com
+    group: arubacloud.com
+    kind: ElasticIp
     path: aruba/api/v1alpha1
     version: v1alpha1
   - api:
       crdVersion: v1
       namespaced: true
     controller: true
-    domain: cloud.aruba.it
-    group: cloud.aruba.it
-    kind: ArubaBlockStorage
+    domain: arubacloud.com
+    group: arubacloud.com
+    kind: BlockStorage
     path: aruba/api/v1alpha1
     version: v1alpha1
   - api:
       crdVersion: v1
       namespaced: true
     controller: true
-    domain: cloud.aruba.it
-    group: cloud.aruba.it
-    kind: ArubaCloudServer
+    domain: arubacloud.com
+    group: arubacloud.com
+    kind: CloudServer
     path: aruba/api/v1alpha1
     version: v1alpha1
   - api:
       crdVersion: v1
       namespaced: true
     controller: true
-    domain: cloud.aruba.it
-    group: cloud.aruba.it
-    kind: ArubaVpc
+    domain: arubacloud.com
+    group: arubacloud.com
+    kind: Vpc
     path: aruba/api/v1alpha1
     version: v1alpha1
   - api:
       crdVersion: v1
       namespaced: true
     controller: true
-    domain: cloud.aruba.it
-    group: cloud.aruba.it
-    kind: ArubaSubnet
+    domain: arubacloud.com
+    group: arubacloud.com
+    kind: Subnet
     path: aruba/api/v1alpha1
     version: v1alpha1
   - api:
       crdVersion: v1
       namespaced: true
     controller: true
-    domain: cloud.aruba.it
-    group: cloud.aruba.it
-    kind: ArubaSecurityGroup
+    domain: arubacloud.com
+    group: arubacloud.com
+    kind: SecurityGroup
     path: aruba/api/v1alpha1
     version: v1alpha1
   - api:
       crdVersion: v1
       namespaced: true
     controller: true
-    domain: cloud.aruba.it
-    group: cloud.aruba.it
-    kind: ArubaKeyPair
+    domain: arubacloud.com
+    group: arubacloud.com
+    kind: KeyPair
     path: aruba/api/v1alpha1
     version: v1alpha1
   - api:
       crdVersion: v1
       namespaced: true
     controller: true
-    domain: cloud.aruba.it
-    group: cloud.aruba.it
-    kind: ArubaSecurityRule
+    domain: arubacloud.com
+    group: arubacloud.com
+    kind: SecurityRule
     path: aruba/api/v1alpha1
     version: v1alpha1
 version: '3'

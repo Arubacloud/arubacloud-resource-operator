@@ -29,6 +29,7 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 
 	"github.com/Arubacloud/arubacloud-resource-operator/internal/config"
+	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -224,7 +225,7 @@ func main() {
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "80aa3464.cloud.aruba.it",
+		LeaderElectionID:       "80aa3464.arubacloud.com",
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
@@ -249,68 +250,68 @@ func main() {
 		os.Exit(1)
 	}
 
-	baseReconciler := controller.NewHelperReconciler(mgr, mainConfig.ToReconcilerConfig())
+	baseReconciler := reconciler.NewReconciler(mgr, mainConfig.ToReconcilerConfig())
 
-	// Setup ArubaProject controller
-	arubaProjectReconciler := controller.NewArubaProjectReconciler(baseReconciler)
-	if err = arubaProjectReconciler.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "ArubaProject")
+	// Setup Project controller
+	projectReconciler := controller.NewProjectReconciler(baseReconciler)
+	if err = projectReconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Project")
 		os.Exit(1)
 	}
 
-	// Setup ArubaNetworkElasticIp controller
-	arubaNetworkElasticIpReconciler := controller.NewArubaNetworkElasticIpReconciler(baseReconciler)
-	if err = arubaNetworkElasticIpReconciler.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "ArubaNetworkElasticIp")
+	// Setup ElasticIp controller
+	elasticIpReconciler := controller.NewElasticIpReconciler(baseReconciler)
+	if err = elasticIpReconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "ElasticIp")
 		os.Exit(1)
 	}
 
-	// Setup ArubaBlockStorage controller
-	arubaBlockStorageReconciler := controller.NewArubaBlockStorageReconciler(baseReconciler)
-	if err = arubaBlockStorageReconciler.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "ArubaBlockStorage")
+	// Setup BlockStorage controller
+	blockStorageReconciler := controller.NewBlockStorageReconciler(baseReconciler)
+	if err = blockStorageReconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "BlockStorage")
 		os.Exit(1)
 	}
 
-	// Setup ArubaCloudServer controller
-	arubaCloudServerReconciler := controller.NewArubaCloudServerReconciler(baseReconciler)
-	if err = arubaCloudServerReconciler.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "ArubaCloudServer")
+	// Setup CloudServer controller
+	cloudServerReconciler := controller.NewCloudServerReconciler(baseReconciler)
+	if err = cloudServerReconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "CloudServer")
 		os.Exit(1)
 	}
 
-	// Setup ArubaKeyPair controller
-	arubaKeyPairReconciler := controller.NewArubaKeyPairReconciler(baseReconciler)
-	if err = arubaKeyPairReconciler.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "ArubaKeyPair")
+	// Setup KeyPair controller
+	keyPairReconciler := controller.NewKeyPairReconciler(baseReconciler)
+	if err = keyPairReconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "KeyPair")
 		os.Exit(1)
 	}
 
-	// Setup ArubaSecurityGroup controller
-	arubaSecurityGroupReconciler := controller.NewArubaSecurityGroupReconciler(baseReconciler)
-	if err = arubaSecurityGroupReconciler.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "ArubaSecurityGroup")
+	// Setup SecurityGroup controller
+	securityGroupReconciler := controller.NewSecurityGroupReconciler(baseReconciler)
+	if err = securityGroupReconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "SecurityGroup")
 		os.Exit(1)
 	}
 
-	// Setup ArubaSecurityRule controller
-	arubaSecurityRuleReconciler := controller.NewArubaSecurityRuleReconciler(baseReconciler)
-	if err = arubaSecurityRuleReconciler.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "ArubaSecurityRule")
+	// Setup SecurityRule controller
+	securityRuleReconciler := controller.NewSecurityRuleReconciler(baseReconciler)
+	if err = securityRuleReconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "SecurityRule")
 		os.Exit(1)
 	}
 
-	// Setup ArubaSubnet controller
-	arubaSubnetReconciler := controller.NewArubaSubnetReconciler(baseReconciler)
-	if err = arubaSubnetReconciler.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "ArubaSubnet")
+	// Setup Subnet controller
+	subnetReconciler := controller.NewSubnetReconciler(baseReconciler)
+	if err = subnetReconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Subnet")
 		os.Exit(1)
 	}
 
-	// Setup ArubaVpc controller
-	arubaVpcReconciler := controller.NewArubaVpcReconciler(baseReconciler)
-	if err = arubaVpcReconciler.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "ArubaVpc")
+	// Setup Vpc controller
+	vpcReconciler := controller.NewVpcReconciler(baseReconciler)
+	if err = vpcReconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Vpc")
 		os.Exit(1)
 	}
 

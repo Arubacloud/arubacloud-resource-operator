@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Arubacloud/arubacloud-resource-operator/internal/controller"
+	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
@@ -44,9 +44,9 @@ func (c *MainConfig) Validate() error {
 	return nil
 }
 
-// ToReconcilerConfig converts MainConfig into HelperReconcilerConfig.
-func (c *MainConfig) ToReconcilerConfig() controller.HelperReconcilerConfig {
-	return controller.HelperReconcilerConfig{
+// ToReconcilerConfig converts MainConfig into ReconcilerConfig.
+func (c *MainConfig) ToReconcilerConfig() reconciler.ReconcilerConfig {
+	return reconciler.ReconcilerConfig{
 		APIGateway:   c.APIGateway,
 		VaultAddress: c.VaultAddress,
 		KeycloakURL:  c.KeycloakURL,

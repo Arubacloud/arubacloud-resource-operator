@@ -5,26 +5,17 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
-  - ""
+  - arubacloud.com
   resources:
-  - configmaps
-  - secrets
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - cloud.aruba.it
-  resources:
-  - arubablockstorages
-  - arubacloudservers
-  - arubakeypairs
-  - arubanetworkelasticips
-  - arubaprojects
-  - arubasecuritygroups
-  - arubasecurityrules
-  - arubasubnets
-  - arubavpcs
+  - blockstorages
+  - cloudservers
+  - elasticips
+  - keypairs
+  - projects
+  - securitygroups
+  - securityrules
+  - subnets
+  - vpcs
   verbs:
   - create
   - delete
@@ -34,32 +25,41 @@ rules:
   - update
   - watch
 - apiGroups:
-  - cloud.aruba.it
+  - arubacloud.com
   resources:
-  - arubablockstorages/finalizers
-  - arubacloudservers/finalizers
-  - arubakeypairs/finalizers
-  - arubanetworkelasticips/finalizers
-  - arubaprojects/finalizers
-  - arubasecuritygroups/finalizers
-  - arubasecurityrules/finalizers
-  - arubasubnets/finalizers
-  - arubavpcs/finalizers
+  - blockstorages/finalizers
+  - cloudservers/finalizers
+  - elasticips/finalizers
+  - keypairs/finalizers
+  - projects/finalizers
+  - securitygroups/finalizers
+  - securityrules/finalizers
+  - subnets/finalizers
+  - vpcs/finalizers
   verbs:
   - update
 - apiGroups:
-  - cloud.aruba.it
+  - arubacloud.com
   resources:
-  - arubablockstorages/status
-  - arubacloudservers/status
-  - arubakeypairs/status
-  - arubanetworkelasticips/status
-  - arubaprojects/status
-  - arubasecuritygroups/status
-  - arubasecurityrules/status
-  - arubasubnets/status
-  - arubavpcs/status
+  - blockstorages/status
+  - cloudservers/status
+  - elasticips/status
+  - keypairs/status
+  - projects/status
+  - securitygroups/status
+  - securityrules/status
+  - subnets/status
+  - vpcs/status
   verbs:
   - get
   - patch
   - update
+- apiGroups:
+  - arubacloud.com
+  resources:
+  - configmaps
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch

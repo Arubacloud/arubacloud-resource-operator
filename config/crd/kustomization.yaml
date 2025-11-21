@@ -2,15 +2,15 @@
 # since it depends on service name and namespace that are out of this kustomize package.
 # It should be run by config/default
 resources:
-  - bases/cloud.aruba.it_arubaprojects.yaml
-  - bases/cloud.aruba.it_arubanetworkelasticips.yaml
-  - bases/cloud.aruba.it_arubablockstorages.yaml
-  - bases/cloud.aruba.it_arubacloudservers.yaml
-  - bases/cloud.aruba.it_arubavpcs.yaml
-  - bases/cloud.aruba.it_arubasubnets.yaml
-  - bases/cloud.aruba.it_arubasecuritygroups.yaml
-  - bases/cloud.aruba.it_arubakeypairs.yaml
-  - bases/cloud.aruba.it_arubasecurityrules.yaml
+  - bases/arubacloud.com_projects.yaml
+  - bases/arubacloud.com_elasticips.yaml
+  - bases/arubacloud.com_blockstorages.yaml
+  - bases/arubacloud.com_cloudservers.yaml
+  - bases/arubacloud.com_vpcs.yaml
+  - bases/arubacloud.com_subnets.yaml
+  - bases/arubacloud.com_securitygroups.yaml
+  - bases/arubacloud.com_keypairs.yaml
+  - bases/arubacloud.com_securityrules.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

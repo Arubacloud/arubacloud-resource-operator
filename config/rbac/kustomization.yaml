@@ -22,31 +22,3 @@ resources:
   # default, aiding admins in cluster management. Those roles are
   # not used by the aruba itself. You can comment the following lines
   # if you do not want those helpers be installed with your Project.
-  - arubakeypair_admin_role.yaml
-  - arubakeypair_editor_role.yaml
-  - arubakeypair_viewer_role.yaml
-  - arubasecuritygroup_admin_role.yaml
-  - arubasecuritygroup_editor_role.yaml
-  - arubasecuritygroup_viewer_role.yaml
-  - arubasubnet_admin_role.yaml
-  - arubasubnet_editor_role.yaml
-  - arubasubnet_viewer_role.yaml
-  - arubavpc_admin_role.yaml
-  - arubavpc_editor_role.yaml
-  - arubavpc_viewer_role.yaml
-  - arubacloudserver_admin_role.yaml
-  - arubacloudserver_editor_role.yaml
-  - arubacloudserver_viewer_role.yaml
-  - arubablockstorage_admin_role.yaml
-  - arubablockstorage_editor_role.yaml
-  - arubablockstorage_viewer_role.yaml
-  - arubanetworkelasticip_admin_role.yaml
-  - arubanetworkelasticip_editor_role.yaml
-  - arubanetworkelasticip_viewer_role.yaml
-  - arubaproject_admin_role.yaml
-  - arubaproject_editor_role.yaml
-  - arubaproject_viewer_role.yaml
-  - arubasecurityrule_admin_role.yaml
-  - arubasecurityrule_editor_role.yaml
-  - arubasecurityrule_viewer_role.yaml
-

@@ -1,4 +1,4 @@
-apiVersion: cloud.aruba.it/v1alpha1
+apiVersion: arubacloud.com/v1alpha1
 kind: ArubaVpc
 metadata:
   name: __NAME__

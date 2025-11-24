@@ -169,6 +169,14 @@ var _ = Describe("CloudServer Controller Reconcile Method", func() {
 					SecurityGroupReferences: []v1alpha1.ResourceReference{
 						{Name: "test-sg", Namespace: "default"},
 					},
+					KeyPairReference: v1alpha1.ResourceReference{
+						Name:      "test-keypair",
+						Namespace: "default",
+					},
+					BootVolumeReference: v1alpha1.ResourceReference{
+						Name:      "test-boot-volume",
+						Namespace: "default",
+					},
 					ProjectReference: v1alpha1.ResourceReference{
 						Name:      "test-project",
 						Namespace: "default",
@@ -217,6 +225,14 @@ var _ = Describe("CloudServer Controller Reconcile Method", func() {
 					},
 					SecurityGroupReferences: []v1alpha1.ResourceReference{
 						{Name: "test-sg", Namespace: "default"},
+					},
+					KeyPairReference: v1alpha1.ResourceReference{
+						Name:      "test-keypair",
+						Namespace: "default",
+					},
+					BootVolumeReference: v1alpha1.ResourceReference{
+						Name:      "test-boot-volume",
+						Namespace: "default",
 					},
 					ProjectReference: v1alpha1.ResourceReference{
 						Name:      "test-project",
@@ -293,6 +309,14 @@ var _ = Describe("CloudServer Controller Reconcile Method", func() {
 						SecurityGroupReferences: []v1alpha1.ResourceReference{
 							{Name: "test-sg", Namespace: "default"},
 						},
+						KeyPairReference: v1alpha1.ResourceReference{
+							Name:      "test-keypair",
+							Namespace: "default",
+						},
+						BootVolumeReference: v1alpha1.ResourceReference{
+							Name:      "test-boot-volume",
+							Namespace: "default",
+						},
 						ProjectReference: v1alpha1.ResourceReference{
 							Name:      "test-project",
 							Namespace: "default",
@@ -357,6 +381,14 @@ var _ = Describe("CloudServer Controller Reconcile Method", func() {
 						SecurityGroupReferences: []v1alpha1.ResourceReference{
 							{Name: "test-sg", Namespace: "default"},
 						},
+						KeyPairReference: v1alpha1.ResourceReference{
+							Name:      "test-keypair",
+							Namespace: "default",
+						},
+						BootVolumeReference: v1alpha1.ResourceReference{
+							Name:      "test-boot-volume",
+							Namespace: "default",
+						},
 						ProjectReference: v1alpha1.ResourceReference{
 							Name:      "test-project",
 							Namespace: "default",
@@ -412,6 +444,14 @@ var _ = Describe("CloudServer Controller Reconcile Method", func() {
 					},
 					SecurityGroupReferences: []v1alpha1.ResourceReference{
 						{Name: "test-sg", Namespace: "default"},
+					},
+					KeyPairReference: v1alpha1.ResourceReference{
+						Name:      "test-keypair",
+						Namespace: "default",
+					},
+					BootVolumeReference: v1alpha1.ResourceReference{
+						Name:      "test-boot-volume",
+						Namespace: "default",
 					},
 					ProjectReference: v1alpha1.ResourceReference{
 						Name:      "test-project",
@@ -485,6 +525,14 @@ var _ = Describe("CloudServer Controller Reconcile Method", func() {
 					},
 					SecurityGroupReferences: []v1alpha1.ResourceReference{
 						{Name: "test-sg", Namespace: "default"},
+					},
+					KeyPairReference: v1alpha1.ResourceReference{
+						Name:      "test-keypair",
+						Namespace: "default",
+					},
+					BootVolumeReference: v1alpha1.ResourceReference{
+						Name:      "test-boot-volume",
+						Namespace: "default",
 					},
 					ProjectReference: v1alpha1.ResourceReference{
 						Name:      projectName,

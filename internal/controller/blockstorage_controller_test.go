@@ -86,10 +86,10 @@ var _ = Describe("BlockStorage Controller", func() {
 var _ = Describe("BlockStorage Controller Reconcile Method", func() {
 	Context("When testing reconcile phases", func() {
 		var (
-			ctx                    context.Context
+			ctx                context.Context
 			resourceReconciler *BlockStorageReconciler
-			arubaBlockStorage      *v1alpha1.BlockStorage
-			typeNamespacedName     types.NamespacedName
+			arubaBlockStorage  *v1alpha1.BlockStorage
+			typeNamespacedName types.NamespacedName
 		)
 
 		BeforeEach(func() {

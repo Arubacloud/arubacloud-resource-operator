@@ -52,7 +52,32 @@ var _ = Describe("SecurityRule Controller", func() {
 						Name:      resourceName,
 						Namespace: "default",
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: v1alpha1.SecurityRuleSpec{
+						Tenant: "test-tenant",
+						Tags:   []string{"test", "security-rule"},
+						Location: v1alpha1.Location{
+							Value: "ITBG-Bergamo",
+						},
+						Protocol:  "TCP",
+						Port:      "80",
+						Direction: "Ingress",
+						Target: v1alpha1.SecurityRuleTarget{
+							Kind:  "Ip",
+							Value: "0.0.0.0/0",
+						},
+						SecurityGroupReference: v1alpha1.ResourceReference{
+							Name:      "test-security-group",
+							Namespace: "default",
+						},
+						VpcReference: v1alpha1.ResourceReference{
+							Name:      "test-vpc",
+							Namespace: "default",
+						},
+						ProjectReference: v1alpha1.ResourceReference{
+							Name:      "test-project",
+							Namespace: "default",
+						},
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}

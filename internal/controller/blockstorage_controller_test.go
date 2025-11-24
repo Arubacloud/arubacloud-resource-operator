@@ -116,7 +116,6 @@ var _ = Describe("BlockStorage Controller Reconcile Method", func() {
 
 			// Create HelperClient with mocked HTTP client
 			helperClient := client.NewHelperClient(k8sClient, mockHTTPClient, "https://api.example.com")
-			helperClient.SetAPIToken("test-token")
 
 			// Create base reconciler with mock client
 			baseResourceReconciler := &reconciler.Reconciler{

@@ -18,7 +18,9 @@ package controller
 
 import (
 	"context"
+	"io"
 	"net/http"
+	"strings"
 
 	arubaClient "github.com/Arubacloud/arubacloud-resource-operator/internal/client"
 	"github.com/Arubacloud/arubacloud-resource-operator/internal/mocks"
@@ -88,12 +90,23 @@ var _ = Describe("Vpc Controller", func() {
 			auth.On("SetClientIdAndSecret", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 			auth.On("SetClientIdAndSecret", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
+			// Create mock HTTP client that returns 200 for all requests
+			mockHTTPClient := new(mocks.MockHTTPClient)
+			mockHTTPClient.On("Do", mock.AnythingOfType("*http.Request")).Return(
+				&http.Response{
+					StatusCode: 200,
+					Body:       io.NopCloser(strings.NewReader(`{"success": true}`)),
+					Header:     make(http.Header),
+				}, nil)
+
+			// Create HelperClient with mocked HTTP client
+			helperClient := arubaClient.NewHelperClient(k8sClient, mockHTTPClient, "https://api.example.com")
+
 			baseResourceReconciler := &reconciler.Reconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-				// ArubaClient will be nil for tests - should handle gracefully
+				Client:       k8sClient,
+				Scheme:       k8sClient.Scheme(),
 				TokenManager: auth,
-				HelperClient: arubaClient.NewHelperClient(k8sClient, http.DefaultClient, "localhost"),
+				HelperClient: helperClient,
 			}
 
 			resourceReconciler := &VpcReconciler{

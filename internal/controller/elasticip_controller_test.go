@@ -19,7 +19,11 @@ package controller
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
+	"strings"
 
+	"github.com/Arubacloud/arubacloud-resource-operator/internal/client"
 	"github.com/Arubacloud/arubacloud-resource-operator/internal/mocks"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -90,11 +94,23 @@ var _ = Describe("ElasticIp Controller", func() {
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
 
+			// Create mock HTTP client that returns 200 for all requests
+			mockHTTPClient := new(mocks.MockHTTPClient)
+			mockHTTPClient.On("Do", mock.AnythingOfType("*http.Request")).Return(
+				&http.Response{
+					StatusCode: 200,
+					Body:       io.NopCloser(strings.NewReader(`{"success": true}`)),
+					Header:     make(http.Header),
+				}, nil)
+
+			// Create HelperClient with mocked HTTP client
+			helperClient := client.NewHelperClient(k8sClient, mockHTTPClient, "https://api.example.com")
+
 			// Create base reconciler with mock client
 			baseResourceReconciler := &reconciler.Reconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-				// ArubaClient will be nil for tests - should handle gracefully
+				Client:       k8sClient,
+				Scheme:       k8sClient.Scheme(),
+				HelperClient: helperClient,
 			}
 
 			resourceReconciler := &ElasticIpReconciler{
@@ -125,11 +141,23 @@ var _ = Describe("ElasticIp Controller Reconcile Method", func() {
 			auth.On("SetClientIdAndSecret", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 			auth.On("SetClientIdAndSecret", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
+			// Create mock HTTP client that returns 200 for all requests
+			mockHTTPClient := new(mocks.MockHTTPClient)
+			mockHTTPClient.On("Do", mock.AnythingOfType("*http.Request")).Return(
+				&http.Response{
+					StatusCode: 200,
+					Body:       io.NopCloser(strings.NewReader(`{"success": true}`)),
+					Header:     make(http.Header),
+				}, nil)
+
+			// Create HelperClient with mocked HTTP client
+			helperClient := client.NewHelperClient(k8sClient, mockHTTPClient, "https://api.example.com")
+
 			// Create base reconciler with mock client
 			baseResourceReconciler := &reconciler.Reconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-				// ArubaClient will be nil for tests - should handle gracefully
+				Client:       k8sClient,
+				Scheme:       k8sClient.Scheme(),
+				HelperClient: helperClient,
 				TokenManager: auth,
 			}
 

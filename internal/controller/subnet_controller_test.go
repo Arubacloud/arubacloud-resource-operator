@@ -53,7 +53,7 @@ var _ = Describe("Subnet Controller", func() {
 						Namespace: "default",
 					},
 					Spec: v1alpha1.SubnetSpec{
-
+						Tenant:  "test-tenant",
 						Tags:    []string{"test"},
 						Type:    "Advanced",
 						Default: false,
@@ -89,17 +89,17 @@ var _ = Describe("Subnet Controller", func() {
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
 
-			baseReconciler := &reconciler.Reconciler{
+			baseResourceReconciler := &reconciler.Reconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 				// ArubaClient will be nil for tests - should handle gracefully
 			}
 
-			controllerReconciler := &SubnetReconciler{
-				Reconciler: baseReconciler,
+			resourceReconciler := &SubnetReconciler{
+				Reconciler: baseResourceReconciler,
 			}
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+			_, err := resourceReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())

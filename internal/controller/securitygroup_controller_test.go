@@ -53,8 +53,8 @@ var _ = Describe("SecurityGroup Controller", func() {
 						Namespace: "default",
 					},
 					Spec: v1alpha1.SecurityGroupSpec{
-
-						Tags: []string{"test"},
+						Tenant: "test-tenant",
+						Tags:   []string{"test"},
 						Location: v1alpha1.Location{
 							Value: "ITBG-Bergamo",
 						},
@@ -85,17 +85,17 @@ var _ = Describe("SecurityGroup Controller", func() {
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
 
-			baseReconciler := &reconciler.Reconciler{
+			baseResourceReconciler := &reconciler.Reconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 				// ArubaClient will be nil for tests - should handle gracefully
 			}
 
-			controllerReconciler := &SecurityGroupReconciler{
-				Reconciler: baseReconciler,
+			resourceReconciler := &SecurityGroupReconciler{
+				Reconciler: baseResourceReconciler,
 			}
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+			_, err := resourceReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())

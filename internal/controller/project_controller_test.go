@@ -54,7 +54,7 @@ var _ = Describe("Project Controller", func() {
 						Namespace: "default",
 					},
 					Spec: v1alpha1.ProjectSpec{
-
+						Tenant:      "test-tenant",
 						Description: "Test project for basic reconciliation",
 						Tags:        []string{"test", "basic"},
 						Default:     false,
@@ -77,17 +77,17 @@ var _ = Describe("Project Controller", func() {
 			By("Reconciling the created resource")
 
 			// Create base reconciler with mock client
-			baseReconciler := &reconciler.Reconciler{
+			baseResourceReconciler := &reconciler.Reconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 				// ArubaClient will be nil for tests - should handle gracefully
 			}
 
-			controllerReconciler := &ProjectReconciler{
-				Reconciler: baseReconciler,
+			resourceReconciler := &ProjectReconciler{
+				Reconciler: baseResourceReconciler,
 			}
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+			_, err := resourceReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -99,7 +99,7 @@ var _ = Describe("Project Controller Reconcile Method", func() {
 	Context("When testing reconcile phases", func() {
 		var (
 			ctx                context.Context
-			reconciler         *ProjectReconciler
+			resourceReconciler *ProjectReconciler
 			arubaProject       *v1alpha1.Project
 			typeNamespacedName types.NamespacedName
 		)
@@ -108,8 +108,15 @@ var _ = Describe("Project Controller Reconcile Method", func() {
 			ctx = context.Background()
 
 			// Create base reconciler with mock client
+			baseResourceReconciler := &reconciler.Reconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+				// ArubaClient will be nil for tests - should handle gracefully
+			}
 
-			reconciler = &ProjectReconciler{}
+			resourceReconciler = &ProjectReconciler{
+				Reconciler: baseResourceReconciler,
+			}
 
 			typeNamespacedName = types.NamespacedName{
 				Name:      "test-reconcile-resource",
@@ -119,7 +126,7 @@ var _ = Describe("Project Controller Reconcile Method", func() {
 
 		It("should handle object not found gracefully", func() {
 			By("Reconciling a non-existent resource")
-			result, err := reconciler.Reconcile(ctx, reconcile.Request{
+			result, err := resourceReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Name:      "non-existent",
 					Namespace: "default",
@@ -137,7 +144,7 @@ var _ = Describe("Project Controller Reconcile Method", func() {
 					Namespace: typeNamespacedName.Namespace,
 				},
 				Spec: v1alpha1.ProjectSpec{
-
+					Tenant:      "test-tenant",
 					Description: "Test project for reconciliation",
 					Tags:        []string{"test", "reconciliation"},
 					Default:     false,
@@ -149,7 +156,7 @@ var _ = Describe("Project Controller Reconcile Method", func() {
 			Expect(k8sClient.Create(ctx, arubaProject)).To(Succeed())
 
 			By("Reconciling the resource")
-			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+			_, err := resourceReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -167,7 +174,7 @@ var _ = Describe("Project Controller Reconcile Method", func() {
 					Namespace: "default",
 				},
 				Spec: v1alpha1.ProjectSpec{
-
+					Tenant:      "test-tenant",
 					Description: "Test project for deletion",
 					Tags:        []string{"test", "deletion"},
 					Default:     false,
@@ -182,7 +189,7 @@ var _ = Describe("Project Controller Reconcile Method", func() {
 			Expect(k8sClient.Delete(ctx, arubaProject)).To(Succeed())
 
 			By("Reconciling the resource")
-			result, err := reconciler.Reconcile(ctx, reconcile.Request{
+			result, err := resourceReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Name:      testName,
 					Namespace: "default",
@@ -222,7 +229,7 @@ var _ = Describe("Project Controller Reconcile Method", func() {
 						Namespace: "default",
 					},
 					Spec: v1alpha1.ProjectSpec{
-
+						Tenant:      "test-tenant",
 						Description: "Test project for deletion",
 						Tags:        []string{"test", "deletion"},
 						Default:     false,
@@ -237,7 +244,7 @@ var _ = Describe("Project Controller Reconcile Method", func() {
 				Expect(k8sClient.Delete(ctx, arubaProject)).To(Succeed())
 
 				By("Reconciling should handle the specific delete phase")
-				_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				_, err := resourceReconciler.Reconcile(ctx, reconcile.Request{
 					NamespacedName: namespacedName,
 				})
 				Expect(err).NotTo(HaveOccurred())
@@ -265,7 +272,7 @@ var _ = Describe("Project Controller Reconcile Method", func() {
 						Namespace: "default",
 					},
 					Spec: v1alpha1.ProjectSpec{
-
+						Tenant:      "test-tenant",
 						Description: "Test project for phases",
 						Tags:        []string{"test", "phases"},
 						Default:     false,
@@ -277,7 +284,7 @@ var _ = Describe("Project Controller Reconcile Method", func() {
 				Expect(k8sClient.Create(ctx, arubaProject)).To(Succeed())
 
 				By("Reconciling the resource")
-				_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				_, err := resourceReconciler.Reconcile(ctx, reconcile.Request{
 					NamespacedName: namespacedName,
 				})
 				if phase == v1alpha1.ResourcePhaseCreated {
@@ -299,7 +306,7 @@ var _ = Describe("Project Controller Reconcile Method", func() {
 					Namespace: "default",
 				},
 				Spec: v1alpha1.ProjectSpec{
-
+					Tenant:      "test-tenant",
 					Description: "Test project for Next method",
 					Tags:        []string{"test", "next-method"},
 					Default:     false,
@@ -311,7 +318,7 @@ var _ = Describe("Project Controller Reconcile Method", func() {
 			Expect(k8sClient.Create(ctx, arubaProject)).To(Succeed())
 
 			By("Setting up reconciler with the object")
-			reconciler.Object = arubaProject
+			resourceReconciler.Object = arubaProject
 
 			By("Cleanup")
 			Expect(k8sClient.Delete(ctx, arubaProject)).To(Succeed())

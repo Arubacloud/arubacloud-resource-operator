@@ -23,10 +23,12 @@ import (
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
+	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
 )
 
 var _ = Describe("Vpc Controller", func() {
@@ -51,7 +53,8 @@ var _ = Describe("Vpc Controller", func() {
 						Namespace: "default",
 					},
 					Spec: v1alpha1.VpcSpec{
-						Tags: []string{"test"},
+						Tenant: "test-tenant",
+						Tags:   []string{"test"},
 						Location: v1alpha1.Location{
 							Value: "ITBG-Bergamo",
 						},
@@ -72,6 +75,25 @@ var _ = Describe("Vpc Controller", func() {
 
 			By("Cleanup the specific resource instance Vpc")
 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+		})
+
+		It("should successfully reconcile the resource", func() {
+			By("Reconciling the created resource")
+
+			baseResourceReconciler := &reconciler.Reconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+				// ArubaClient will be nil for tests - should handle gracefully
+			}
+
+			resourceReconciler := &VpcReconciler{
+				Reconciler: baseResourceReconciler,
+			}
+
+			_, err := resourceReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
 		})
 	})
 })

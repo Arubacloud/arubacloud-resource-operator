@@ -29,6 +29,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
+	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
 )
 
 var _ = Describe("CloudServer Controller", func() {
@@ -53,8 +54,8 @@ var _ = Describe("CloudServer Controller", func() {
 						Namespace: "default",
 					},
 					Spec: v1alpha1.CloudServerSpec{
-
-						Tags: []string{"sample-tag"},
+						Tenant: "test-tenant",
+						Tags:   []string{"sample-tag"},
 						Location: v1alpha1.Location{
 							Value: "ITBG-Bergamo",
 						},
@@ -104,16 +105,25 @@ var _ = Describe("CloudServer Controller", func() {
 var _ = Describe("CloudServer Controller Reconcile Method", func() {
 	Context("When testing reconcile phases", func() {
 		var (
-			ctx                context.Context
-			reconciler         *CloudServerReconciler
-			arubaCloudServer   *v1alpha1.CloudServer
-			typeNamespacedName types.NamespacedName
+			ctx                   context.Context
+			cloudServerReconciler *CloudServerReconciler
+			arubaCloudServer      *v1alpha1.CloudServer
+			typeNamespacedName    types.NamespacedName
 		)
 
 		BeforeEach(func() {
 			ctx = context.Background()
 
-			reconciler = &CloudServerReconciler{}
+			// Create base reconciler with mock client
+			baseResourceReconciler := &reconciler.Reconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+				// ArubaClient will be nil for tests - should handle gracefully
+			}
+
+			cloudServerReconciler = &CloudServerReconciler{
+				Reconciler: baseResourceReconciler,
+			}
 
 			typeNamespacedName = types.NamespacedName{
 				Name:      "test-reconcile-cloud-server",
@@ -123,7 +133,7 @@ var _ = Describe("CloudServer Controller Reconcile Method", func() {
 
 		It("should handle object not found gracefully", func() {
 			By("Reconciling a non-existent resource")
-			result, err := reconciler.Reconcile(ctx, reconcile.Request{
+			result, err := cloudServerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Name:      "non-existent",
 					Namespace: "default",
@@ -141,8 +151,8 @@ var _ = Describe("CloudServer Controller Reconcile Method", func() {
 					Namespace: typeNamespacedName.Namespace,
 				},
 				Spec: v1alpha1.CloudServerSpec{
-
-					Tags: []string{"test", "reconciliation"},
+					Tenant: "test-tenant",
+					Tags:   []string{"test", "reconciliation"},
 					Location: v1alpha1.Location{
 						Value: "ITBG-Bergamo",
 					},
@@ -173,7 +183,7 @@ var _ = Describe("CloudServer Controller Reconcile Method", func() {
 			Expect(k8sClient.Create(ctx, arubaCloudServer)).To(Succeed())
 
 			By("Reconciling the resource")
-			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+			_, err := cloudServerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -191,8 +201,8 @@ var _ = Describe("CloudServer Controller Reconcile Method", func() {
 					Namespace: "default",
 				},
 				Spec: v1alpha1.CloudServerSpec{
-
-					Tags: []string{"test", "deletion"},
+					Tenant: "test-tenant",
+					Tags:   []string{"test", "deletion"},
 					Location: v1alpha1.Location{
 						Value: "ITBG-Bergamo",
 					},
@@ -225,7 +235,7 @@ var _ = Describe("CloudServer Controller Reconcile Method", func() {
 			Expect(k8sClient.Delete(ctx, arubaCloudServer)).To(Succeed())
 
 			By("Reconciling the resource")
-			result, err := reconciler.Reconcile(ctx, reconcile.Request{
+			result, err := cloudServerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Name:      testName,
 					Namespace: "default",
@@ -265,8 +275,8 @@ var _ = Describe("CloudServer Controller Reconcile Method", func() {
 						Namespace: "default",
 					},
 					Spec: v1alpha1.CloudServerSpec{
-
-						Tags: []string{"test", "deletion"},
+						Tenant: "test-tenant",
+						Tags:   []string{"test", "deletion"},
 						Location: v1alpha1.Location{
 							Value: "ITBG-Bergamo",
 						},
@@ -300,7 +310,7 @@ var _ = Describe("CloudServer Controller Reconcile Method", func() {
 				Expect(k8sClient.Delete(ctx, arubaCloudServer)).To(Succeed())
 
 				By("Reconciling should handle the specific delete phase")
-				_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				_, err := cloudServerReconciler.Reconcile(ctx, reconcile.Request{
 					NamespacedName: namespacedName,
 				})
 				Expect(err).NotTo(HaveOccurred())
@@ -329,8 +339,8 @@ var _ = Describe("CloudServer Controller Reconcile Method", func() {
 						Namespace: "default",
 					},
 					Spec: v1alpha1.CloudServerSpec{
-
-						Tags: []string{"test", "phases"},
+						Tenant: "test-tenant",
+						Tags:   []string{"test", "phases"},
 						Location: v1alpha1.Location{
 							Value: "ITBG-Bergamo",
 						},
@@ -362,7 +372,7 @@ var _ = Describe("CloudServer Controller Reconcile Method", func() {
 
 				By("Reconciling the resource")
 				// Should handle phases correctly with the implementation, even with nil ArubaClient
-				_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				_, err := cloudServerReconciler.Reconcile(ctx, reconcile.Request{
 					NamespacedName: namespacedName,
 				})
 				// Note: Some phases may return errors due to nil ArubaClient, which is expected in tests
@@ -385,8 +395,8 @@ var _ = Describe("CloudServer Controller Reconcile Method", func() {
 					Namespace: "default",
 				},
 				Spec: v1alpha1.CloudServerSpec{
-
-					Tags: []string{"test", "next-method"},
+					Tenant: "test-tenant",
+					Tags:   []string{"test", "next-method"},
 					Location: v1alpha1.Location{
 						Value: "ITBG-Bergamo",
 					},
@@ -428,7 +438,9 @@ var _ = Describe("CloudServer Controller Reconcile Method", func() {
 					Name:      projectName,
 					Namespace: "default",
 				},
-				Spec: v1alpha1.ProjectSpec{},
+				Spec: v1alpha1.ProjectSpec{
+					Tenant: "test-tenant",
+				},
 			}
 
 			// Check if project already exists, delete it first
@@ -457,7 +469,7 @@ var _ = Describe("CloudServer Controller Reconcile Method", func() {
 					Namespace: "default",
 				},
 				Spec: v1alpha1.CloudServerSpec{
-
+					Tenant: "test-tenant",
 					Location: v1alpha1.Location{
 						Value: "ITBG-Bergamo",
 					},
@@ -483,7 +495,7 @@ var _ = Describe("CloudServer Controller Reconcile Method", func() {
 			Expect(k8sClient.Create(ctx, arubaCloudServer)).To(Succeed())
 
 			By("Testing getProjectID method")
-			projectID, err := reconciler.GetProjectID(ctx, projectName, "default")
+			projectID, err := cloudServerReconciler.GetProjectID(ctx, projectName, "default")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(projectID).To(Equal("test-project-id-12345"))
 

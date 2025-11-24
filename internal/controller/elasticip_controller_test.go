@@ -54,8 +54,8 @@ var _ = Describe("ElasticIp Controller", func() {
 						Namespace: "default",
 					},
 					Spec: v1alpha1.ElasticIpSpec{
-
-						Tags: []string{"test", "basic"},
+						Tenant: "test-tenant",
+						Tags:   []string{"test", "basic"},
 						Location: v1alpha1.Location{
 							Value: "ITBG-Bergamo",
 						},
@@ -85,17 +85,17 @@ var _ = Describe("ElasticIp Controller", func() {
 			By("Reconciling the created resource")
 
 			// Create base reconciler with mock client
-			baseReconciler := &reconciler.Reconciler{
+			baseResourceReconciler := &reconciler.Reconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 				// ArubaClient will be nil for tests - should handle gracefully
 			}
 
-			controllerReconciler := &ElasticIpReconciler{
-				Reconciler: baseReconciler,
+			resourceReconciler := &ElasticIpReconciler{
+				Reconciler: baseResourceReconciler,
 			}
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+			_, err := resourceReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -107,7 +107,7 @@ var _ = Describe("ElasticIp Controller Reconcile Method", func() {
 	Context("When testing reconcile phases", func() {
 		var (
 			ctx                   context.Context
-			reconciler            *ElasticIpReconciler
+			resourceReconciler    *ElasticIpReconciler
 			arubaNetworkElasticIp *v1alpha1.ElasticIp
 			typeNamespacedName    types.NamespacedName
 		)
@@ -116,8 +116,15 @@ var _ = Describe("ElasticIp Controller Reconcile Method", func() {
 			ctx = context.Background()
 
 			// Create base reconciler with mock client
+			baseResourceReconciler := &reconciler.Reconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+				// ArubaClient will be nil for tests - should handle gracefully
+			}
 
-			reconciler = &ElasticIpReconciler{}
+			resourceReconciler = &ElasticIpReconciler{
+				Reconciler: baseResourceReconciler,
+			}
 
 			typeNamespacedName = types.NamespacedName{
 				Name:      "test-reconcile-elastic-ip",
@@ -127,7 +134,7 @@ var _ = Describe("ElasticIp Controller Reconcile Method", func() {
 
 		It("should handle object not found gracefully", func() {
 			By("Reconciling a non-existent resource")
-			result, err := reconciler.Reconcile(ctx, reconcile.Request{
+			result, err := resourceReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Name:      "non-existent",
 					Namespace: "default",
@@ -145,8 +152,8 @@ var _ = Describe("ElasticIp Controller Reconcile Method", func() {
 					Namespace: typeNamespacedName.Namespace,
 				},
 				Spec: v1alpha1.ElasticIpSpec{
-
-					Tags: []string{"test", "reconciliation"},
+					Tenant: "test-tenant",
+					Tags:   []string{"test", "reconciliation"},
 					Location: v1alpha1.Location{
 						Value: "ITBG-Bergamo",
 					},
@@ -167,7 +174,7 @@ var _ = Describe("ElasticIp Controller Reconcile Method", func() {
 			Expect(k8sClient.Create(ctx, arubaNetworkElasticIp)).To(Succeed())
 
 			By("Reconciling the resource")
-			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+			_, err := resourceReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -185,8 +192,8 @@ var _ = Describe("ElasticIp Controller Reconcile Method", func() {
 					Namespace: "default",
 				},
 				Spec: v1alpha1.ElasticIpSpec{
-
-					Tags: []string{"test", "deletion"},
+					Tenant: "test-tenant",
+					Tags:   []string{"test", "deletion"},
 					Location: v1alpha1.Location{
 						Value: "ITBG-Bergamo",
 					},
@@ -210,7 +217,7 @@ var _ = Describe("ElasticIp Controller Reconcile Method", func() {
 			Expect(k8sClient.Delete(ctx, arubaNetworkElasticIp)).To(Succeed())
 
 			By("Reconciling the resource")
-			result, err := reconciler.Reconcile(ctx, reconcile.Request{
+			result, err := resourceReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Name:      testName,
 					Namespace: "default",
@@ -250,8 +257,8 @@ var _ = Describe("ElasticIp Controller Reconcile Method", func() {
 						Namespace: "default",
 					},
 					Spec: v1alpha1.ElasticIpSpec{
-
-						Tags: []string{"test", "deletion"},
+						Tenant: "test-tenant",
+						Tags:   []string{"test", "deletion"},
 						Location: v1alpha1.Location{
 							Value: "ITBG-Bergamo",
 						},
@@ -275,7 +282,7 @@ var _ = Describe("ElasticIp Controller Reconcile Method", func() {
 				Expect(k8sClient.Delete(ctx, arubaNetworkElasticIp)).To(Succeed())
 
 				By("Reconciling should handle the specific delete phase")
-				_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				_, err := resourceReconciler.Reconcile(ctx, reconcile.Request{
 					NamespacedName: namespacedName,
 				})
 				Expect(err).NotTo(HaveOccurred())
@@ -304,8 +311,8 @@ var _ = Describe("ElasticIp Controller Reconcile Method", func() {
 						Namespace: "default",
 					},
 					Spec: v1alpha1.ElasticIpSpec{
-
-						Tags: []string{"test", "phases"},
+						Tenant: "test-tenant",
+						Tags:   []string{"test", "phases"},
 						Location: v1alpha1.Location{
 							Value: "ITBG-Bergamo",
 						},
@@ -327,7 +334,7 @@ var _ = Describe("ElasticIp Controller Reconcile Method", func() {
 
 				By("Reconciling the resource")
 				// Should handle phases correctly with the implementation, even with nil ArubaClient
-				_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				_, err := resourceReconciler.Reconcile(ctx, reconcile.Request{
 					NamespacedName: namespacedName,
 				})
 				// Note: Some phases may return errors due to nil ArubaClient, which is expected in tests
@@ -350,8 +357,8 @@ var _ = Describe("ElasticIp Controller Reconcile Method", func() {
 					Namespace: "default",
 				},
 				Spec: v1alpha1.ElasticIpSpec{
-
-					Tags: []string{"test", "next-method"},
+					Tenant: "test-tenant",
+					Tags:   []string{"test", "next-method"},
 					Location: v1alpha1.Location{
 						Value: "ITBG-Bergamo",
 					},
@@ -399,7 +406,7 @@ var _ = Describe("ElasticIp Controller Reconcile Method", func() {
 					Namespace: "default",
 				},
 				Spec: v1alpha1.ElasticIpSpec{
-
+					Tenant: "test-tenant",
 					Location: v1alpha1.Location{
 						Value: "ITBG-Bergamo",
 					},
@@ -415,12 +422,12 @@ var _ = Describe("ElasticIp Controller Reconcile Method", func() {
 			Expect(k8sClient.Create(ctx, arubaNetworkElasticIp)).To(Succeed())
 
 			By("Testing getProjectID method")
-			projectID, err := reconciler.GetProjectID(ctx, projectName, "default")
+			projectID, err := resourceReconciler.GetProjectID(ctx, projectName, "default")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(projectID).To(Equal("test-project-id-12345"))
 
 			By("Setting up reconciler with the object")
-			reconciler.Object = arubaNetworkElasticIp
+			resourceReconciler.Object = arubaNetworkElasticIp
 
 			By("Cleanup")
 			Expect(k8sClient.Delete(ctx, arubaNetworkElasticIp)).To(Succeed())

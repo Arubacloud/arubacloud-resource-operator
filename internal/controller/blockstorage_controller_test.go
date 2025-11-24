@@ -29,6 +29,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	v1alpha1 "github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
+	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
 )
 
 var _ = Describe("BlockStorage Controller", func() {
@@ -85,18 +86,24 @@ var _ = Describe("BlockStorage Controller", func() {
 var _ = Describe("BlockStorage Controller Reconcile Method", func() {
 	Context("When testing reconcile phases", func() {
 		var (
-			ctx                context.Context
-			reconciler         *BlockStorageReconciler
-			arubaBlockStorage  *v1alpha1.BlockStorage
-			typeNamespacedName types.NamespacedName
+			ctx                    context.Context
+			resourceReconciler *BlockStorageReconciler
+			arubaBlockStorage      *v1alpha1.BlockStorage
+			typeNamespacedName     types.NamespacedName
 		)
 
 		BeforeEach(func() {
 			ctx = context.Background()
 
-			// For unit tests, we'll create a simplified reconciler that skips external dependencies
-			reconciler = &BlockStorageReconciler{
-				// We'll initialize this when needed for specific tests
+			// Create base reconciler with mock client
+			baseResourceReconciler := &reconciler.Reconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+				// ArubaClient will be nil for tests - should handle gracefully
+			}
+
+			resourceReconciler = &BlockStorageReconciler{
+				Reconciler: baseResourceReconciler,
 			}
 
 			typeNamespacedName = types.NamespacedName{
@@ -107,7 +114,7 @@ var _ = Describe("BlockStorage Controller Reconcile Method", func() {
 
 		It("should handle object not found gracefully", func() {
 			By("Reconciling a non-existent resource")
-			result, err := reconciler.Reconcile(ctx, reconcile.Request{
+			result, err := resourceReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Name:      "non-existent",
 					Namespace: "default",
@@ -125,8 +132,8 @@ var _ = Describe("BlockStorage Controller Reconcile Method", func() {
 					Namespace: typeNamespacedName.Namespace,
 				},
 				Spec: v1alpha1.BlockStorageSpec{
-
-					Tags: []string{"test", "reconciliation"},
+					Tenant: "test-tenant",
+					Tags:   []string{"test", "reconciliation"},
 					Location: v1alpha1.Location{
 						Value: "ITBG-Bergamo",
 					},
@@ -185,7 +192,7 @@ var _ = Describe("BlockStorage Controller Reconcile Method", func() {
 			Expect(k8sClient.Delete(ctx, arubaBlockStorage)).To(Succeed())
 
 			By("Reconciling the resource")
-			result, err := reconciler.Reconcile(ctx, reconcile.Request{
+			result, err := resourceReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Name:      testName,
 					Namespace: "default",
@@ -250,7 +257,7 @@ var _ = Describe("BlockStorage Controller Reconcile Method", func() {
 				Expect(k8sClient.Delete(ctx, arubaBlockStorage)).To(Succeed())
 
 				By("Reconciling should handle the specific delete phase")
-				_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				_, err := resourceReconciler.Reconcile(ctx, reconcile.Request{
 					NamespacedName: namespacedName,
 				})
 				Expect(err).NotTo(HaveOccurred())
@@ -302,7 +309,7 @@ var _ = Describe("BlockStorage Controller Reconcile Method", func() {
 
 				By("Reconciling the resource")
 				// Should handle phases correctly with the implementation, even with nil ArubaClient
-				_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				_, err := resourceReconciler.Reconcile(ctx, reconcile.Request{
 					NamespacedName: namespacedName,
 				})
 				// Note: Some phases may return errors due to nil ArubaClient, which is expected in tests
@@ -325,8 +332,8 @@ var _ = Describe("BlockStorage Controller Reconcile Method", func() {
 					Namespace: "default",
 				},
 				Spec: v1alpha1.BlockStorageSpec{
-
-					Tags: []string{"test", "next-method"},
+					Tenant: "test-tenant",
+					Tags:   []string{"test", "next-method"},
 					Location: v1alpha1.Location{
 						Value: "ITBG-Bergamo",
 					},
@@ -387,7 +394,7 @@ var _ = Describe("BlockStorage Controller Reconcile Method", func() {
 					Namespace: "default",
 				},
 				Spec: v1alpha1.BlockStorageSpec{
-
+					Tenant: "test-tenant",
 					Location: v1alpha1.Location{
 						Value: "ITBG-Bergamo",
 					},

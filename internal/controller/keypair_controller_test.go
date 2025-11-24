@@ -53,7 +53,8 @@ var _ = Describe("KeyPair Controller", func() {
 						Namespace: "default",
 					},
 					Spec: v1alpha1.KeyPairSpec{
-						Tags: []string{"test"},
+						Tenant: "test-tenant",
+						Tags:   []string{"test"},
 						Location: v1alpha1.Location{
 							Value: "ITBG-Bergamo",
 						},
@@ -81,17 +82,17 @@ var _ = Describe("KeyPair Controller", func() {
 			By("Reconciling the created resource")
 
 			// Create base reconciler with mock client
-			baseReconciler := &reconciler.Reconciler{
+			baseResourceReconciler := &reconciler.Reconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 				// ArubaClient will be nil for tests - should handle gracefully
 			}
 
-			controllerReconciler := &KeyPairReconciler{
-				Reconciler: baseReconciler,
+			resourceReconciler := &KeyPairReconciler{
+				Reconciler: baseResourceReconciler,
 			}
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+			_, err := resourceReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())

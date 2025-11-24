@@ -32,6 +32,7 @@ func (r *ElasticIpReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	r.Object = &v1alpha1.ElasticIp{}
 	r.Reconciler.Object = r.Object
 	r.ResourceStatus = &r.Object.Status.ResourceStatus
+	r.ResourceReconciler = r
 	return r.Reconciler.Reconcile(ctx, req, &r.Object.Spec.Tenant)
 }
 

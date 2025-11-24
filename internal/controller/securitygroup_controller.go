@@ -50,6 +50,7 @@ func (r *SecurityGroupReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	r.Object = &v1alpha1.SecurityGroup{}
 	r.Reconciler.Object = r.Object
 	r.ResourceStatus = &r.Object.Status.ResourceStatus
+	r.ResourceReconciler = r
 	return r.Reconciler.Reconcile(ctx, req, &r.Object.Spec.Tenant)
 }
 

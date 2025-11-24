@@ -51,6 +51,7 @@ func NewCloudServerReconciler(reconciler *reconciler.Reconciler) *CloudServerRec
 
 func (r *CloudServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	r.Object = &v1alpha1.CloudServer{}
+	r.Reconciler.Object = r.Object
 	r.ResourceStatus = &r.Object.Status.ResourceStatus
 	return r.Reconciler.Reconcile(ctx, req, &r.Object.Spec.Tenant)
 }

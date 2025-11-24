@@ -48,6 +48,7 @@ func NewKeyPairReconciler(reconciler *reconciler.Reconciler) *KeyPairReconciler 
 
 func (r *KeyPairReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	r.Object = &v1alpha1.KeyPair{}
+	r.Reconciler.Object = r.Object
 	r.ResourceStatus = &r.Object.Status.ResourceStatus
 	return r.Reconciler.Reconcile(ctx, req, &r.Object.Spec.Tenant)
 }

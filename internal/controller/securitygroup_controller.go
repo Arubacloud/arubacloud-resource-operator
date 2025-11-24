@@ -48,6 +48,7 @@ func NewSecurityGroupReconciler(reconciler *reconciler.Reconciler) *SecurityGrou
 
 func (r *SecurityGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	r.Object = &v1alpha1.SecurityGroup{}
+	r.Reconciler.Object = r.Object
 	r.ResourceStatus = &r.Object.Status.ResourceStatus
 	return r.Reconciler.Reconcile(ctx, req, &r.Object.Spec.Tenant)
 }

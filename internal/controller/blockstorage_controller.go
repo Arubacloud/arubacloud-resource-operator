@@ -48,6 +48,7 @@ func NewBlockStorageReconciler(baseReconciler *reconciler.Reconciler) *BlockStor
 
 func (r *BlockStorageReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	r.Object = &v1alpha1.BlockStorage{}
+	r.Reconciler.Object = r.Object
 	r.ResourceStatus = &r.Object.Status.ResourceStatus
 	return r.Reconciler.Reconcile(ctx, req, &r.Object.Spec.Tenant)
 }

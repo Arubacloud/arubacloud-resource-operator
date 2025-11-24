@@ -20,8 +20,10 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/Arubacloud/arubacloud-resource-operator/internal/mocks"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/stretchr/testify/mock"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -94,12 +96,17 @@ var _ = Describe("BlockStorage Controller Reconcile Method", func() {
 
 		BeforeEach(func() {
 			ctx = context.Background()
+			auth := new(mocks.MockITokenManager)
+			auth.On("GetActiveToken", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return("token 123", nil)
+			auth.On("SetClientIdAndSecret", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+			auth.On("SetClientIdAndSecret", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 			// Create base reconciler with mock client
 			baseResourceReconciler := &reconciler.Reconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 				// ArubaClient will be nil for tests - should handle gracefully
+				TokenManager: auth,
 			}
 
 			resourceReconciler = &BlockStorageReconciler{

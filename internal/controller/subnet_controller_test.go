@@ -19,8 +19,10 @@ package controller
 import (
 	"context"
 
+	"github.com/Arubacloud/arubacloud-resource-operator/internal/mocks"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/stretchr/testify/mock"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -88,11 +90,16 @@ var _ = Describe("Subnet Controller", func() {
 
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
+			auth := new(mocks.MockITokenManager)
+			auth.On("GetActiveToken", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return("token 123", nil)
+			auth.On("SetClientIdAndSecret", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+			auth.On("SetClientIdAndSecret", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 			baseResourceReconciler := &reconciler.Reconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 				// ArubaClient will be nil for tests - should handle gracefully
+				TokenManager: auth,
 			}
 
 			resourceReconciler := &SubnetReconciler{

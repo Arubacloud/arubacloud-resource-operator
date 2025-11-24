@@ -1,4 +1,4 @@
-cloud.aruba.it_v1alpha1_arubaproject.yaml
-cloud.aruba.it_v1alpha1_arubavpc.yaml
-cloud.aruba.it_v1alpha1_arubasecuritygroup.yaml
-cloud.aruba.it_v1alpha1_arubasecurityrule.yaml
+arubacloud.com_v1alpha1_arubaproject.yaml
+arubacloud.com_v1alpha1_arubavpc.yaml
+arubacloud.com_v1alpha1_arubasecuritygroup.yaml
+arubacloud.com_v1alpha1_arubasecurityrule.yaml

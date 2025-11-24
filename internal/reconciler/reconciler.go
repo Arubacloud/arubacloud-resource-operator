@@ -47,7 +47,7 @@ type Reconciler struct {
 	*runtime.Scheme
 	*arubaClient.HelperClient
 	*arubaClient.AppRoleClient
-	*arubaClient.TokenManager
+	TokenManager arubaClient.ITokenManager
 }
 
 // ReconcilerConfig holds configuration for setting up Reconciler

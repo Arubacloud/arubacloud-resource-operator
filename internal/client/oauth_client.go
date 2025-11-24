@@ -41,6 +41,13 @@ type TokenManager struct {
 	baseURL      string
 }
 
+type ITokenManager interface {
+	GetAccessToken(checkCache bool, tenant string) (string, error)
+	GetActiveToken(tenant string) string
+	SetClientIdAndSecret(clientID string, clientSecret string)
+	IsExpiredHelper(cToken *CachedToken) bool
+}
+
 type TokenCache struct {
 	mu     sync.RWMutex
 	tokens map[string]*CachedToken
@@ -66,7 +73,7 @@ func (c *TokenCache) set(tenant string, token *gocloak.JWT) {
 }
 
 // NewTokenManager creates a new Keycloak client credentials manager.
-func NewTokenManager(baseURL, realm, clientID, clientSecret string, keycloak IOauth) *TokenManager {
+func NewTokenManager(baseURL, realm, clientID, clientSecret string, keycloak IOauth) ITokenManager {
 	var cli IOauthClient
 	if keycloak != nil {
 		cli = keycloak.NewClient(baseURL)
@@ -84,29 +91,29 @@ func NewTokenManager(baseURL, realm, clientID, clientSecret string, keycloak IOa
 	}
 }
 
-func (t *TokenManager) SetClientIdAndSecret(clientID string, clientSecret string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+func (tm *TokenManager) SetClientIdAndSecret(clientID string, clientSecret string) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
 
-	t.clientID = clientID
-	t.clientSecret = clientSecret
+	tm.clientID = clientID
+	tm.clientSecret = clientSecret
 }
 
 // getToken retrieves a new token using client credentials.
-func (m *TokenManager) getToken() (*gocloak.JWT, error) {
-	ctrl.Log.V(1).Info("Getting token with client credentials", "clientId", m.clientID, "realm", m.realm)
-	token, err := m.client.LoginClient(m.ctx, m.clientID, m.clientSecret, m.realm)
+func (tm *TokenManager) getToken() (*gocloak.JWT, error) {
+	ctrl.Log.V(1).Info("Getting token with client credentials", "clientId", tm.clientID, "realm", tm.realm)
+	token, err := tm.client.LoginClient(tm.ctx, tm.clientID, tm.clientSecret, tm.realm)
 	if err != nil {
 		return nil, err
 	}
 	return token, nil
 }
 
-func (m *TokenManager) GetActiveToken(tenant string) string {
+func (tm *TokenManager) GetActiveToken(tenant string) string {
 	ctrl.Log.V(1).Info("GetActiveToken", "tenant", tenant)
-	token := m.cache.get(tenant)
+	token := tm.cache.get(tenant)
 	// If we have a valid cached token
-	if token != nil && !m.isExpired(token) {
+	if token != nil && !tm.isExpired(token) {
 		ctrl.Log.V(1).Info("Found active token", "tenant", tenant)
 		return token.token.AccessToken
 	}
@@ -114,33 +121,33 @@ func (m *TokenManager) GetActiveToken(tenant string) string {
 }
 
 // GetAccessToken returns a valid access token, refreshing it if expired.
-func (m *TokenManager) GetAccessToken(checkCache bool, tenant string) (string, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+func (tm *TokenManager) GetAccessToken(checkCache bool, tenant string) (string, error) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
 
 	ctrl.Log.V(1).Info("GetAccessToken, if checkCache is enabled search it on cache before", "checkCache", checkCache, "tenant", tenant)
 	if checkCache {
-		token := m.cache.get(tenant)
+		token := tm.cache.get(tenant)
 
 		// If we have a valid cached token
-		if token != nil && !m.isExpired(token) {
+		if token != nil && !tm.isExpired(token) {
 			ctrl.Log.V(1).Info("found token in cache", "tenant", tenant)
 			return token.token.AccessToken, nil
 		}
 	}
 	// If expired or missing, renew
-	tk, err := m.getToken()
+	tk, err := tm.getToken()
 	if err != nil {
 		return "", err
 	}
 
 	ctrl.Log.V(1).Info("Set Token in memory cache", "tenant", tenant)
-	m.cache.set(tenant, tk)
+	tm.cache.set(tenant, tk)
 	return tk.AccessToken, nil
 }
 
 // isExpired checks if the token is expired (with 10s safety margin)
-func (m *TokenManager) isExpired(cToken *CachedToken) bool {
+func (tm *TokenManager) isExpired(cToken *CachedToken) bool {
 	const safetyMargin = 10 * time.Second
 	ctrl.Log.V(1).Info("Checking expired token", "token", cToken.token.AccessToken)
 	expiration := cToken.retrieved.Add(time.Duration(cToken.token.ExpiresIn) * time.Second)
@@ -154,6 +161,6 @@ func SetCachedTokenHelper(token *gocloak.JWT, retrieved time.Time) *CachedToken 
 	}
 }
 
-func (m *TokenManager) IsExpiredHelper(cToken *CachedToken) bool {
-	return m.isExpired(cToken)
+func (tm *TokenManager) IsExpiredHelper(cToken *CachedToken) bool {
+	return tm.isExpired(cToken)
 }

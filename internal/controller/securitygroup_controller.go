@@ -99,7 +99,7 @@ func (r *SecurityGroupReconciler) Creating(ctx context.Context) (ctrl.Result, er
 			},
 		}
 
-		securityGroupResp, err := r.HelperClient.CreateSecurityGroup(ctx, projectID, vpcID, securityGroupReq)
+		securityGroupResp, err := r.CreateSecurityGroup(ctx, projectID, vpcID, securityGroupReq)
 		if err != nil {
 			return "", "", err
 		}
@@ -118,7 +118,7 @@ func (r *SecurityGroupReconciler) Creating(ctx context.Context) (ctrl.Result, er
 
 func (r *SecurityGroupReconciler) Provisioning(ctx context.Context) (ctrl.Result, error) {
 	return r.HandleProvisioning(ctx, func(ctx context.Context) (string, error) {
-		securityGroupResp, err := r.HelperClient.GetSecurityGroup(ctx, r.Object.Status.ProjectID, r.Object.Status.VpcID, r.Object.Status.ResourceID)
+		securityGroupResp, err := r.GetSecurityGroup(ctx, r.Object.Status.ProjectID, r.Object.Status.VpcID, r.Object.Status.ResourceID)
 		if err != nil {
 			return "", err
 		}
@@ -145,7 +145,7 @@ func (r *SecurityGroupReconciler) Updating(ctx context.Context) (ctrl.Result, er
 			},
 		}
 
-		_, err := r.HelperClient.UpdateSecurityGroup(ctx, r.Object.Status.ProjectID, r.Object.Status.VpcID, r.Object.Status.ResourceID, securityGroupReq)
+		_, err := r.UpdateSecurityGroup(ctx, r.Object.Status.ProjectID, r.Object.Status.VpcID, r.Object.Status.ResourceID, securityGroupReq)
 		return err
 	})
 }
@@ -156,6 +156,6 @@ func (r *SecurityGroupReconciler) Created(ctx context.Context) (ctrl.Result, err
 
 func (r *SecurityGroupReconciler) Deleting(ctx context.Context) (ctrl.Result, error) {
 	return r.HandleDeletion(ctx, securityGroupFinalizerName, func(ctx context.Context) error {
-		return r.HelperClient.DeleteSecurityGroup(ctx, r.Object.Status.ProjectID, r.Object.Status.VpcID, r.Object.Status.ResourceID)
+		return r.DeleteSecurityGroup(ctx, r.Object.Status.ProjectID, r.Object.Status.VpcID, r.Object.Status.ResourceID)
 	})
 }

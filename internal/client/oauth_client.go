@@ -33,7 +33,6 @@ type TokenManager struct {
 	client       IOauthClient
 	ctx          context.Context
 	cache        *TokenCache
-	token        *gocloak.JWT
 	mu           sync.Mutex
 	clientID     string
 	clientSecret string

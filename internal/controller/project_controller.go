@@ -82,7 +82,7 @@ func (r *ProjectReconciler) Creating(ctx context.Context) (ctrl.Result, error) {
 			},
 		}
 
-		projectResp, err := r.HelperClient.CreateProject(ctx, projectReq)
+		projectResp, err := r.CreateProject(ctx, projectReq)
 		if err != nil {
 			return "", "", err
 		}
@@ -104,7 +104,7 @@ func (r *ProjectReconciler) Updating(ctx context.Context) (ctrl.Result, error) {
 			},
 		}
 
-		_, err := r.HelperClient.UpdateProject(ctx, r.Object.Status.ResourceID, projectReq)
+		_, err := r.UpdateProject(ctx, r.Object.Status.ResourceID, projectReq)
 		return err
 	})
 }
@@ -115,6 +115,6 @@ func (r *ProjectReconciler) Created(ctx context.Context) (ctrl.Result, error) {
 
 func (r *ProjectReconciler) Deleting(ctx context.Context) (ctrl.Result, error) {
 	return r.HandleDeletion(ctx, projectFinalizerName, func(ctx context.Context) error {
-		return r.HelperClient.DeleteProject(ctx, r.Object.Status.ResourceID)
+		return r.DeleteProject(ctx, r.Object.Status.ResourceID)
 	})
 }

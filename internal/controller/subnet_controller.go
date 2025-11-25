@@ -99,7 +99,7 @@ func (r *SubnetReconciler) Creating(ctx context.Context) (ctrl.Result, error) {
 			},
 		}
 
-		subnetResp, err := r.HelperClient.CreateSubnet(ctx, projectID, vpcID, subnetReq)
+		subnetResp, err := r.CreateSubnet(ctx, projectID, vpcID, subnetReq)
 		if err != nil {
 			return "", "", err
 		}
@@ -118,7 +118,7 @@ func (r *SubnetReconciler) Creating(ctx context.Context) (ctrl.Result, error) {
 
 func (r *SubnetReconciler) Provisioning(ctx context.Context) (ctrl.Result, error) {
 	return r.HandleProvisioning(ctx, func(ctx context.Context) (string, error) {
-		subnetResp, err := r.HelperClient.GetSubnet(ctx, r.Object.Status.ProjectID, r.Object.Status.VpcID, r.Object.Status.ResourceID)
+		subnetResp, err := r.GetSubnet(ctx, r.Object.Status.ProjectID, r.Object.Status.VpcID, r.Object.Status.ResourceID)
 		if err != nil {
 			return "", err
 		}
@@ -149,7 +149,7 @@ func (r *SubnetReconciler) Updating(ctx context.Context) (ctrl.Result, error) {
 			},
 		}
 
-		_, err := r.HelperClient.UpdateSubnet(ctx, r.Object.Status.ProjectID, r.Object.Status.VpcID, r.Object.Status.ResourceID, subnetReq)
+		_, err := r.UpdateSubnet(ctx, r.Object.Status.ProjectID, r.Object.Status.VpcID, r.Object.Status.ResourceID, subnetReq)
 		return err
 	})
 }
@@ -160,6 +160,6 @@ func (r *SubnetReconciler) Created(ctx context.Context) (ctrl.Result, error) {
 
 func (r *SubnetReconciler) Deleting(ctx context.Context) (ctrl.Result, error) {
 	return r.HandleDeletion(ctx, subnetFinalizerName, func(ctx context.Context) error {
-		return r.HelperClient.DeleteSubnet(ctx, r.Object.Status.ProjectID, r.Object.Status.VpcID, r.Object.Status.ResourceID)
+		return r.DeleteSubnet(ctx, r.Object.Status.ProjectID, r.Object.Status.VpcID, r.Object.Status.ResourceID)
 	})
 }

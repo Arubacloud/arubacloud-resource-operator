@@ -78,7 +78,7 @@ func (r *ElasticIpReconciler) Creating(ctx context.Context) (ctrl.Result, error)
 			},
 		}
 
-		elasticIpResp, err := r.HelperClient.CreateElasticIp(ctx, projectID, elasticIpReq)
+		elasticIpResp, err := r.CreateElasticIp(ctx, projectID, elasticIpReq)
 		if err != nil {
 			return "", "", err
 		}
@@ -96,7 +96,7 @@ func (r *ElasticIpReconciler) Creating(ctx context.Context) (ctrl.Result, error)
 
 func (r *ElasticIpReconciler) Provisioning(ctx context.Context) (ctrl.Result, error) {
 	return r.HandleProvisioning(ctx, func(ctx context.Context) (string, error) {
-		elasticIpResp, err := r.HelperClient.GetElasticIp(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID)
+		elasticIpResp, err := r.GetElasticIp(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID)
 		if err != nil {
 			return "", err
 		}
@@ -125,7 +125,7 @@ func (r *ElasticIpReconciler) Updating(ctx context.Context) (ctrl.Result, error)
 			},
 		}
 
-		_, err := r.HelperClient.UpdateElasticIp(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID, elasticIpReq)
+		_, err := r.UpdateElasticIp(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID, elasticIpReq)
 		return err
 	})
 }
@@ -136,6 +136,6 @@ func (r *ElasticIpReconciler) Created(ctx context.Context) (ctrl.Result, error) 
 
 func (r *ElasticIpReconciler) Deleting(ctx context.Context) (ctrl.Result, error) {
 	return r.HandleDeletion(ctx, elasticIpFinalizerName, func(ctx context.Context) error {
-		return r.HelperClient.DeleteElasticIp(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID)
+		return r.DeleteElasticIp(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID)
 	})
 }

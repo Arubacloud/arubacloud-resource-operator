@@ -120,7 +120,11 @@ func (c *HelperClient) DoAPIRequest(ctx context.Context, method, endpoint string
 
 	clientLog.Info("API Response", "Status", resp.Status)
 
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			clientLog.Error(err, "Failed to close response body")
+		}
+	}()
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("failed to read response body: %w", err)

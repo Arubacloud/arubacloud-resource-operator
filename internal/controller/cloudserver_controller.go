@@ -156,7 +156,7 @@ func (r *CloudServerReconciler) Creating(ctx context.Context) (ctrl.Result, erro
 				client.CloudServerResourceReference{URI: r.buildSecurityGroupURI(projectID, vpcID, sgID)})
 		}
 
-		cloudServerResp, err := r.HelperClient.CreateCloudServer(ctx, projectID, cloudServerReq)
+		cloudServerResp, err := r.CreateCloudServer(ctx, projectID, cloudServerReq)
 		if err != nil {
 			return "", "", err
 		}
@@ -184,7 +184,7 @@ func (r *CloudServerReconciler) Creating(ctx context.Context) (ctrl.Result, erro
 // Provisioning handles checking remote state during provisioning
 func (r *CloudServerReconciler) Provisioning(ctx context.Context) (ctrl.Result, error) {
 	return r.HandleProvisioning(ctx, func(ctx context.Context) (string, error) {
-		cloudServerResp, err := r.HelperClient.GetCloudServer(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID)
+		cloudServerResp, err := r.GetCloudServer(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID)
 		if err != nil {
 			return "", err
 		}
@@ -204,7 +204,7 @@ func (r *CloudServerReconciler) Updating(ctx context.Context) (ctrl.Result, erro
 		vpcID := r.Object.Status.VpcID
 
 		// Check if we need to update cloud server properties (generation mismatch)
-		needsPropertyUpdate := r.ResourceStatus.ObservedGeneration != r.Object.GetGeneration()
+		needsPropertyUpdate := r.ObservedGeneration != r.Object.GetGeneration()
 
 		if needsPropertyUpdate {
 			// Resolve subnet IDs
@@ -258,7 +258,7 @@ func (r *CloudServerReconciler) Updating(ctx context.Context) (ctrl.Result, erro
 					client.CloudServerResourceReference{URI: r.buildSecurityGroupURI(projectID, vpcID, sgID)})
 			}
 
-			_, err := r.HelperClient.UpdateCloudServer(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID, cloudServerReq)
+			_, err := r.UpdateCloudServer(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID, cloudServerReq)
 			if err != nil {
 				return err
 			}
@@ -315,7 +315,7 @@ func (r *CloudServerReconciler) manageDataVolumesInUpdate(ctx context.Context, p
 	}
 
 	// Call API to attach/detach volumes
-	_, err = r.HelperClient.AttachDetachDataVolumes(ctx, projectID, r.Object.Status.ResourceID, req)
+	_, err = r.AttachDetachDataVolumes(ctx, projectID, r.Object.Status.ResourceID, req)
 	if err != nil {
 		return err
 	}
@@ -329,7 +329,7 @@ func (r *CloudServerReconciler) manageDataVolumesInUpdate(ctx context.Context, p
 
 // Created handles the steady state
 func (r *CloudServerReconciler) Created(ctx context.Context) (ctrl.Result, error) {
-	phaseLogger := ctrl.Log.WithValues("Phase", r.ResourceStatus.Phase, "Kind", r.Object.GetObjectKind().GroupVersionKind().Kind, "Name", r.Object.GetName())
+	phaseLogger := ctrl.Log.WithValues("Phase", r.Phase, "Kind", r.Object.GetObjectKind().GroupVersionKind().Kind, "Name", r.Object.GetName())
 
 	// Check if data volumes need to be managed
 	_, toAttach, toDetach, err := r.resolveAndCheckDataVolumes(ctx)
@@ -378,7 +378,7 @@ func (r *CloudServerReconciler) resolveAndCheckDataVolumes(ctx context.Context) 
 // Deleting handles the actual cloud server deletion
 func (r *CloudServerReconciler) Deleting(ctx context.Context) (ctrl.Result, error) {
 	return r.HandleDeletion(ctx, cloudServerFinalizerName, func(ctx context.Context) error {
-		return r.HelperClient.DeleteCloudServer(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID)
+		return r.DeleteCloudServer(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID)
 	})
 }
 

@@ -95,7 +95,7 @@ func (r *BlockStorageReconciler) Creating(ctx context.Context) (ctrl.Result, err
 			},
 		}
 
-		blockStorageResp, err := r.HelperClient.CreateBlockStorage(ctx, projectID, blockStorageReq)
+		blockStorageResp, err := r.CreateBlockStorage(ctx, projectID, blockStorageReq)
 		if err != nil {
 			return "", "", err
 		}
@@ -113,7 +113,7 @@ func (r *BlockStorageReconciler) Creating(ctx context.Context) (ctrl.Result, err
 
 func (r *BlockStorageReconciler) Provisioning(ctx context.Context) (ctrl.Result, error) {
 	return r.HandleProvisioning(ctx, func(ctx context.Context) (string, error) {
-		blockStorageResp, err := r.HelperClient.GetBlockStorage(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID)
+		blockStorageResp, err := r.GetBlockStorage(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID)
 		if err != nil {
 			return "", err
 		}
@@ -142,7 +142,7 @@ func (r *BlockStorageReconciler) Updating(ctx context.Context) (ctrl.Result, err
 			},
 		}
 
-		_, err := r.HelperClient.UpdateBlockStorage(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID, blockStorageReq)
+		_, err := r.UpdateBlockStorage(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID, blockStorageReq)
 		return err
 	})
 }
@@ -153,6 +153,6 @@ func (r *BlockStorageReconciler) Created(ctx context.Context) (ctrl.Result, erro
 
 func (r *BlockStorageReconciler) Deleting(ctx context.Context) (ctrl.Result, error) {
 	return r.HandleDeletion(ctx, blockStorageFinalizerName, func(ctx context.Context) error {
-		return r.HelperClient.DeleteBlockStorage(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID)
+		return r.DeleteBlockStorage(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID)
 	})
 }

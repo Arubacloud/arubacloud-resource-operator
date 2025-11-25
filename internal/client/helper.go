@@ -68,15 +68,21 @@ func (e *ApiError) IsInvalidStatus() bool {
 }
 
 // NewHelperClient creates a new HelperClient instance
-func NewHelperClient(k8sClient client.Client, httpClient HTTPClient, gw_uri string) *HelperClient {
+func NewHelperClient(k8sClient client.Client, httpClient HTTPClient, gwUri string) *HelperClient {
+	//if httpClient == nil || reflect.ValueOf(httpClient).IsNil() {
+	//	httpClient = &http.Client{}
+	//}
+
 	if httpClient == nil {
+		httpClient = &http.Client{}
+	} else if c, ok := httpClient.(*http.Client); ok && c == nil {
 		httpClient = &http.Client{}
 	}
 
 	return &HelperClient{
 		Client:        k8sClient,
 		HTTPClient:    httpClient,
-		apiGatewayUrl: gw_uri,
+		apiGatewayUrl: gwUri,
 	}
 }
 

@@ -28,7 +28,7 @@ print_status "🚀 Starting ArubaProject workflow test..."
 
 # Apply the test project
 print_status "🏗️  Creating test ArubaProject..."
-kubectl apply -f config/samples/arubacloud.com_v1alpha1_arubaproject.yaml
+kubectl apply -f config/samples/arubacloud.com_v1alpha1_project.yaml
 
 sleep 5
 

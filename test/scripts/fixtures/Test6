@@ -1,6 +1,6 @@
-arubacloud.com_v1alpha1_arubaproject.yaml
-arubacloud.com_v1alpha1_arubavpc.yaml
-arubacloud.com_v1alpha1_arubasecuritygroup.yaml
-arubacloud.com_v1alpha1_arubasecurityrule.yaml
-arubacloud.com_v1alpha1_arubasubnet.yaml
-arubacloud.com_v1alpha1_arubablockstorage.yaml
+arubacloud.com_v1alpha1_project.yaml
+arubacloud.com_v1alpha1_vpc.yaml
+arubacloud.com_v1alpha1_securitygroup.yaml
+arubacloud.com_v1alpha1_securityrule.yaml
+arubacloud.com_v1alpha1_subnet.yaml
+arubacloud.com_v1alpha1_blockstorage.yaml

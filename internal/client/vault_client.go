@@ -90,13 +90,13 @@ func VaultClient(address string) IVaultClient {
 }
 
 // NewAppRoleClient creates and authenticates an AppRoleClient
-func NewAppRoleClient(namespace string, rolePath string, roleID string, secretID string, KVMount string, cli IVaultClient) (*AppRoleClient, error) {
+func NewAppRoleClient(namespace string, rolePath string, roleID string, secretID string, kvMount string, cli IVaultClient) (*AppRoleClient, error) {
 
 	c := &AppRoleClient{
 		client:    cli,
 		namespace: namespace,
 		rolePath:  rolePath,
-		KVMount:   KVMount,
+		KVMount:   kvMount,
 		roleID:    roleID,
 		secretID:  secretID,
 		sleeper:   realSleeper{},
@@ -130,10 +130,10 @@ func (c *AppRoleClient) login() error {
 	}
 
 	appRoleURI := fmt.Sprintf("auth/%v/login", c.rolePath)
-	ctrl.Log.V(1).Info("trying Vault login at: %s", appRoleURI)
+	ctrl.Log.V(1).Info("trying Vault login", "uri", appRoleURI)
 
 	secret, err := c.client.Logical().Write(appRoleURI, data)
-	ctrl.Log.V(1).Info("[DEBUG] Secret received: %v", secret)
+	ctrl.Log.V(1).Info("[DEBUG] Secret received", "secret", secret)
 
 	if err != nil {
 		return fmt.Errorf("AppRole login failed: %w", err)
@@ -151,11 +151,11 @@ func (c *AppRoleClient) login() error {
 }
 
 // GetSecret reads a KVv2 secret
-func (c *AppRoleClient) GetSecret(path string) (map[string]any, error) {
+func (c *AppRoleClient) GetSecret(ctx context.Context, path string) (map[string]any, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	secret, err := c.client.KVv2(c.KVMount).Get(context.Background(), path)
+	secret, err := c.client.KVv2(c.KVMount).Get(ctx, path)
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +187,7 @@ func (c *AppRoleClient) autoRenew(ctx context.Context) {
 			return
 		case <-c.sleeper.After(wait):
 			if err := c.renewSelf(ctx); err != nil {
-				ctrl.Log.V(1).Info("[vaultclient] renew failed: %v — re-login", err)
+				ctrl.Log.V(1).Info("[vaultclient] renew failed — re-login", "error", err)
 				_ = c.login()
 			}
 		}
@@ -223,7 +223,7 @@ func (c *AppRoleClient) renewSelf(ctx context.Context) error {
 	c.ttl = time.Duration(secret.Auth.LeaseDuration) * time.Second
 	c.renewable = secret.Auth.Renewable
 	c.client.SetToken(secret.Auth.ClientToken)
-	ctrl.Log.V(1).Info("[vaultclient] token renewed, new TTL: %v", c.ttl)
+	ctrl.Log.V(1).Info("[vaultclient] token renewed", "ttl", c.ttl)
 	return nil
 }
 
@@ -281,24 +281,24 @@ func (a *AppRoleClient) RenewSelfHelper(ctx context.Context) error {
 	return a.renewSelf(ctx)
 }
 
-func NewAppRoleClientHelper(namespace string, rolePath string, roleID string, secretID string, KVMount string, mockClient IVaultClient) (*AppRoleClient, error) {
+func NewAppRoleClientHelper(namespace string, rolePath string, roleID string, secretID string, kvMount string, mockClient IVaultClient) (*AppRoleClient, error) {
 	return &AppRoleClient{
 		client:    mockClient,
 		namespace: namespace,
 		rolePath:  rolePath,
 		roleID:    roleID,
-		KVMount:   KVMount,
+		KVMount:   kvMount,
 		secretID:  secretID,
 	}, nil
 }
 
-func AutoRenewHelper(namespace string, rolePath string, roleID string, secretID string, KVMount string, mockClient IVaultClient, timeToWaitMs int, sleep Sleeper) (*AppRoleClient, error) {
+func AutoRenewHelper(namespace string, rolePath string, roleID string, secretID string, kvMount string, mockClient IVaultClient, timeToWaitMs int, sleep Sleeper) (*AppRoleClient, error) {
 	c := &AppRoleClient{
 		client:    mockClient,
 		namespace: namespace,
 		rolePath:  rolePath,
 		roleID:    roleID,
-		KVMount:   KVMount,
+		KVMount:   kvMount,
 		secretID:  secretID,
 		renewable: true,
 		sleeper:   sleep,

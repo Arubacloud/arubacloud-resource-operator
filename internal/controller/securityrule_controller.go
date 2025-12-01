@@ -114,7 +114,7 @@ func (r *SecurityRuleReconciler) Creating(ctx context.Context) (ctrl.Result, err
 			},
 		}
 
-		securityRuleResp, err := r.HelperClient.CreateSecurityRule(ctx, projectID, vpcID, securityGroupID, securityRuleReq)
+		securityRuleResp, err := r.CreateSecurityRule(ctx, projectID, vpcID, securityGroupID, securityRuleReq)
 		if err != nil {
 			return "", "", err
 		}
@@ -134,7 +134,7 @@ func (r *SecurityRuleReconciler) Creating(ctx context.Context) (ctrl.Result, err
 
 func (r *SecurityRuleReconciler) Provisioning(ctx context.Context) (ctrl.Result, error) {
 	return r.HandleProvisioning(ctx, func(ctx context.Context) (string, error) {
-		securityRuleResp, err := r.HelperClient.GetSecurityRule(ctx, r.Object.Status.ProjectID, r.Object.Status.VpcID, r.Object.Status.SecurityGroupID, r.Object.Status.ResourceID)
+		securityRuleResp, err := r.GetSecurityRule(ctx, r.Object.Status.ProjectID, r.Object.Status.VpcID, r.Object.Status.SecurityGroupID, r.Object.Status.ResourceID)
 		if err != nil {
 			return "", err
 		}
@@ -167,7 +167,7 @@ func (r *SecurityRuleReconciler) Updating(ctx context.Context) (ctrl.Result, err
 			},
 		}
 
-		_, err := r.HelperClient.UpdateSecurityRule(ctx, r.Object.Status.ProjectID, r.Object.Status.VpcID, r.Object.Status.SecurityGroupID, r.Object.Status.ResourceID, securityRuleReq)
+		_, err := r.UpdateSecurityRule(ctx, r.Object.Status.ProjectID, r.Object.Status.VpcID, r.Object.Status.SecurityGroupID, r.Object.Status.ResourceID, securityRuleReq)
 		return err
 	})
 }
@@ -178,6 +178,6 @@ func (r *SecurityRuleReconciler) Created(ctx context.Context) (ctrl.Result, erro
 
 func (r *SecurityRuleReconciler) Deleting(ctx context.Context) (ctrl.Result, error) {
 	return r.HandleDeletion(ctx, securityRuleFinalizerName, func(ctx context.Context) error {
-		return r.HelperClient.DeleteSecurityRule(ctx, r.Object.Status.ProjectID, r.Object.Status.VpcID, r.Object.Status.SecurityGroupID, r.Object.Status.ResourceID)
+		return r.DeleteSecurityRule(ctx, r.Object.Status.ProjectID, r.Object.Status.VpcID, r.Object.Status.SecurityGroupID, r.Object.Status.ResourceID)
 	})
 }

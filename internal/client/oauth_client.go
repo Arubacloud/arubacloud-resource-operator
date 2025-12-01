@@ -30,10 +30,10 @@ func (k *OauthClient) LoginClient(ctx context.Context, clientID, clientSecret, r
 }
 
 type TokenManager struct {
-	client       IOauthClient
-	ctx          context.Context
-	cache        *TokenCache
-	token        *gocloak.JWT
+	client IOauthClient
+	ctx    context.Context
+	cache  *TokenCache
+
 	mu           sync.Mutex
 	clientID     string
 	clientSecret string

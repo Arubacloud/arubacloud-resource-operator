@@ -94,7 +94,7 @@ func (r *KeyPairReconciler) Creating(ctx context.Context) (ctrl.Result, error) {
 			},
 		}
 
-		keyPairResp, err := r.HelperClient.CreateKeyPair(ctx, projectID, keyPairReq)
+		keyPairResp, err := r.CreateKeyPair(ctx, projectID, keyPairReq)
 		if err != nil {
 			return "", "", err
 		}
@@ -112,7 +112,7 @@ func (r *KeyPairReconciler) Creating(ctx context.Context) (ctrl.Result, error) {
 
 func (r *KeyPairReconciler) Provisioning(ctx context.Context) (ctrl.Result, error) {
 	return r.HandleProvisioning(ctx, func(ctx context.Context) (string, error) {
-		keyPairResp, err := r.HelperClient.GetKeyPair(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID)
+		keyPairResp, err := r.GetKeyPair(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID)
 		if err != nil {
 			return "", err
 		}
@@ -136,7 +136,7 @@ func (r *KeyPairReconciler) Updating(ctx context.Context) (ctrl.Result, error) {
 			},
 		}
 
-		_, err := r.HelperClient.UpdateKeyPair(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID, keyPairReq)
+		_, err := r.UpdateKeyPair(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID, keyPairReq)
 		return err
 	})
 }
@@ -147,6 +147,6 @@ func (r *KeyPairReconciler) Created(ctx context.Context) (ctrl.Result, error) {
 
 func (r *KeyPairReconciler) Deleting(ctx context.Context) (ctrl.Result, error) {
 	return r.HandleDeletion(ctx, keyPairFinalizerName, func(ctx context.Context) error {
-		return r.HelperClient.DeleteKeyPair(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID)
+		return r.DeleteKeyPair(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID)
 	})
 }

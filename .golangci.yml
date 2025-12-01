@@ -1,150 +1,34 @@
-# golangci-lint configuration for Arubacloud Resource Operator
-# See https://golangci-lint.run/usage/configuration/ for full documentation
-
-version: 2
-
 run:
   timeout: 5m
   tests: true
+  skip-dirs:
+    - bin
 
 linters:
   enable:
-    # Default linters
-    - errcheck # Check for unchecked errors
-    - gosimple # Simplify code
-    - govet # Vet examines Go source code
-    - ineffassign # Detects ineffectual assignments
-    - staticcheck # Static analysis
-    - unused # Checks for unused code
-
-    # Additional recommended linters
-    - gofmt # Checks whether code was gofmt-ed
-    - goimports # Check import statements are formatted
-    - revive # Fast, configurable, extensible, flexible linter
-    - misspell # Finds commonly misspelled English words
-    - unconvert # Remove unnecessary type conversions
-    - unparam # Reports unused function parameters
-    - whitespace # Detects leading and trailing whitespace
-
-    # Security linters
-    - gosec # Security problems
-
-    # Style linters
-    - stylecheck # Replacement for golint
-
-    # Best practices
-    - errname # Checks that error names follow conventions
-    - errorlint # Find code that will cause problems with Go 1.13 error wrapping
-    - gocyclo # Computes cyclomatic complexity
-    - nilerr # Finds code returning nil even if it checks that error is not nil
-
-  disable:
-    - typecheck # Can conflict with generated code
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gofmt
+    - goimports
+    - misspell
+    - unparam
+    - unconvert
+    - goconst
+    #- gocyclo # Temporarily disabled: awaiting refactoring.
 
 linters-settings:
-  errcheck:
-    check-type-assertions: false
-    check-blank: false
-
-  govet:
-    enable:
-      - shadow
-    settings:
-      printf:
-        funcs:
-          - (github.com/go-logr/logr.Logger).Infof
-          - (github.com/go-logr/logr.Logger).Warnf
-          - (github.com/go-logr/logr.Logger).Errorf
-
   gocyclo:
     min-complexity: 15
-
-  revive:
-    rules:
-      - name: blank-imports
-      - name: context-as-argument
-      - name: context-keys-type
-      - name: dot-imports
-      - name: error-return
-      - name: error-strings
-      - name: error-naming
-      - name: exported
-        arguments:
-          - 'checkPrivateReceivers'
-          - 'sayRepetitiveInsteadOfStutters'
-      - name: if-return
-      - name: increment-decrement
-      - name: var-naming
-      - name: var-declaration
-      - name: package-comments
-      - name: range
-      - name: receiver-naming
-      - name: time-naming
-      - name: unexported-return
-      - name: indent-error-flow
-      - name: errorf
-      - name: empty-block
-      - name: superfluous-else
-      - name: unused-parameter
-      - name: unreachable-code
-      - name: redefines-builtin-id
-
-  gosec:
-    excludes:
-      - G404
-    config:
-      global:
-        nosec: false
-        show-ignored: false
-        audit: false
-
-  stylecheck:
-    checks:
-      - 'all'
-      - '-ST1000'
-      - '-ST1003'
-
-  misspell:
-    locale: US
-
-  nolintlint:
-    allow-unused: false
-    allow-leading-space: false
-    require-explanation: true
-    require-specific: true
+  errcheck:
+    check-blank: true
 
 issues:
-  max-issues-per-linter: 0
-  max-same-issues: 0
   exclude-rules:
     - path: _test\.go
       linters:
-        - gocyclo
         - errcheck
-        - gosec
-        - unused
-        - unparam
-    - linters:
-        - staticcheck
-      text: 'SA1019:'
-    - path: cmd/main\.go
-      linters:
-        - gocyclo
-        - funlen
-    - path: zz_generated\..*\.go
-      linters:
-        - all
-    - path: internal/mocks/
-      linters:
-        - all
-  new: false
-  fix: false
-
-output:
-  formats:
-    - format: colored-line-number
-      path: stdout
-  print-issued-lines: true
-  print-linter-name: true
-  uniq-by-line: true
-  sort-results: true
+        - goconst

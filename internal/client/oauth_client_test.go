@@ -10,6 +10,7 @@ import (
 	"github.com/Nerzal/gocloak/v13"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 func TestOauthLogin(t *testing.T) {
@@ -27,7 +28,7 @@ func TestOauthLogin(t *testing.T) {
 
 	jwt, err := tm.GetAccessToken(true, "tenant")
 
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, "access-token", jwt)
 
 	mockOauth.AssertExpectations(t)
@@ -88,9 +89,9 @@ func TestTokenManager_GetAccessToken(t *testing.T) {
 			token, err := tm.GetAccessToken(true, "tenant")
 
 			if tt.expectError {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.NoError(t, err)
+				require.NoError(t, err)
 				assert.Equal(t, tt.expectedToken, token)
 			}
 

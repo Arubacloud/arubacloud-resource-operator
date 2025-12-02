@@ -95,7 +95,7 @@ func (r *VpcReconciler) Creating(ctx context.Context) (ctrl.Result, error) {
 			},
 		}
 
-		vpcResp, err := r.HelperClient.CreateVpc(ctx, projectID, vpcReq)
+		vpcResp, err := r.CreateVpc(ctx, projectID, vpcReq)
 		if err != nil {
 			return "", "", err
 		}
@@ -113,7 +113,7 @@ func (r *VpcReconciler) Creating(ctx context.Context) (ctrl.Result, error) {
 
 func (r *VpcReconciler) Provisioning(ctx context.Context) (ctrl.Result, error) {
 	return r.HandleProvisioning(ctx, func(ctx context.Context) (string, error) {
-		vpcResp, err := r.HelperClient.GetVpc(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID)
+		vpcResp, err := r.GetVpc(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID)
 		if err != nil {
 			return "", err
 		}
@@ -137,7 +137,7 @@ func (r *VpcReconciler) Updating(ctx context.Context) (ctrl.Result, error) {
 			},
 		}
 
-		_, err := r.HelperClient.UpdateVpc(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID, vpcReq)
+		_, err := r.UpdateVpc(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID, vpcReq)
 		return err
 	})
 }
@@ -148,6 +148,6 @@ func (r *VpcReconciler) Created(ctx context.Context) (ctrl.Result, error) {
 
 func (r *VpcReconciler) Deleting(ctx context.Context) (ctrl.Result, error) {
 	return r.HandleDeletion(ctx, vpcFinalizerName, func(ctx context.Context) error {
-		return r.HelperClient.DeleteVpc(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID)
+		return r.DeleteVpc(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID)
 	})
 }

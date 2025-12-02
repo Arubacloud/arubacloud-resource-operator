@@ -9,8 +9,8 @@ import (
 	"github.com/Arubacloud/arubacloud-resource-operator/internal/mocks"
 	vault "github.com/hashicorp/vault/api"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRenew(t *testing.T) {
@@ -32,11 +32,11 @@ func TestRenew(t *testing.T) {
 	mockClient.On("Auth").Return(mockAuth)
 	mockClient.On("SetToken", mock.AnythingOfType("string")).Return(nil)
 	c, err := client.NewAppRoleClientHelper("test-namespace", "test-role-path", "test-role-id", "test-secret-id", "kv", mockClient)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	err = c.RenewSelfHelper(t.Context())
 
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	mockAuthToken.AssertExpectations(t)
 	mockAuth.AssertExpectations(t)
 	mockClient.AssertExpectations(t)
@@ -98,9 +98,9 @@ func TestLogin(t *testing.T) {
 			_, err := client.NewAppRoleClient("test-namespace", "test-role-path", "test-role-id", "test-secret-id", "kv", mockClient)
 
 			if tt.expectedErr {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.NoError(t, err)
+				require.NoError(t, err)
 
 			}
 
@@ -131,7 +131,7 @@ func TestAutoRenew_TriggersRenewal(t *testing.T) {
 
 	// Controlled fake timer
 	mockSleeper := new(mocks.MockSleeper)
-	//ch := make(chan time.Time, 1)
+	// ch := make(chan time.Time, 1)
 
 	mockSleeper.On("After", mock.Anything).Return(func(d time.Duration) <-chan time.Time {
 		ch := make(chan time.Time, 1)
@@ -143,7 +143,7 @@ func TestAutoRenew_TriggersRenewal(t *testing.T) {
 		return ch
 	})
 
-	//sleeper := &mockSleeper{ch: make(chan time.Time, 1)}
+	// sleeper := &mockSleeper{ch: make(chan time.Time, 1)}
 
 	c, _ := client.AutoRenewHelper("test-namespace", "test-role-path", "test-role-id", "test-secret-id", "kv", mockVault, 50, mockSleeper)
 

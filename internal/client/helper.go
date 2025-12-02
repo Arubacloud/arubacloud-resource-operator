@@ -120,7 +120,11 @@ func (c *HelperClient) DoAPIRequest(ctx context.Context, method, endpoint string
 
 	clientLog.Info("API Response", "Status", resp.Status)
 
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			clientLog.Error(closeErr, "Failed to close response body")
+		}
+	}()
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("failed to read response body: %w", err)
@@ -129,8 +133,7 @@ func (c *HelperClient) DoAPIRequest(ctx context.Context, method, endpoint string
 	expectedStatuses := []int{http.StatusOK, http.StatusCreated, http.StatusAccepted, http.StatusNoContent}
 	// For DELETE, also consider 404 and 405 as successful responses, that's strange but true for aruba CMP
 	if method == "DELETE" {
-		expectedStatuses = append(expectedStatuses, http.StatusNotFound)
-		expectedStatuses = append(expectedStatuses, http.StatusMethodNotAllowed)
+		expectedStatuses = append(expectedStatuses, http.StatusNotFound, http.StatusMethodNotAllowed)
 	}
 	if slices.Contains(expectedStatuses, resp.StatusCode) {
 		if response != nil && len(responseBody) > 0 {

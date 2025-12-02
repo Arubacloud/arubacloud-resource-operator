@@ -1,183 +1,131 @@
-# golangci-lint configuration for Arubacloud Resource Operator
-# See https://golangci-lint.run/usage/configuration/ for full documentation
-
-run:
-  timeout: 5m
-  tests: true
-  skip-dirs:
-    - bin
-    - dist
-    - hack
-  skip-files:
-    - ".*\\.pb\\.go$"
-    - "zz_generated\\..*\\.go$"
-
+version: '2'
 linters:
   enable:
-    # Default linters
-    - errcheck      # Check for unchecked errors
-    - gosimple      # Simplify code
-    - govet         # Vet examines Go source code
-    - ineffassign   # Detects ineffectual assignments
-    - staticcheck   # Static analysis
-    - unused        # Checks for unused code
-    
-    # Additional recommended linters
-    - gofmt         # Checks whether code was gofmt-ed
-    - goimports     # Check import statements are formatted
-    - revive        # Fast, configurable, extensible, flexible linter
-    - misspell      # Finds commonly misspelled English words
-    - unconvert     # Remove unnecessary type conversions
-    - unparam       # Reports unused function parameters
-    - whitespace    # Detects leading and trailing whitespace
-    
-    # Security linters
-    - gosec         # Security problems
-    
-    # Style linters
-    - stylecheck    # Replacement for golint
-    
-    # Best practices
-    - errname       # Checks that error names follow conventions
-    - errorlint     # Find code that will cause problems with Go 1.13 error wrapping
-    - gocyclo       # Computes cyclomatic complexity
-    - nilerr        # Finds code returning nil even if it checks that error is not nil
-    
-  disable:
-    - typecheck     # Can conflict with generated code
-
-linters-settings:
-  errcheck:
-    # Report about not checking of errors in type assertions: `a := b.(MyStruct)`;
-    check-type-assertions: false
-    # Report about assignment of errors to blank identifier: `num, _ := strconv.Atoi(numStr)`;
-    check-blank: false
-  
-  govet:
-    enable:
-      - shadow
-    settings:
-      printf:
-        funcs:
-          - (github.com/go-logr/logr.Logger).Infof
-          - (github.com/go-logr/logr.Logger).Warnf
-          - (github.com/go-logr/logr.Logger).Errorf
-  
-  gocyclo:
-    # Minimal code complexity to report
-    min-complexity: 15
-  
-  revive:
+    - asasalint
+    - asciicheck
+    - bidichk
+    - bodyclose
+    - contextcheck
+    - durationcheck
+    - errchkjson
+    - errorlint
+    - exhaustive
+    - gocheckcompilerdirectives
+    - gochecksumtype
+    - goconst
+    - gocritic
+    - gocyclo
+    - gosec
+    - gosmopolitan
+    - loggercheck
+    - makezero
+    - misspell
+    - musttag
+    - nakedret
+    - nilerr
+    - nilnesserr
+    - noctx
+    - prealloc
+    - protogetter
+    - reassign
+    - recvcheck
+    - rowserrcheck
+    - spancheck
+    - sqlclosecheck
+    - testifylint
+    - unconvert
+    - unparam
+    - zerologlint
+  settings:
+    dupl:
+      threshold: 100
+    errcheck:
+      check-type-assertions: false
+      check-blank: false
+    goconst:
+      min-len: 3
+      min-occurrences: 5
+    gocritic:
+      disabled-checks:
+        - preferFprint
+      enabled-tags:
+        - performance
+      settings:
+        captLocal:
+          paramsOnly: true
+        rangeValCopy:
+          sizeThreshold: 32
+    gocyclo:
+      min-complexity: 20
+    lll:
+      tab-width: 1
+    nakedret:
+      max-func-lines: 30
+    prealloc:
+      simple: true
+      range-loops: true
+      for-loops: false
+    unparam:
+      check-exported: false
+  exclusions:
+    generated: lax
     rules:
-      - name: blank-imports
-      - name: context-as-argument
-      - name: context-keys-type
-      - name: dot-imports
-      - name: error-return
-      - name: error-strings
-      - name: error-naming
-      - name: exported
-        arguments:
-          - "checkPrivateReceivers"
-          - "sayRepetitiveInsteadOfStutters"
-      - name: if-return
-      - name: increment-decrement
-      - name: var-naming
-      - name: var-declaration
-      - name: package-comments
-      - name: range
-      - name: receiver-naming
-      - name: time-naming
-      - name: unexported-return
-      - name: indent-error-flow
-      - name: errorf
-      - name: empty-block
-      - name: superfluous-else
-      - name: unused-parameter
-      - name: unreachable-code
-      - name: redefines-builtin-id
-  
-  gosec:
-    excludes:
-      - G404  # Use of weak random number generator (math/rand instead of crypto/rand)
-    config:
-      global:
-        nosec: false
-        show-ignored: false
-        audit: false
-  
-  stylecheck:
-    checks: 
-      - "all"
-      - "-ST1000"  # Disable package comment requirement for now
-      - "-ST1003"  # Disable ALL_CAPS in Go names
-  
-  misspell:
-    locale: US
-  
-  nolintlint:
-    allow-unused: false
-    allow-leading-space: false
-    require-explanation: true
-    require-specific: true
-
+      - linters:
+          - dupl
+          - errcheck
+          - gocyclo
+          - gosec
+          - scopelint
+          - unparam
+          - unused
+        path: _test(ing)?\.go
+      - linters:
+          - dupl
+          - errcheck
+          - gocyclo
+          - gosec
+          - scopelint
+          - unparam
+          - unused
+        path: test_constants.go
+      - linters:
+          - unused
+        path: test*.go
+      - linters:
+          - gocritic
+        path: _test\.go
+        text: (unnamedResult|exitAfterDefer)
+      - linters:
+          - gocritic
+        text: '(hugeParam|rangeValCopy):'
+      - linters:
+          - staticcheck
+        text: 'SA3000:'
+      - linters:
+          - gosec
+        text: 'G101:'
+      - linters:
+          - gosec
+        text: 'G104:'
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+      - zz_generated$
 issues:
-  # Maximum issues count per one linter
-  max-issues-per-linter: 0
-  # Maximum count of issues with the same text
   max-same-issues: 0
-  
-  # Excluding configuration per-path, per-linter, per-text and per-source
-  exclude-rules:
-    # Exclude some linters from running on tests files
-    - path: _test\.go
-      linters:
-        - gocyclo
-        - errcheck
-        - gosec
-        - unused
-        - unparam
-    
-    # Exclude some staticcheck messages
-    - linters:
-        - staticcheck
-      text: "SA1019:"  # Deprecation warnings
-    
-    # Allow main.go to have higher complexity due to setup code
-    - path: cmd/main\.go
-      linters:
-        - gocyclo
-        - funlen
-    
-    # Generated files
-    - path: zz_generated\..*\.go
-      linters:
-        - all
-    
-    # Mock files
-    - path: internal/mocks/
-      linters:
-        - all
-  
-  # Show only new issues created after git revision
   new: false
-  
-  # Fix found issues (if it's supported by the linter)
-  fix: false
-
-output:
-  # colored-line-number|line-number|json|tab|checkstyle|code-climate, default is "colored-line-number"
-  formats:
-    - format: colored-line-number
-  
-  # Print lines of code with issue
-  print-issued-lines: true
-  
-  # Print linter name in the end of issue text
-  print-linter-name: true
-  
-  # Make issues output unique by line
-  uniq-by-line: true
-  
-  # Sort results by: filepath, line and column
-  sort-results: true
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    gofmt:
+      simplify: true
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+      - zz_generated$

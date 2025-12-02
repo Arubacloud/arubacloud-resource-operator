@@ -2,6 +2,7 @@ package reconciler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -93,7 +94,7 @@ func (r *Reconciler) Reconcile(
 	req ctrl.Request,
 	tenant *string,
 ) (ctrl.Result, error) {
-	err := r.Client.Get(ctx, req.NamespacedName, r.Object)
+	err := r.Get(ctx, req.NamespacedName, r.Object)
 	if err != nil {
 		if apiError.IsNotFound(err) {
 			return ctrl.Result{}, nil
@@ -108,7 +109,7 @@ func (r *Reconciler) Reconcile(
 	}
 
 	ctrl.Log.V(1).Info("Setting tenant in Aruba client", "TenantID", tenant)
-	if err := r.Authenticate(*tenant); err != nil {
+	if err := r.Authenticate(ctx, *tenant); err != nil {
 		ctrl.Log.Error(err, "Failed to authenticate Aruba client", "tenantID", tenant)
 		return ctrl.Result{}, err
 	}
@@ -126,7 +127,7 @@ func (r *Reconciler) Reconcile(
 	var reconcileResult ctrl.Result
 	var reconcileError error
 
-	switch r.ResourceStatus.Phase {
+	switch r.Phase {
 	case "":
 		reconcileResult, reconcileError = r.Init(ctx)
 	case v1alpha1.ResourcePhaseCreating:
@@ -139,6 +140,12 @@ func (r *Reconciler) Reconcile(
 		reconcileResult, reconcileError = r.Created(ctx)
 	case v1alpha1.ResourcePhaseDeleting:
 		reconcileResult, reconcileError = r.Deleting(ctx)
+	case v1alpha1.ResourcePhaseDeleted:
+		// Resource is already deleted, nothing to do
+		reconcileResult, reconcileError = ctrl.Result{}, nil
+	case v1alpha1.ResourcePhaseFailed:
+		// Resource is in failed state, nothing to do unless spec changes
+		reconcileResult, reconcileError = ctrl.Result{}, nil
 	}
 
 	return reconcileResult, reconcileError
@@ -148,7 +155,7 @@ func (r *Reconciler) Reconcile(
 func (r *Reconciler) HandlePhaseTimeout(ctx context.Context) (bool, ctrl.Result, error) {
 	isTimeout := false
 
-	if r.ResourceStatus.PhaseStartTime == nil {
+	if r.PhaseStartTime == nil {
 		return isTimeout, ctrl.Result{}, nil
 	}
 
@@ -159,18 +166,18 @@ func (r *Reconciler) HandlePhaseTimeout(ctx context.Context) (bool, ctrl.Result,
 		v1alpha1.ResourcePhaseDeleting,
 	}
 
-	if !slices.Contains(transitioningPhases, r.ResourceStatus.Phase) {
+	if !slices.Contains(transitioningPhases, r.Phase) {
 		return isTimeout, ctrl.Result{}, nil
 	}
 
-	elapsed := time.Since(r.ResourceStatus.PhaseStartTime.Time)
+	elapsed := time.Since(r.PhaseStartTime.Time)
 	isTimeout = elapsed > maxPhaseTimeout
 
 	if !isTimeout {
 		return isTimeout, ctrl.Result{}, nil
 	}
 
-	phaseLogger := ctrl.Log.WithValues("Phase", r.ResourceStatus.Phase, "Kind", r.Object.GetObjectKind().GroupVersionKind().Kind, "Name", r.Object.GetName())
+	phaseLogger := ctrl.Log.WithValues("Phase", r.Phase, "Kind", r.GetObjectKind().GroupVersionKind().Kind, "Name", r.GetName())
 	message := fmt.Sprintf("Reconciliation took too much time (timeout: %+v)", maxPhaseTimeout)
 	phaseLogger.Info(message)
 
@@ -188,8 +195,8 @@ func (r *Reconciler) HandlePhaseTimeout(ctx context.Context) (bool, ctrl.Result,
 
 // HandleToDelete checks if resource should transition to deleting phase
 func (r *Reconciler) HandleToDelete(ctx context.Context) (bool, ctrl.Result, error) {
-	shouldBeDeleted := r.ResourceStatus.Phase != v1alpha1.ResourcePhaseDeleting &&
-		r.ResourceStatus.Phase != v1alpha1.ResourcePhaseFailed &&
+	shouldBeDeleted := r.Phase != v1alpha1.ResourcePhaseDeleting &&
+		r.Phase != v1alpha1.ResourcePhaseFailed &&
 		!r.Object.GetDeletionTimestamp().IsZero()
 
 	if !shouldBeDeleted {
@@ -215,14 +222,14 @@ func (r *Reconciler) Next(
 	reason, message string,
 	requeue bool,
 ) (ctrl.Result, error) {
-	if r.ResourceStatus.Phase == "" {
-		r.ResourceStatus.Phase = "Initializing"
+	if r.Phase == "" {
+		r.Phase = "Initializing"
 	}
 
-	phaseLogger := ctrl.Log.WithValues("Phase", r.ResourceStatus.Phase, "NextPhase", nextPhase, "Kind", r.Object.GetObjectKind().GroupVersionKind().Kind, "Name", r.Object.GetName())
+	phaseLogger := ctrl.Log.WithValues("Phase", r.Phase, "NextPhase", nextPhase, "Kind", r.GetObjectKind().GroupVersionKind().Kind, "Name", r.GetName())
 	// Debouncing logic: if this is a retry (requeue=true) with the same phase, check timing
-	if requeue && r.ResourceStatus.Phase == nextPhase && r.ResourceStatus.PhaseStartTime != nil {
-		timeSincePhaseStart := time.Since(r.ResourceStatus.PhaseStartTime.Time)
+	if requeue && r.Phase == nextPhase && r.PhaseStartTime != nil {
+		timeSincePhaseStart := time.Since(r.PhaseStartTime.Time)
 
 		intervalsElapsed := int(timeSincePhaseStart / requeueAfter)
 		nextInterval := time.Duration(intervalsElapsed+1) * requeueAfter
@@ -242,14 +249,14 @@ func (r *Reconciler) Next(
 	}
 
 	// Update phase start time ONLY if phase is changing or not set
-	if r.ResourceStatus.PhaseStartTime == nil || r.ResourceStatus.Phase != nextPhase {
+	if r.PhaseStartTime == nil || r.Phase != nextPhase {
 		now := metav1.Now()
-		r.ResourceStatus.PhaseStartTime = &now
+		r.PhaseStartTime = &now
 	}
-	r.ResourceStatus.Phase = nextPhase
-	r.ResourceStatus.Message = message
-	r.ResourceStatus.ObservedGeneration = r.Object.GetGeneration()
-	r.ResourceStatus.Conditions = util.UpdateConditions(r.ResourceStatus.Conditions, v1alpha1.ConditionTypeSynchronized, status, reason, message)
+	r.Phase = nextPhase
+	r.Message = message
+	r.ObservedGeneration = r.GetGeneration()
+	r.Conditions = util.UpdateConditions(r.Conditions, v1alpha1.ConditionTypeSynchronized, status, reason, message)
 
 	if err := r.Client.Status().Update(ctx, r.Object); err != nil {
 		phaseLogger.Error(err, "failed to update status")
@@ -262,7 +269,8 @@ func (r *Reconciler) Next(
 
 // NextToFailedOnApiError handles API errors with proper 4xx/5xx logic and condition management
 func (r *Reconciler) NextToFailedOnApiError(ctx context.Context, err error) (ctrl.Result, error) {
-	if apiErr, ok := err.(*arubaClient.ApiError); ok {
+	var apiErr *arubaClient.ApiError
+	if errors.As(err, &apiErr) {
 		statusCode := apiErr.Status
 		message := apiErr.Error()
 
@@ -270,7 +278,7 @@ func (r *Reconciler) NextToFailedOnApiError(ctx context.Context, err error) (ctr
 		if apiErr.IsInvalidStatus() {
 			return r.Next(
 				ctx,
-				r.ResourceStatus.Phase,
+				r.Phase,
 				metav1.ConditionFalse,
 				"ResourceNotReady",
 				fmt.Sprintf("Remote resource is not ready, will retry: %s", message),
@@ -294,7 +302,7 @@ func (r *Reconciler) NextToFailedOnApiError(ctx context.Context, err error) (ctr
 		if statusCode >= 500 {
 			return r.Next(
 				ctx,
-				r.ResourceStatus.Phase,
+				r.Phase,
 				metav1.ConditionFalse,
 				"ServerError",
 				fmt.Sprintf("Server error (HTTP %d): %s - will retry", statusCode, message),
@@ -311,7 +319,7 @@ func (r *Reconciler) NextToFailedOnApiError(ctx context.Context, err error) (ctr
 func (r *Reconciler) NextToFailedOnReconcileError(ctx context.Context, err error) (ctrl.Result, error) {
 	return r.Next(
 		ctx,
-		r.ResourceStatus.Phase,
+		r.Phase,
 		metav1.ConditionFalse,
 		"ReconcileError",
 		fmt.Sprintf("Reconcile error encountered, will retry: %s", err.Error()),
@@ -324,7 +332,7 @@ func (r *Reconciler) InitializeResource(ctx context.Context, finalizerName strin
 	// Add finalizer if not present
 	if !controllerutil.ContainsFinalizer(r.Object, finalizerName) {
 		controllerutil.AddFinalizer(r.Object, finalizerName)
-		err := r.Client.Update(ctx, r.Object)
+		err := r.Update(ctx, r.Object)
 		if err != nil {
 			return r.NextToFailedOnApiError(ctx, err)
 		}
@@ -343,7 +351,7 @@ func (r *Reconciler) HandleDeletion(ctx context.Context, finalizerName string, d
 	// Remove finalizer to allow Kubernetes to delete the resource
 	if controllerutil.ContainsFinalizer(r.Object, finalizerName) {
 		controllerutil.RemoveFinalizer(r.Object, finalizerName)
-		err := r.Client.Update(ctx, r.Object)
+		err := r.Update(ctx, r.Object)
 		if err != nil {
 			return r.NextToFailedOnApiError(ctx, err)
 		}
@@ -360,7 +368,7 @@ func (r *Reconciler) HandleCreating(ctx context.Context, createFunc func(context
 	}
 
 	// Update status with resource ID
-	r.ResourceStatus.ResourceID = resourceID
+	r.ResourceID = resourceID
 
 	if state == "InCreation" || state == "Provisioning" {
 		return r.Next(
@@ -441,13 +449,13 @@ func (r *Reconciler) HandleProvisioning(ctx context.Context, getStatusFunc func(
 
 // CheckForUpdates checks if resource needs update based on generation
 func (r *Reconciler) CheckForUpdates(ctx context.Context) (ctrl.Result, error) {
-	phaseLogger := ctrl.Log.WithValues("Phase", r.ResourceStatus.Phase, "Kind", r.Object.GetObjectKind().GroupVersionKind().Kind, "Name", r.Object.GetName())
+	phaseLogger := ctrl.Log.WithValues("Phase", r.Phase, "Kind", r.Object.GetObjectKind().GroupVersionKind().Kind, "Name", r.GetName())
 
 	// Check if resource needs update
-	if r.ResourceStatus.ObservedGeneration != r.Object.GetGeneration() {
+	if r.ObservedGeneration != r.GetGeneration() {
 		phaseLogger.Info("resource needs update - generation mismatch detected",
-			"generation", r.Object.GetGeneration(),
-			"observedGeneration", r.ResourceStatus.ObservedGeneration)
+			"generation", r.GetGeneration(),
+			"observedGeneration", r.ObservedGeneration)
 
 		return r.Next(
 			ctx,
@@ -464,18 +472,18 @@ func (r *Reconciler) CheckForUpdates(ctx context.Context) (ctrl.Result, error) {
 }
 
 // Authenticate authenticates the client with the given tenant
-func (r *Reconciler) Authenticate(tenantId string) error {
+func (r *Reconciler) Authenticate(ctx context.Context, tenantId string) error {
 	if r.Client == nil {
 		return fmt.Errorf("client configuration not loaded")
 	}
 
 	token := r.TokenManager.GetActiveToken(tenantId)
 	if token != "" {
-		r.HelperClient.SetAPIToken(token)
+		r.SetAPIToken(token)
 		return nil
 	}
 
-	apiKeyData, err := r.AppRoleClient.GetSecret(tenantId)
+	apiKeyData, err := r.GetSecret(ctx, tenantId)
 	if err != nil {
 		ctrl.Log.Error(err, "Failed to get API key from Vault", "TenantID", tenantId)
 		return err
@@ -495,7 +503,7 @@ func (r *Reconciler) Authenticate(tenantId string) error {
 		return err
 	}
 
-	r.HelperClient.SetAPIToken(token)
+	r.SetAPIToken(token)
 	return nil
 }
 

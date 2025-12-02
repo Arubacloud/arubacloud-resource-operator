@@ -20,11 +20,14 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.0'
+          go-version-file: 'go.mod'
           cache: true
 
       - name: Install dependencies
         run: go mod download
+
+      - name: Install mockery
+        run: go install github.com/vektra/mockery/v2@latest
 
       - name: Run go fmt
         run: make fmt
@@ -59,7 +62,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.0'
+          go-version-file: 'go.mod'
           cache: true
 
       - name: Run golangci-lint
@@ -79,7 +82,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.0'
+          go-version-file: 'go.mod'
           cache: true
 
       - name: Build manager binary

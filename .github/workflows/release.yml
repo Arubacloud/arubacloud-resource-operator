@@ -27,8 +27,11 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.0'
+          go-version-file: 'go.mod'
           cache: true
+
+      - name: Install mockery
+        run: go install github.com/vektra/mockery/v2@latest
 
       - name: Run tests
         run: make test

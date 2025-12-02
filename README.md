@@ -13,6 +13,35 @@
 - kubectl version v1.11.3+.
 - Access to a Kubernetes v1.11.3+ cluster.
 
+### Local Development and Testing
+
+Before pushing your changes, you can test locally to ensure all checks will pass in CI:
+
+**Quick test (manual commands):**
+```sh
+# Install mockery (required for code generation)
+go install github.com/vektra/mockery/v2@latest
+
+# Run the same checks as CI
+make fmt
+make vet
+make manifests
+make generate
+make test
+make build
+```
+
+**Automated test script:**
+```sh
+# Make the script executable
+chmod +x scripts/test-locally.sh
+
+# Run all tests
+./scripts/test-locally.sh
+```
+
+This script will run all the checks that GitHub Actions performs, helping you catch issues before pushing.
+
 ### To Deploy on the cluster
 **Build and push your image to the location specified by `IMG`:**
 

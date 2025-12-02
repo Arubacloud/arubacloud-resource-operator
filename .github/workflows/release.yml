@@ -1,150 +1,92 @@
 name: Release
 
 on:
-    push:
-        tags:
-            - "v*"
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+  packages: write
 
 env:
-    REGISTRY: ghcr.io
-    IMAGE_NAME: ${{ github.repository }}
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-    release:
-        name: Create Release
-        runs-on: ubuntu-latest
-        permissions:
-            contents: write
-            packages: write
-            id-token: write
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
 
-        steps:
-            - uses: actions/checkout@v5
-              with:
-                  fetch-depth: 0
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
-            - name: Set up Go
-              uses: actions/setup-go@v6
-              with:
-                  go-version: "1.24"
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: "go.mod"
+          cache: true
 
-            - name: Cache Go modules
-              uses: actions/cache@v4
-              with:
-                  path: |
-                      ~/.cache/go-build
-                      ~/go/pkg/mod
-                  key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-                  restore-keys: |
-                      ${{ runner.os }}-go-
+      - name: Run tests
+        run: make test
 
-            - name: Download dependencies
-              run: go mod download
+      - name: Build binaries
+        run: make build
 
-            - name: Generate code and manifests
-              run: make generate manifests
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-            - name: Build binary
-              run: make build
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha
 
-            - name: Run tests
-              run: make test
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
 
-            - name: Set up Docker Buildx
-              uses: docker/setup-buildx-action@v3
+      - name: Generate manifests
+        run: |
+          make manifests
+          make kustomize
 
-            - name: Log in to Container Registry
-              uses: docker/login-action@v3
-              with:
-                  registry: ${{ env.REGISTRY }}
-                  username: ${{ github.actor }}
-                  password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build installer
+        run: |
+          IMG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }} make build-installer
 
-            - name: Extract metadata
-              id: meta
-              uses: docker/metadata-action@v5
-              with:
-                  images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-                  tags: |
-                      type=semver,pattern={{version}}
-                      type=semver,pattern={{major}}.{{minor}}
-                      type=semver,pattern={{major}}
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            dist/install.yaml
+            bin/manager
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-            - name: Build and push container image
-              uses: docker/build-push-action@v5
-              with:
-                  context: .
-                  platforms: linux/amd64,linux/arm64
-                  push: true
-                  tags: ${{ steps.meta.outputs.tags }}
-                  labels: ${{ steps.meta.outputs.labels }}
-                  cache-from: type=gha
-                  cache-to: type=gha,mode=max
-                  build-args: |
-                      BUILDTIME=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
-                      VERSION=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.version'] }}
-                      REVISION=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.revision'] }}
-
-            - name: Install cosign
-              uses: sigstore/cosign-installer@v3
-
-            - name: Sign container image
-              run: |
-                  images=""
-                  for tag in ${{ steps.meta.outputs.tags }}; do
-                    images+="${tag}@$(docker inspect --format='{{index .RepoDigests 0}}' $tag | cut -d@ -f2) "
-                  done
-                  cosign sign --yes $images
-
-            - name: Generate SBOM
-              uses: anchore/sbom-action@v0
-              with:
-                  image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
-                  format: spdx-json
-                  output-file: sbom.spdx.json
-
-            - name: Build installer bundle
-              run: |
-                  make build-installer IMG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
-
-            - name: Generate changelog
-              id: changelog
-              uses: mikepenz/release-changelog-builder-action@v4
-              with:
-                  configuration: |
-                      {
-                        "categories": [
-                          {
-                            "title": "## 🚀 Features",
-                            "labels": ["feature", "enhancement"]
-                          },
-                          {
-                            "title": "## 🐛 Bug Fixes", 
-                            "labels": ["bug", "fix"]
-                          },
-                          {
-                            "title": "## 📖 Documentation",
-                            "labels": ["documentation"]
-                          },
-                          {
-                            "title": "## 🧹 Maintenance",
-                            "labels": ["maintenance", "chore"]
-                          }
-                        ],
-                        "template": "#{{CHANGELOG}}\n\n**Full Changelog**: #{{UNCATEGORIZED}}"
-                      }
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-            - name: Create GitHub Release
-              uses: softprops/action-gh-release@v2
-              with:
-                  body: ${{ steps.changelog.outputs.changelog }}
-                  files: |
-                      dist/install.yaml
-                      sbom.spdx.json
-                  generate_release_notes: false
-                  draft: false
-                  prerelease: ${{ contains(github.ref_name, '-') }}
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: |
+            dist/install.yaml
+            bin/manager

@@ -1,11 +1,11 @@
-# Build
-> make docker-build docker-push IMG=<imageRepo:imageTag>
+# Arubacloud Resource Operator
 
-# Deploy
-> make deploy IMG=repo/img:tag CLIENT_ID=cmp-xxxxx CLIENT_SECRET=xxxx
+[![GitHub release](https://img.shields.io/github/tag/arubacloud/arubacloud-resource-operator.svg?label=release)](https://github.com/arubacloud/arubacloud-resource-operator/releases/latest)
+[![Tests](https://github.com/arubacloud/arubacloud-resource-operator/actions/workflows/test.yml/badge.svg)](https://github.com/arubacloud/arubacloud-resource-operator/actions/workflows/test.yml)
+[![Release](https://github.com/arubacloud/arubacloud-resource-operator/actions/workflows/release.yml/badge.svg)](https://github.com/arubacloud/arubacloud-resource-operator/actions/workflows/release.yml)
 
-## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+> **⚠️ Development Status**: This operator is currently under active development and is **not production-ready yet**. APIs and resource schemas may change. Use at your own risk in production environments.
+
 
 ## Getting Started
 

@@ -158,10 +158,10 @@ $(HELMIFY): $(LOCALBIN)
 	test -s $(LOCALBIN)/helmify || GOBIN=$(LOCALBIN) go install github.com/arttor/helmify/cmd/helmify@latest
     
 helm-operator: manifests kustomize helmify
-	$(KUSTOMIZE) build config/default | $(HELMIFY) config/charts/operator
+	$(KUSTOMIZE) build config/default | $(HELMIFY) config/charts/arubacloud-resource-operator
 
 helm-crd: manifests kustomize helmify
-	$(KUSTOMIZE) build config/crd | $(HELMIFY) config/charts/crd
+	$(KUSTOMIZE) build config/crd | $(HELMIFY) config/charts/arubacloud-resource-operator-crd
 
 .PHONY: _ensure_dynamic_env
 _ensure_dynamic_env:
@@ -311,3 +311,48 @@ debug-project: ## Debug specific ArubaProject
 	kubectl describe arubaproject $$name; \
 	echo "--- Project YAML ---"; \
 	kubectl get arubaproject $$name -o yaml
+
+##@ Helm Charts Release
+
+HELM_CHARTS_REPO ?= https://github.com/Arubacloud/helm-charts.git
+HELM_CHARTS_DIR ?= /tmp/helm-charts
+CHART_VERSION ?= $(shell echo $(IMG) | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' || echo "0.1.0")
+
+.PHONY: push-charts
+push-charts: helm-operator helm-crd ## Generate and push Helm charts to helm-charts repository
+	@echo "📦 Preparing to push Helm charts to $(HELM_CHARTS_REPO)..."
+	@echo "Chart version: $(CHART_VERSION)"
+	
+	# Clean and clone helm-charts repository
+	rm -rf $(HELM_CHARTS_DIR)
+	git clone $(HELM_CHARTS_REPO) $(HELM_CHARTS_DIR)
+	
+	# Update chart versions
+	@echo "Updating Chart.yaml versions..."
+	@if [ "$$(uname)" = "Darwin" ]; then \
+		sed -i '' 's/^version: .*/version: $(CHART_VERSION)/' config/charts/arubacloud-resource-operator/Chart.yaml; \
+		sed -i '' 's/^appVersion: .*/appVersion: "$(CHART_VERSION)"/' config/charts/arubacloud-resource-operator/Chart.yaml; \
+		sed -i '' 's/^version: .*/version: $(CHART_VERSION)/' config/charts/arubacloud-resource-operator-crd/Chart.yaml; \
+		sed -i '' 's/^appVersion: .*/appVersion: "$(CHART_VERSION)"/' config/charts/arubacloud-resource-operator-crd/Chart.yaml; \
+	else \
+		sed -i 's/^version: .*/version: $(CHART_VERSION)/' config/charts/arubacloud-resource-operator/Chart.yaml; \
+		sed -i 's/^appVersion: .*/appVersion: "$(CHART_VERSION)"/' config/charts/arubacloud-resource-operator/Chart.yaml; \
+		sed -i 's/^version: .*/version: $(CHART_VERSION)/' config/charts/arubacloud-resource-operator-crd/Chart.yaml; \
+		sed -i 's/^appVersion: .*/appVersion: "$(CHART_VERSION)"/' config/charts/arubacloud-resource-operator-crd/Chart.yaml; \
+	fi
+	
+	# Copy charts to helm-charts repo
+	@echo "Copying charts..."
+	mkdir -p $(HELM_CHARTS_DIR)/charts/arubacloud-resource-operator
+	mkdir -p $(HELM_CHARTS_DIR)/charts/arubacloud-resource-operator-crd
+	cp -R config/charts/arubacloud-resource-operator/* $(HELM_CHARTS_DIR)/charts/arubacloud-resource-operator/
+	cp -R config/charts/arubacloud-resource-operator-crd/* $(HELM_CHARTS_DIR)/charts/arubacloud-resource-operator-crd/
+	
+	# Create branch, commit and push
+	cd $(HELM_CHARTS_DIR) && \
+		git checkout -b update-arubacloud-resource-operator-$$(date +%s) && \
+		git add . && \
+		git commit -m "Update chart arubacloud-resource-operator $(CHART_VERSION)" && \
+		git push origin HEAD
+	
+	@echo "✅ Charts pushed successfully!"

@@ -71,6 +71,34 @@ jobs:
         run: |
           IMG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }} make build-installer
 
+      - name: Configure git
+        run: |
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "github-actions"
+
+      - name: Push Helm charts to helm-charts repository
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          IMG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }} make push-charts
+
+      - name: Create PR on helm-charts repository
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: /tmp/helm-charts
+          commit-message: "Update arubacloud-resource-operator charts to ${{ github.ref_name }}"
+          title: "Release arubacloud-resource-operator ${{ github.ref_name }}"
+          body: |
+            This PR updates the Helm charts for arubacloud-resource-operator to version ${{ github.ref_name }}.
+
+            ## Charts included
+            - arubacloud-resource-operator
+            - arubacloud-resource-operator-crd
+
+            Generated automatically from release.
+          base: main
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:

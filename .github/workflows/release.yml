@@ -6,7 +6,7 @@ on:
       - "v*.*.*"
 
 permissions:
-  contents: read      # this repo
+  contents: read
   packages: write
 
 jobs:
@@ -68,8 +68,8 @@ jobs:
         run: |
           git config --global user.email "github-actions@github.com"
           git config --global user.name "github-actions"
-          # Use the PAT for any https://github.com/* URL
-          git config --global url."https://x-access-token:${HELM_CHARTS_TOKEN}@github.com/".insteadOf "https://github.com/"
+          # Use PAT for all https://github.com/* URLs (username = GITHUB_ACTOR, password = PAT)
+          git config --global url."https://${GITHUB_ACTOR}:${HELM_CHARTS_TOKEN}@github.com/".insteadOf "https://github.com/"
 
       - name: Push Helm charts to helm-charts repository
         env:
@@ -79,7 +79,8 @@ jobs:
       - name: Create PR on helm-charts repository
         uses: peter-evans/create-pull-request@v5
         with:
-          token: ${{ secrets.HELM_CHARTS_TOKEN }}   # <- use PAT, not GITHUB_TOKEN
+          # Use the same PAT so PR is created *in Arubacloud/helm-charts*
+          token: ${{ secrets.HELM_CHARTS_TOKEN }}
           path: /tmp/helm-charts
           commit-message: "Update arubacloud-resource-operator charts to ${{ github.ref_name }}"
           title: "Release arubacloud-resource-operator ${{ github.ref_name }}"

@@ -30,7 +30,6 @@ jobs:
           go-version-file: "go.mod"
           cache: true
 
-      # Prepare lowercase image name and IMG for the Makefile
       - name: Prepare image environment
         run: |
           REPO_LOWER=$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')
@@ -62,10 +61,15 @@ jobs:
           make manifests
           make kustomize
 
+      # Configure git + auth for helm-charts repo
       - name: Configure git
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config --global user.email "github-actions@github.com"
           git config --global user.name "github-actions"
+          # Use GITHUB_TOKEN for all https://github.com/* URLs
+          git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
 
       - name: Push Helm charts to helm-charts repository
         env:

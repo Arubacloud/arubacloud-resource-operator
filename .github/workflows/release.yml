@@ -16,12 +16,7 @@ jobs:
 
     env:
       REGISTRY: ghcr.io
-      # Original repo (with case) if you still need it
       IMAGE_NAME: ${{ github.repository }}
-      # Lowercased repo for container image (required by GHCR)
-      IMAGE_NAME_LOWER: ${{ toLower(github.repository) }}
-      # Single source of truth for the image tag used by the Makefile (IMG ?= controller:latest)
-      IMG: ghcr.io/${{ env.IMAGE_NAME_LOWER }}:${{ github.ref_name }}
 
     steps:
       - name: Checkout code
@@ -34,6 +29,14 @@ jobs:
         with:
           go-version-file: "go.mod"
           cache: true
+
+      # Prepare lowercase image name and IMG for the Makefile
+      - name: Prepare image environment
+        run: |
+          REPO_LOWER=$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')
+          echo "IMAGE_NAME_LOWER=${REPO_LOWER}" >> "$GITHUB_ENV"
+          echo "IMG=${REGISTRY}/${REPO_LOWER}:${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+          echo "Using image: ${REGISTRY}/${REPO_LOWER}:${GITHUB_REF_NAME}"
 
       # === aligned with Makefile (build job) ===
       - name: Build manager binary

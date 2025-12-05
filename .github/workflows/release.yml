@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - "v*.*.*"
+      - 'v*.*.*'
 
 permissions:
   contents: write
@@ -14,10 +14,99 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  release:
-    name: Create Release
+  lint:
+    name: Lint Code
     runs-on: ubuntu-latest
 
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: "go.mod"
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: latest
+          args: --timeout=5m
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: "go.mod"
+          cache: true
+
+      - name: Build manager binary
+        run: make build
+
+      - name: Build Docker image
+        run: make docker-build IMG=controller:test
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: |
+            bin/
+
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: "go.mod"
+          cache: true
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Run go fmt
+        run: make fmt
+
+      - name: Run go vet
+        run: make vet
+
+      - name: Generate manifests
+        run: make manifests
+
+      - name: Generate code
+        run: make generate
+
+      - name: Run tests
+        run: make test
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          file: ./cover.out
+          fail_ci_if_error: false
+
+  release:
+    name: Create Release
+    needs: [lint, build, test]
+    runs-on: ubuntu-latest
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -27,14 +116,16 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version-file: "go.mod"
+          go-version-file: 'go.mod'
           cache: true
 
-      - name: Run tests
-        run: make test
+      - name: Install mockery
+        run: go install github.com/vektra/mockery/v2@latest
 
-      - name: Build binaries
-        run: make build
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -50,6 +141,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=semver,pattern={{version}}
+            type=semver,pattern=v{{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
             type=sha
@@ -61,6 +153,12 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Debug docker metadata
+        if: always()
+        run: |
+          echo "meta tags: ${{ steps.meta.outputs.tags }}"
+          echo "meta labels: ${{ steps.meta.outputs.labels }}"
 
       - name: Generate manifests
         run: |

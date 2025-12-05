@@ -6,7 +6,7 @@ on:
       - "v*.*.*"
 
 permissions:
-  contents: read
+  contents: write      # <-- must be write for gh-release + notes
   packages: write
 
 jobs:
@@ -45,10 +45,10 @@ jobs:
 
       # === Build Docker images ===
       - name: Build Docker image (versioned)
-        run: make docker-build
+        run: make docker-build          # uses $IMG from GITHUB_ENV
 
       - name: Build Docker image (latest)
-        run: docker build -t ${{ env.IMG_LATEST }} .
+        run: docker build -t "$IMG_LATEST" .
 
       # === Login to registry ===
       - name: Log in to GitHub Container Registry
@@ -60,10 +60,10 @@ jobs:
 
       # === Push Docker images ===
       - name: Push Docker image (versioned)
-        run: make docker-push
+        run: make docker-push           # uses $IMG from GITHUB_ENV
 
       - name: Push Docker image (latest)
-        run: docker push ${{ env.IMG_LATEST }}
+        run: docker push "$IMG_LATEST"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

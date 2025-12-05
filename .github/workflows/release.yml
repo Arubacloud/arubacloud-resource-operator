@@ -3,110 +3,23 @@ name: Release
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - "v*.*.*"
 
 permissions:
   contents: write
   packages: write
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
-
 jobs:
-  lint:
-    name: Lint Code
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: "go.mod"
-          cache: true
-
-      - name: Download dependencies
-        run: go mod download
-
-      - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v9
-        with:
-          version: latest
-          args: --timeout=5m
-
-  build:
-    name: Build
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: "go.mod"
-          cache: true
-
-      - name: Build manager binary
-        run: make build
-
-      - name: Build Docker image
-        run: make docker-build IMG=controller:test
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-artifacts
-          path: |
-            bin/
-
-  test:
-    name: Run Tests
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: "go.mod"
-          cache: true
-
-      - name: Install dependencies
-        run: go mod download
-
-      - name: Run go fmt
-        run: make fmt
-
-      - name: Run go vet
-        run: make vet
-
-      - name: Generate manifests
-        run: make manifests
-
-      - name: Generate code
-        run: make generate
-
-      - name: Run tests
-        run: make test
-
-      - name: Upload coverage reports
-        uses: codecov/codecov-action@v4
-        if: always()
-        with:
-          file: ./cover.out
-          fail_ci_if_error: false
-
   release:
     name: Create Release
-    needs: [lint, build, test]
     runs-on: ubuntu-latest
-    
+
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: ${{ github.repository }}
+      # Single source of truth for the image tag used by the Makefile (IMG ?= controller:latest)
+      IMG: ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -116,17 +29,17 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version-file: 'go.mod'
+          go-version-file: "go.mod"
           cache: true
 
-      - name: Install mockery
-        run: go install github.com/vektra/mockery/v2@latest
+      # === aligned with Makefile (build job) ===
+      - name: Build manager binary
+        run: make build
 
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: build-artifacts
+      - name: Build Docker image
+        run: make docker-build
 
+      # === release-only: login + push image ===
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -134,40 +47,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata for Docker
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern=v{{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=sha
+      - name: Push Docker image
+        run: make docker-push
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-
-      - name: Debug docker metadata
-        if: always()
-        run: |
-          echo "meta tags: ${{ steps.meta.outputs.tags }}"
-          echo "meta labels: ${{ steps.meta.outputs.labels }}"
-
-      - name: Generate manifests
+      # === release-only: manifests / kustomize ===
+      - name: Generate manifests and kustomize assets
         run: |
           make manifests
           make kustomize
-
-      - name: Build installer
-        run: |
-          IMG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }} make build-installer
 
       - name: Configure git
         run: |
@@ -177,8 +64,7 @@ jobs:
       - name: Push Helm charts to helm-charts repository
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          IMG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }} make push-charts
+        run: make push-charts
 
       - name: Create PR on helm-charts repository
         uses: peter-evans/create-pull-request@v5
@@ -204,7 +90,6 @@ jobs:
           prerelease: false
           generate_release_notes: true
           files: |
-            dist/install.yaml
             bin/manager
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -214,5 +99,4 @@ jobs:
         with:
           name: release-artifacts
           path: |
-            dist/install.yaml
             bin/manager

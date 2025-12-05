@@ -4,16 +4,17 @@
 
 > **⚠️ Development Status**: This operator is currently under active development and is **not production-ready yet**. APIs and resource schemas may change. Use at your own risk in production environments.
 
-
 ## Getting Started
 
 ### Prerequisites
+
 - go version v1.24.0+
 - docker version 17.03+.
 - kubectl version v1.11.3+.
 - Access to a Kubernetes v1.11.3+ cluster.
 
 ### To Deploy on the cluster
+
 **Build and push your image to the location specified by `IMG`:**
 
 ```sh
@@ -37,7 +38,7 @@ make deploy IMG=<some-registry>/aruba:tag
 ```
 
 > **NOTE**: If you encounter RBAC errors, you may need to grant yourself cluster-admin
-privileges or be logged in as admin.
+> privileges or be logged in as admin.
 
 **Create instances of your solution**
 You can apply the samples (examples) from the config/sample:
@@ -46,9 +47,10 @@ You can apply the samples (examples) from the config/sample:
 kubectl apply -k config/samples/
 ```
 
->**NOTE**: Ensure that the samples has default values to test it out.
+> **NOTE**: Ensure that the samples has default values to test it out.
 
 ### To Uninstall
+
 **Delete the instances (CRs) from the cluster:**
 
 ```sh
@@ -102,7 +104,7 @@ kubebuilder edit --plugins=helm/v1-alpha
 ```
 
 2. See that a chart was generated under 'dist/chart', and users
-can obtain this solution from there.
+   can obtain this solution from there.
 
 **NOTE:** If you change the project, you need to update the Helm Chart
 using the same command above to sync the latest changes. Furthermore,
@@ -111,7 +113,74 @@ the '--force' flag and manually ensure that any custom configuration
 previously added to 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml'
 is manually re-applied afterwards.
 
+## Helm
+
+Helm charts provide an alternative deployment method using Kubernetes package management. This project includes automated Helm chart generation using [Helmify](https://github.com/arttor/helmify).
+
+### What is Helm?
+
+Helm is the package manager for Kubernetes that helps you manage Kubernetes applications. Helm Charts help you define, install, and upgrade even the most complex Kubernetes application.
+
+### Generate Helm Charts
+
+To generate Helm charts for this operator:
+
+```sh
+# Generate both CRD and operator charts
+make helm-crd helm-operator
+```
+
+This creates two separate charts:
+
+- **CRD Chart** (`config/charts/crd/`): Contains Custom Resource Definitions
+- **Operator Chart** (`config/charts/operator/`): Contains the operator deployment
+
+### Install using Helm
+
+1. **Install CRDs first:**
+
+```sh
+helm install aruba-crd config/charts/crd/
+```
+
+2. **Install the operator:**
+
+```sh
+helm install aruba-operator config/charts/operator/ \
+  --set image.repository=<your-registry>/aruba \
+  --set image.tag=<your-tag>
+```
+
+### Test the Installation
+
+Verify the installation:
+
+```sh
+# Check if CRDs are installed
+kubectl get crd | grep arubacloud.com
+
+# Check operator pod status
+kubectl get pods -n aruba-operator-system
+
+# Test with sample resources
+kubectl apply -k config/samples/
+```
+
+### Uninstall
+
+```sh
+# Remove sample resources
+kubectl delete -k config/samples/
+
+# Remove operator
+helm uninstall aruba-operator
+
+# Remove CRDs
+helm uninstall aruba-crd
+```
+
 ## Contributing
+
 // TODO(user): Add detailed information on how you would like others to contribute to this project
 
 **NOTE:** Run `make help` for more information on all potential `make` targets
@@ -133,4 +202,3 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
-

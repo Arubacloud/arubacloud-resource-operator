@@ -494,7 +494,6 @@ arubacloud-resource-operator/
 - `make run` - Run controller locally
 - `make docker-build` - Build Docker image
 - `make docker-push` - Push Docker image
-- `make build-installer` - Generate install.yaml bundle
 
 ### Deployment
 

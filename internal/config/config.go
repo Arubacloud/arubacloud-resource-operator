@@ -34,8 +34,8 @@ func (c *MainConfig) Validate() error {
 		required = map[string]string{
 			"api-gateway":   c.APIGateway,
 			"keycloak-url":  c.KeycloakURL,
-			"client-id":     c.RoleID,
-			"client-secret": c.RoleSecret,
+			"client-id":     c.ClientID,
+			"client-secret": c.ClientSecret,
 		}
 	} else {
 		ctrl.Log.Info("Vault integration is enabled; validating vault configuration also")
@@ -64,14 +64,17 @@ func (c *MainConfig) Validate() error {
 // ToReconcilerConfig converts MainConfig into ReconcilerConfig.
 func (c *MainConfig) ToReconcilerConfig() reconciler.ReconcilerConfig {
 	return reconciler.ReconcilerConfig{
-		APIGateway:   c.APIGateway,
-		VaultAddress: c.VaultAddress,
-		KeycloakURL:  c.KeycloakURL,
-		RealmAPI:     c.RealmAPI,
-		Namespace:    c.Namespace,
-		RolePath:     c.RolePath,
-		KVMount:      c.KVMount,
-		RoleID:       c.RoleID,
-		RoleSecret:   c.RoleSecret,
+		APIGateway:     c.APIGateway,
+		VaultAddress:   c.VaultAddress,
+		KeycloakURL:    c.KeycloakURL,
+		ClientID:       c.ClientID,
+		ClientSecret:   c.ClientSecret,
+		VaultIsEnabled: c.VaultIsEnabled,
+		RealmAPI:       c.RealmAPI,
+		Namespace:      c.Namespace,
+		RolePath:       c.RolePath,
+		KVMount:        c.KVMount,
+		RoleID:         c.RoleID,
+		RoleSecret:     c.RoleSecret,
 	}
 }

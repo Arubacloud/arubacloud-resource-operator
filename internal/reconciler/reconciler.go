@@ -116,15 +116,15 @@ func (r *Reconciler) Reconcile(
 		return ctrl.Result{}, err
 	}
 
-	if tenant == nil || *tenant == "" {
-		if r.VaultIsEnabled {
+	if r.VaultIsEnabled {
+		if tenant == nil || *tenant == "" {
 			errMsg := "Tenant ID is not specified in the resource spec"
 			ctrl.Log.Error(fmt.Errorf("%s", errMsg), "Cannot proceed without Tenant ID when Vault integration is enabled", "Resource", req.NamespacedName)
 			return ctrl.Result{}, fmt.Errorf("%s", errMsg)
-		} else {
-			ctrl.Log.V(1).Info("Vault integration is disabled; proceeding without Tenant ID")
-			*tenant = "single-tenant"
 		}
+	} else {
+		ctrl.Log.V(1).Info("Vault integration is disabled; proceeding without Tenant ID")
+		*tenant = "single-tenant"
 	}
 
 	ctrl.Log.V(1).Info("Setting tenant in Aruba client", "TenantID", tenant)
@@ -502,7 +502,7 @@ func (r *Reconciler) Authenticate(ctx context.Context, tenantId string) error {
 		return nil
 	}
 
-	if r.AppRoleClient != nil {
+	if r.VaultIsEnabled {
 		apiKeyData, err := r.GetSecret(ctx, tenantId)
 		if err != nil {
 			ctrl.Log.Error(err, "Failed to get API key from Vault", "TenantID", tenantId)

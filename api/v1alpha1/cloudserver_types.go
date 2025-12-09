@@ -23,8 +23,7 @@ import (
 // CloudServerSpec defines the desired state of CloudServer.
 type CloudServerSpec struct {
 	// Tenant is the owning account/tenant of this cloud server
-	// +kubebuilder:validation:Required
-	Tenant string `json:"tenant"`
+	Tenant string `json:"tenant,omitempty"`
 
 	// Tags are labels associated with the cloud server
 	// +kubebuilder:validation:Optional

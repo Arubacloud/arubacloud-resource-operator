@@ -23,8 +23,7 @@ import (
 // SecurityGroupSpec defines the desired state of SecurityGroup.
 type SecurityGroupSpec struct {
 	// Tenant is the owning account/tenant of this security group
-	// +kubebuilder:validation:Required
-	Tenant string `json:"tenant"`
+	Tenant string `json:"tenant,omitempty"`
 
 	// Tags are labels associated with the security group
 	// +kubebuilder:validation:Optional

@@ -28,15 +28,18 @@ func Load(ctx context.Context, mgr ctrl.Manager, configMapName, configNamespace,
 	}
 
 	mainConfig := &MainConfig{
-		APIGateway:   cfg.Data["api-gateway"],
-		VaultAddress: cfg.Data["vault-address"],
-		KeycloakURL:  cfg.Data["keycloak-url"],
-		RealmAPI:     cfg.Data["realm-api"],
-		Namespace:    cfg.Data["role-namespace"],
-		RolePath:     cfg.Data["role-path"],
-		KVMount:      cfg.Data["kv-mount"],
-		RoleID:       string(secret.Data["role-id"]),
-		RoleSecret:   string(secret.Data["role-secret"]),
+		APIGateway:     cfg.Data["api-gateway"],
+		VaultIsEnabled: cfg.Data["vault-enabled"] == "true",
+		VaultAddress:   cfg.Data["vault-address"],
+		KeycloakURL:    cfg.Data["keycloak-url"],
+		RealmAPI:       cfg.Data["realm-api"],
+		Namespace:      cfg.Data["role-namespace"],
+		RolePath:       cfg.Data["role-path"],
+		KVMount:        cfg.Data["kv-mount"],
+		RoleID:         string(secret.Data["role-id"]),
+		RoleSecret:     string(secret.Data["role-secret"]),
+		ClientID:       string(secret.Data["client-id"]),
+		ClientSecret:   string(secret.Data["client-secret"]),
 	}
 
 	if err := mainConfig.Validate(); err != nil {

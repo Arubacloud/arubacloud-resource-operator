@@ -28,8 +28,7 @@ type ProjectSpec struct {
 	Description string `json:"description,omitempty"`
 
 	// Tenant is the owning account/tenant of this project
-	// +kubebuilder:validation:Required
-	Tenant string `json:"tenant"`
+	Tenant string `json:"tenant,omitempty"`
 
 	// Tags are labels associated with the project
 	// +kubebuilder:validation:Optional

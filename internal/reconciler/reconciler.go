@@ -48,43 +48,57 @@ type Reconciler struct {
 	*runtime.Scheme
 	*arubaClient.HelperClient
 	*arubaClient.AppRoleClient
-	TokenManager arubaClient.ITokenManager
+	TokenManager   arubaClient.ITokenManager
+	VaultIsEnabled bool
 }
 
 // ReconcilerConfig holds configuration for setting up Reconciler
 type ReconcilerConfig struct {
-	APIGateway   string
-	VaultAddress string
-	KeycloakURL  string
-	RealmAPI     string
-	Namespace    string
-	RolePath     string
-	RoleID       string
-	RoleSecret   string
-	KVMount      string
-	HTTPClient   *http.Client
+	APIGateway     string
+	VaultIsEnabled bool
+	VaultAddress   string
+	KeycloakURL    string
+	RealmAPI       string
+	Namespace      string
+	RolePath       string
+	ClientID       string
+	ClientSecret   string
+	RoleID         string
+	RoleSecret     string
+	KVMount        string
+	HTTPClient     *http.Client
 }
 
 // NewReconciler creates a new base reconciler
 func NewReconciler(mgr ctrl.Manager, cfg ReconcilerConfig) *Reconciler {
+	var vaultAuth *arubaClient.AppRoleClient
 	helperClientInstance := arubaClient.NewHelperClient(mgr.GetClient(), cfg.HTTPClient, cfg.APIGateway)
 
-	vaultClient := arubaClient.VaultClient(cfg.VaultAddress)
-	vaultAuth, err := arubaClient.NewAppRoleClient(cfg.Namespace, cfg.RolePath, cfg.RoleID, cfg.RoleSecret, cfg.KVMount, vaultClient)
-	if err != nil {
-		ctrl.Log.Error(err, "failed to init vault client: %v")
-		os.Exit(1)
+	if cfg.VaultIsEnabled {
+		vaultClient := arubaClient.VaultClient(cfg.VaultAddress)
+		vaultAuth, err := arubaClient.NewAppRoleClient(cfg.Namespace, cfg.RolePath, cfg.RoleID, cfg.RoleSecret, cfg.KVMount, vaultClient)
+		if err != nil {
+			ctrl.Log.Error(err, "failed to init vault client: %v")
+			os.Exit(1)
+		}
+		defer vaultAuth.Close()
+		ctrl.Log.V(1).Info("Vault integration is enabled; Vault client initialized")
 	}
 
 	oauthClient := arubaClient.NewTokenManager(cfg.KeycloakURL, cfg.RealmAPI, "", "", nil)
 
-	defer vaultAuth.Close()
+	if !cfg.VaultIsEnabled {
+		ctrl.Log.V(1).Info("Vault integration is disabled; using static Keycloak client credentials")
+		oauthClient.SetClientIdAndSecret(cfg.ClientID, cfg.ClientSecret)
+	}
+
 	return &Reconciler{
-		Client:        mgr.GetClient(),
-		Scheme:        mgr.GetScheme(),
-		HelperClient:  helperClientInstance,
-		AppRoleClient: vaultAuth,
-		TokenManager:  oauthClient,
+		Client:         mgr.GetClient(),
+		Scheme:         mgr.GetScheme(),
+		HelperClient:   helperClientInstance,
+		AppRoleClient:  vaultAuth,
+		TokenManager:   oauthClient,
+		VaultIsEnabled: cfg.VaultIsEnabled,
 	}
 }
 
@@ -103,9 +117,14 @@ func (r *Reconciler) Reconcile(
 	}
 
 	if tenant == nil || *tenant == "" {
-		errMsg := "Tenant ID is not specified in the resource spec"
-		ctrl.Log.Error(fmt.Errorf("%s", errMsg), "Cannot proceed without Tenant ID", "Resource", req.NamespacedName)
-		return ctrl.Result{}, fmt.Errorf("%s", errMsg)
+		if r.VaultIsEnabled {
+			errMsg := "Tenant ID is not specified in the resource spec"
+			ctrl.Log.Error(fmt.Errorf("%s", errMsg), "Cannot proceed without Tenant ID when Vault integration is enabled", "Resource", req.NamespacedName)
+			return ctrl.Result{}, fmt.Errorf("%s", errMsg)
+		} else {
+			ctrl.Log.V(1).Info("Vault integration is disabled; proceeding without Tenant ID")
+			*tenant = "single-tenant"
+		}
 	}
 
 	ctrl.Log.V(1).Info("Setting tenant in Aruba client", "TenantID", tenant)
@@ -483,21 +502,23 @@ func (r *Reconciler) Authenticate(ctx context.Context, tenantId string) error {
 		return nil
 	}
 
-	apiKeyData, err := r.GetSecret(ctx, tenantId)
-	if err != nil {
-		ctrl.Log.Error(err, "Failed to get API key from Vault", "TenantID", tenantId)
-		return err
+	if r.AppRoleClient != nil {
+		apiKeyData, err := r.GetSecret(ctx, tenantId)
+		if err != nil {
+			ctrl.Log.Error(err, "Failed to get API key from Vault", "TenantID", tenantId)
+			return err
+		}
+
+		ctrl.Log.V(1).Info("Retrieved API key from Vault", "secretData", apiKeyData)
+		clientId, _ := apiKeyData["client-id"].(string)
+		ctrl.Log.V(1).Info("Authenticating Aruba client", "ClientID", clientId)
+		clientSecret, _ := apiKeyData["client-secret"].(string)
+		ctrl.Log.V(1).Info("Authenticating Aruba client", "ClientSecret", clientSecret)
+
+		r.TokenManager.SetClientIdAndSecret(clientId, clientSecret)
 	}
 
-	ctrl.Log.V(1).Info("Retrieved API key from Vault", "secretData", apiKeyData)
-	clientId, _ := apiKeyData["client-id"].(string)
-	ctrl.Log.V(1).Info("Authenticating Aruba client", "ClientID", clientId)
-	clientSecret, _ := apiKeyData["client-secret"].(string)
-	ctrl.Log.V(1).Info("Authenticating Aruba client", "ClientSecret", clientSecret)
-
-	r.TokenManager.SetClientIdAndSecret(clientId, clientSecret)
-
-	token, err = r.TokenManager.GetAccessToken(false, tenantId)
+	token, err := r.TokenManager.GetAccessToken(false, tenantId)
 
 	if err != nil {
 		return err

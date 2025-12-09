@@ -23,8 +23,7 @@ import (
 // BlockStorageSpec defines the desired state of BlockStorage.
 type BlockStorageSpec struct {
 	// Tenant is the owning account/tenant of this block storage
-	// +kubebuilder:validation:Required
-	Tenant string `json:"tenant"`
+	Tenant string `json:"tenant,omitempty"`
 
 	// Tags are labels associated with the block storage
 	// +kubebuilder:validation:Optional

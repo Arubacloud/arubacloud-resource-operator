@@ -23,8 +23,7 @@ import (
 // KeyPairSpec defines the desired state of KeyPair.
 type KeyPairSpec struct {
 	// Tenant is the owning account/tenant of this keypair
-	// +kubebuilder:validation:Required
-	Tenant string `json:"tenant"`
+	Tenant string `json:"tenant,omitempty"`
 
 	// Tags are labels associated with the keypair
 	// +kubebuilder:validation:Optional

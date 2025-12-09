@@ -34,6 +34,7 @@ func (c *MainConfig) Validate() error {
 		required = map[string]string{
 			"api-gateway":   c.APIGateway,
 			"keycloak-url":  c.KeycloakURL,
+			"realm-api":     c.RealmAPI,
 			"client-id":     c.ClientID,
 			"client-secret": c.ClientSecret,
 		}

@@ -76,7 +76,8 @@ func NewReconciler(mgr ctrl.Manager, cfg ReconcilerConfig) *Reconciler {
 
 	if cfg.VaultIsEnabled {
 		vaultClient := arubaClient.VaultClient(cfg.VaultAddress)
-		vaultAuth, err := arubaClient.NewAppRoleClient(cfg.Namespace, cfg.RolePath, cfg.RoleID, cfg.RoleSecret, cfg.KVMount, vaultClient)
+		var err error
+		vaultAuth, err = arubaClient.NewAppRoleClient(cfg.Namespace, cfg.RolePath, cfg.RoleID, cfg.RoleSecret, cfg.KVMount, vaultClient)
 		if err != nil {
 			ctrl.Log.Error(err, "failed to init vault client: %v")
 			os.Exit(1)

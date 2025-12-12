@@ -117,15 +117,14 @@ func (r *Reconciler) Reconcile(
 		return ctrl.Result{}, err
 	}
 
-	if r.VaultIsEnabled {
-		if tenant == nil || *tenant == "" {
+	if tenant == nil || *tenant == "" {
+		if r.VaultIsEnabled {
 			errMsg := "Tenant ID is not specified in the resource spec"
 			ctrl.Log.Error(fmt.Errorf("%s", errMsg), "Cannot proceed without Tenant ID when Vault integration is enabled", "Resource", req.NamespacedName)
 			return ctrl.Result{}, fmt.Errorf("%s", errMsg)
+		} else {
+			ctrl.Log.V(1).Info("Vault integration is disabled; proceeding without Tenant ID")
 		}
-	} else {
-		ctrl.Log.V(1).Info("Vault integration is disabled; proceeding without Tenant ID")
-		*tenant = "single-tenant"
 	}
 
 	ctrl.Log.V(1).Info("Setting tenant in Aruba client", "TenantID", tenant)

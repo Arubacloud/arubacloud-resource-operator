@@ -69,8 +69,6 @@ spec:
               tenant:
                 description: Tenant is the owning account/tenant of this project
                 type: string
-            required:
-            - tenant
             type: object
           status:
             description: Common status for all resources

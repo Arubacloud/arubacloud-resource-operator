@@ -20,16 +20,16 @@ import (
 	"context"
 
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
-	"github.com/Arubacloud/arubacloud-resource-operator/internal/client"
+	arubaClient "github.com/Arubacloud/arubacloud-resource-operator/internal/client"
 	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
 )
 
 // KeyPairReconciler reconciles a KeyPair object
 type KeyPairReconciler struct {
 	*reconciler.Reconciler
-	Object *v1alpha1.KeyPair
 }
 
 // NewKeyPairReconciler creates a new KeyPairReconciler
@@ -43,15 +43,12 @@ func NewKeyPairReconciler(reconciler *reconciler.Reconciler) *KeyPairReconciler 
 // +kubebuilder:rbac:groups=arubacloud.com,resources=keypairs/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=arubacloud.com,resources=keypairs/finalizers,verbs=update
 // +kubebuilder:rbac:groups=arubacloud.com,resources=projects,verbs=get;list;watch
-// +kubebuilder:rbac:groups=arubacloud.com,resources=secrets,verbs=get;list;watch
-// +kubebuilder:rbac:groups=arubacloud.com,resources=configmaps,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 
 func (r *KeyPairReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	r.Object = &v1alpha1.KeyPair{}
-	r.Reconciler.Object = r.Object
-	r.ResourceStatus = &r.Object.Status.ResourceStatus
-	r.ResourceReconciler = r
-	return r.Reconciler.Reconcile(ctx, req, &r.Object.Spec.Tenant)
+	obj := &v1alpha1.KeyPair{}
+	return r.Reconciler.Reconcile(ctx, req, obj, &obj.Status.ResourceStatus, r, &obj.Spec.Tenant)
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -66,31 +63,32 @@ const (
 	keyPairFinalizerName = "keypair.arubacloud.com/finalizer"
 )
 
-func (r *KeyPairReconciler) Init(ctx context.Context) (ctrl.Result, error) {
-	return r.InitializeResource(ctx, keyPairFinalizerName)
+func (r *KeyPairReconciler) Init(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+	return r.InitializeResource(ctx, obj, status, keyPairFinalizerName)
 }
 
-func (r *KeyPairReconciler) Creating(ctx context.Context) (ctrl.Result, error) {
-	return r.HandleCreating(ctx, func(ctx context.Context) (string, string, error) {
+func (r *KeyPairReconciler) Creating(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+	keyPair := obj.(*v1alpha1.KeyPair)
+	return r.HandleCreating(ctx, obj, status, func(ctx context.Context) (string, string, error) {
 		projectID, err := r.GetProjectID(
 			ctx,
-			r.Object.Spec.ProjectReference.Name,
-			r.Object.Spec.ProjectReference.Namespace,
+			keyPair.Spec.ProjectReference.Name,
+			keyPair.Spec.ProjectReference.Namespace,
 		)
 		if err != nil {
 			return "", "", err
 		}
 
-		keyPairReq := client.KeyPairRequest{
-			Metadata: client.KeyPairMetadata{
-				Name: r.Object.Name,
-				Tags: r.Object.Spec.Tags,
-				Location: client.KeyPairLocation{
-					Value: r.Object.Spec.Location.Value,
+		keyPairReq := arubaClient.KeyPairRequest{
+			Metadata: arubaClient.KeyPairMetadata{
+				Name: keyPair.Name,
+				Tags: keyPair.Spec.Tags,
+				Location: arubaClient.KeyPairLocation{
+					Value: keyPair.Spec.Location.Value,
 				},
 			},
-			Properties: client.KeyPairProperties{
-				Value: r.Object.Spec.Value,
+			Properties: arubaClient.KeyPairProperties{
+				Value: keyPair.Spec.Value,
 			},
 		}
 
@@ -99,7 +97,7 @@ func (r *KeyPairReconciler) Creating(ctx context.Context) (ctrl.Result, error) {
 			return "", "", err
 		}
 
-		r.Object.Status.ProjectID = projectID
+		keyPair.Status.ProjectID = projectID
 
 		state := ""
 		if keyPairResp.Status != nil {
@@ -110,9 +108,10 @@ func (r *KeyPairReconciler) Creating(ctx context.Context) (ctrl.Result, error) {
 	})
 }
 
-func (r *KeyPairReconciler) Provisioning(ctx context.Context) (ctrl.Result, error) {
-	return r.HandleProvisioning(ctx, func(ctx context.Context) (string, error) {
-		keyPairResp, err := r.GetKeyPair(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID)
+func (r *KeyPairReconciler) Provisioning(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+	keyPair := obj.(*v1alpha1.KeyPair)
+	return r.HandleProvisioning(ctx, obj, status, func(ctx context.Context) (string, error) {
+		keyPairResp, err := r.GetKeyPair(ctx, keyPair.Status.ProjectID, status.ResourceID)
 		if err != nil {
 			return "", err
 		}
@@ -124,29 +123,31 @@ func (r *KeyPairReconciler) Provisioning(ctx context.Context) (ctrl.Result, erro
 	})
 }
 
-func (r *KeyPairReconciler) Updating(ctx context.Context) (ctrl.Result, error) {
-	return r.HandleUpdating(ctx, func(ctx context.Context) error {
-		keyPairReq := client.KeyPairUpdateRequest{
-			Metadata: client.KeyPairMetadata{
-				Name: r.Object.Name,
-				Tags: r.Object.Spec.Tags,
-				Location: client.KeyPairLocation{
-					Value: r.Object.Spec.Location.Value,
+func (r *KeyPairReconciler) Updating(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+	keyPair := obj.(*v1alpha1.KeyPair)
+	return r.HandleUpdating(ctx, obj, status, func(ctx context.Context) error {
+		keyPairReq := arubaClient.KeyPairUpdateRequest{
+			Metadata: arubaClient.KeyPairMetadata{
+				Name: keyPair.Name,
+				Tags: keyPair.Spec.Tags,
+				Location: arubaClient.KeyPairLocation{
+					Value: keyPair.Spec.Location.Value,
 				},
 			},
 		}
 
-		_, err := r.UpdateKeyPair(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID, keyPairReq)
+		_, err := r.UpdateKeyPair(ctx, keyPair.Status.ProjectID, status.ResourceID, keyPairReq)
 		return err
 	})
 }
 
-func (r *KeyPairReconciler) Created(ctx context.Context) (ctrl.Result, error) {
-	return r.CheckForUpdates(ctx)
+func (r *KeyPairReconciler) Created(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+	return r.CheckForUpdates(ctx, obj, status)
 }
 
-func (r *KeyPairReconciler) Deleting(ctx context.Context) (ctrl.Result, error) {
-	return r.HandleDeletion(ctx, keyPairFinalizerName, func(ctx context.Context) error {
-		return r.DeleteKeyPair(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID)
+func (r *KeyPairReconciler) Deleting(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+	keyPair := obj.(*v1alpha1.KeyPair)
+	return r.HandleDeletion(ctx, obj, status, keyPairFinalizerName, func(ctx context.Context) error {
+		return r.DeleteKeyPair(ctx, keyPair.Status.ProjectID, status.ResourceID)
 	})
 }

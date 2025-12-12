@@ -357,9 +357,6 @@ var _ = Describe("Project Controller Reconcile Method", func() {
 			}
 			Expect(k8sClient.Create(ctx, arubaProject)).To(Succeed())
 
-			By("Setting up reconciler with the object")
-			resourceReconciler.Object = arubaProject
-
 			By("Cleanup")
 			Expect(k8sClient.Delete(ctx, arubaProject)).To(Succeed())
 		})

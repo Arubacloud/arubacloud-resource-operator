@@ -470,9 +470,6 @@ var _ = Describe("ElasticIp Controller Reconcile Method", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(projectID).To(Equal("test-project-id-12345"))
 
-			By("Setting up reconciler with the object")
-			resourceReconciler.Object = arubaNetworkElasticIp
-
 			By("Cleanup")
 			Expect(k8sClient.Delete(ctx, arubaNetworkElasticIp)).To(Succeed())
 			Expect(k8sClient.Delete(ctx, testProject)).To(Succeed())

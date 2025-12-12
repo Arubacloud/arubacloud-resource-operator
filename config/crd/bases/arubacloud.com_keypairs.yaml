@@ -92,7 +92,6 @@ spec:
             required:
             - location
             - projectReference
-            - tenant
             - value
             type: object
           status:

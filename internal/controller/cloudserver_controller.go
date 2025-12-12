@@ -34,8 +34,8 @@ import (
 // +kubebuilder:rbac:groups=arubacloud.com,resources=cloudservers/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=arubacloud.com,resources=cloudservers/finalizers,verbs=update
 // +kubebuilder:rbac:groups=arubacloud.com,resources=projects,verbs=get;list;watch
-// +kubebuilder:rbac:groups=arubacloud.com,resources=secrets,verbs=get;list;watch
-// +kubebuilder:rbac:groups=arubacloud.com,resources=configmaps,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 
 // CloudServerReconciler reconciles a CloudServer object
 type CloudServerReconciler struct {

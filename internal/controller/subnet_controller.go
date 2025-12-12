@@ -43,8 +43,8 @@ func NewSubnetReconciler(reconciler *reconciler.Reconciler) *SubnetReconciler {
 // +kubebuilder:rbac:groups=arubacloud.com,resources=subnets/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=arubacloud.com,resources=subnets/finalizers,verbs=update
 // +kubebuilder:rbac:groups=arubacloud.com,resources=projects,verbs=get;list;watch
-// +kubebuilder:rbac:groups=arubacloud.com,resources=secrets,verbs=get;list;watch
-// +kubebuilder:rbac:groups=arubacloud.com,resources=configmaps,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 
 func (r *SubnetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	obj := &v1alpha1.Subnet{}

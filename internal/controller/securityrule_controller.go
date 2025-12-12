@@ -43,8 +43,8 @@ func NewSecurityRuleReconciler(reconciler *reconciler.Reconciler) *SecurityRuleR
 // +kubebuilder:rbac:groups=arubacloud.com,resources=securityrules/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=arubacloud.com,resources=securityrules/finalizers,verbs=update
 // +kubebuilder:rbac:groups=arubacloud.com,resources=projects,verbs=get;list;watch
-// +kubebuilder:rbac:groups=arubacloud.com,resources=secrets,verbs=get;list;watch
-// +kubebuilder:rbac:groups=arubacloud.com,resources=configmaps,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 
 func (r *SecurityRuleReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	obj := &v1alpha1.SecurityRule{}

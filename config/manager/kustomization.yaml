@@ -1,0 +1,36 @@
+resources:
+- manager.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+images:
+- name: controller
+  newName: controller
+  newTag: latest
+
+configMapGenerator:
+- envs:
+  - config.env
+  name: controller-manager
+
+secretGenerator:
+- envs:
+  - secrets.env
+  name: controller-manager
+
+generatorOptions:
+  disableNameSuffixHash: true
+
+
+vars:
+- fieldref: {}
+  name: CONFIG_MAP_NAME
+  objref:
+    apiVersion: v1
+    kind: ConfigMap
+    name: controller-manager
+- fieldref: {}
+  name: SECRET_NAME
+  objref:
+    apiVersion: v1
+    kind: Secret
+    name: controller-manager

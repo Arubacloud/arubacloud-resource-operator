@@ -20,16 +20,16 @@ import (
 	"context"
 
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
-	"github.com/Arubacloud/arubacloud-resource-operator/internal/client"
+	arubaClient "github.com/Arubacloud/arubacloud-resource-operator/internal/client"
 	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
 )
 
 // BlockStorageReconciler reconciles a BlockStorage object
 type BlockStorageReconciler struct {
 	*reconciler.Reconciler
-	Object *v1alpha1.BlockStorage
 }
 
 // NewBlockStorageReconciler creates a new BlockStorageReconciler
@@ -43,15 +43,12 @@ func NewBlockStorageReconciler(baseReconciler *reconciler.Reconciler) *BlockStor
 // +kubebuilder:rbac:groups=arubacloud.com,resources=blockstorages/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=arubacloud.com,resources=blockstorages/finalizers,verbs=update
 // +kubebuilder:rbac:groups=arubacloud.com,resources=projects,verbs=get;list;watch
-// +kubebuilder:rbac:groups=arubacloud.com,resources=secrets,verbs=get;list;watch
-// +kubebuilder:rbac:groups=arubacloud.com,resources=configmaps,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 
 func (r *BlockStorageReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	r.Object = &v1alpha1.BlockStorage{}
-	r.Reconciler.Object = r.Object
-	r.ResourceStatus = &r.Object.Status.ResourceStatus
-	r.ResourceReconciler = r
-	return r.Reconciler.Reconcile(ctx, req, &r.Object.Spec.Tenant)
+	obj := &v1alpha1.BlockStorage{}
+	return r.Reconciler.Reconcile(ctx, req, obj, &obj.Status.ResourceStatus, r, &obj.Spec.Tenant)
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -66,32 +63,33 @@ const (
 	blockStorageFinalizerName = "blockstorage.arubacloud.com/finalizer"
 )
 
-func (r *BlockStorageReconciler) Init(ctx context.Context) (ctrl.Result, error) {
-	return r.InitializeResource(ctx, blockStorageFinalizerName)
+func (r *BlockStorageReconciler) Init(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+	return r.InitializeResource(ctx, obj, status, blockStorageFinalizerName)
 }
 
-func (r *BlockStorageReconciler) Creating(ctx context.Context) (ctrl.Result, error) {
-	return r.HandleCreating(ctx, func(ctx context.Context) (string, string, error) {
-		projectID, err := r.GetProjectID(ctx, r.Object.Spec.ProjectReference.Name, r.Object.Spec.ProjectReference.Namespace)
+func (r *BlockStorageReconciler) Creating(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+	blockStorage := obj.(*v1alpha1.BlockStorage)
+	return r.HandleCreating(ctx, obj, status, func(ctx context.Context) (string, string, error) {
+		projectID, err := r.GetProjectID(ctx, blockStorage.Spec.ProjectReference.Name, blockStorage.Spec.ProjectReference.Namespace)
 		if err != nil {
 			return "", "", err
 		}
 
-		blockStorageReq := client.BlockStorageRequest{
-			Metadata: client.BlockStorageMetadata{
-				Name: r.Object.Name,
-				Tags: r.Object.Spec.Tags,
-				Location: client.BlockStorageLocation{
-					Value: r.Object.Spec.Location.Value,
+		blockStorageReq := arubaClient.BlockStorageRequest{
+			Metadata: arubaClient.BlockStorageMetadata{
+				Name: blockStorage.Name,
+				Tags: blockStorage.Spec.Tags,
+				Location: arubaClient.BlockStorageLocation{
+					Value: blockStorage.Spec.Location.Value,
 				},
 			},
-			Properties: client.BlockStorageProperties{
-				SizeGb:        r.Object.Spec.SizeGb,
-				BillingPeriod: r.Object.Spec.BillingPeriod,
-				DataCenter:    r.Object.Spec.DataCenter,
-				Type:          r.Object.Spec.Type,
-				Bootable:      r.Object.Spec.Bootable,
-				Image:         r.Object.Spec.Image,
+			Properties: arubaClient.BlockStorageProperties{
+				SizeGb:        blockStorage.Spec.SizeGb,
+				BillingPeriod: blockStorage.Spec.BillingPeriod,
+				DataCenter:    blockStorage.Spec.DataCenter,
+				Type:          blockStorage.Spec.Type,
+				Bootable:      blockStorage.Spec.Bootable,
+				Image:         blockStorage.Spec.Image,
 			},
 		}
 
@@ -100,7 +98,7 @@ func (r *BlockStorageReconciler) Creating(ctx context.Context) (ctrl.Result, err
 			return "", "", err
 		}
 
-		r.Object.Status.ProjectID = projectID
+		blockStorage.Status.ProjectID = projectID
 
 		state := ""
 		if blockStorageResp.Status != nil {
@@ -111,9 +109,10 @@ func (r *BlockStorageReconciler) Creating(ctx context.Context) (ctrl.Result, err
 	})
 }
 
-func (r *BlockStorageReconciler) Provisioning(ctx context.Context) (ctrl.Result, error) {
-	return r.HandleProvisioning(ctx, func(ctx context.Context) (string, error) {
-		blockStorageResp, err := r.GetBlockStorage(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID)
+func (r *BlockStorageReconciler) Provisioning(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+	blockStorage := obj.(*v1alpha1.BlockStorage)
+	return r.HandleProvisioning(ctx, obj, status, func(ctx context.Context) (string, error) {
+		blockStorageResp, err := r.GetBlockStorage(ctx, blockStorage.Status.ProjectID, status.ResourceID)
 		if err != nil {
 			return "", err
 		}
@@ -125,34 +124,36 @@ func (r *BlockStorageReconciler) Provisioning(ctx context.Context) (ctrl.Result,
 	})
 }
 
-func (r *BlockStorageReconciler) Updating(ctx context.Context) (ctrl.Result, error) {
-	return r.HandleUpdating(ctx, func(ctx context.Context) error {
-		blockStorageReq := client.BlockStorageRequest{
-			Metadata: client.BlockStorageMetadata{
-				Name: r.Object.Name,
-				Tags: r.Object.Spec.Tags,
-				Location: client.BlockStorageLocation{
-					Value: r.Object.Spec.Location.Value,
+func (r *BlockStorageReconciler) Updating(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+	blockStorage := obj.(*v1alpha1.BlockStorage)
+	return r.HandleUpdating(ctx, obj, status, func(ctx context.Context) error {
+		blockStorageReq := arubaClient.BlockStorageRequest{
+			Metadata: arubaClient.BlockStorageMetadata{
+				Name: blockStorage.Name,
+				Tags: blockStorage.Spec.Tags,
+				Location: arubaClient.BlockStorageLocation{
+					Value: blockStorage.Spec.Location.Value,
 				},
 			},
-			Properties: client.BlockStorageProperties{
-				SizeGb:        r.Object.Spec.SizeGb,
-				BillingPeriod: r.Object.Spec.BillingPeriod,
-				DataCenter:    r.Object.Spec.DataCenter,
+			Properties: arubaClient.BlockStorageProperties{
+				SizeGb:        blockStorage.Spec.SizeGb,
+				BillingPeriod: blockStorage.Spec.BillingPeriod,
+				DataCenter:    blockStorage.Spec.DataCenter,
 			},
 		}
 
-		_, err := r.UpdateBlockStorage(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID, blockStorageReq)
+		_, err := r.UpdateBlockStorage(ctx, blockStorage.Status.ProjectID, status.ResourceID, blockStorageReq)
 		return err
 	})
 }
 
-func (r *BlockStorageReconciler) Created(ctx context.Context) (ctrl.Result, error) {
-	return r.CheckForUpdates(ctx)
+func (r *BlockStorageReconciler) Created(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+	return r.CheckForUpdates(ctx, obj, status)
 }
 
-func (r *BlockStorageReconciler) Deleting(ctx context.Context) (ctrl.Result, error) {
-	return r.HandleDeletion(ctx, blockStorageFinalizerName, func(ctx context.Context) error {
-		return r.DeleteBlockStorage(ctx, r.Object.Status.ProjectID, r.Object.Status.ResourceID)
+func (r *BlockStorageReconciler) Deleting(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+	blockStorage := obj.(*v1alpha1.BlockStorage)
+	return r.HandleDeletion(ctx, obj, status, blockStorageFinalizerName, func(ctx context.Context) error {
+		return r.DeleteBlockStorage(ctx, blockStorage.Status.ProjectID, status.ResourceID)
 	})
 }

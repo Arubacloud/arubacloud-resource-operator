@@ -38,8 +38,7 @@ type SubnetDHCP struct {
 // SubnetSpec defines the desired state of Subnet.
 type SubnetSpec struct {
 	// Tenant is the owning account/tenant of this subnet
-	// +kubebuilder:validation:Required
-	Tenant string `json:"tenant"`
+	Tenant string `json:"tenant,omitempty"`
 
 	// Tags are labels associated with the subnet
 	// +kubebuilder:validation:Optional

@@ -71,6 +71,8 @@ func (e *ApiError) IsInvalidStatus() bool {
 func NewHelperClient(k8sClient client.Client, httpClient HTTPClient, gw_uri string) *HelperClient {
 	if httpClient == nil {
 		httpClient = &http.Client{}
+	} else if c, ok := httpClient.(*http.Client); ok && c == nil {
+		httpClient = &http.Client{}
 	}
 
 	return &HelperClient{

@@ -60,12 +60,23 @@ type CachedToken struct {
 func (c *TokenCache) get(tenant string) *CachedToken {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+	if tenant == "" {
+		return c.tokens["public"]
+	}
 	return c.tokens[tenant]
 }
 
 func (c *TokenCache) set(tenant string, token *gocloak.JWT) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if tenant == "" {
+		c.tokens["public"] = &CachedToken{
+			token:     token,
+			retrieved: time.Now(),
+		}
+		return
+	}
+
 	c.tokens[tenant] = &CachedToken{
 		token:     token,
 		retrieved: time.Now(),

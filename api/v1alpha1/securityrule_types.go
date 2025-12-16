@@ -38,8 +38,7 @@ type SecurityRuleTarget struct {
 // SecurityRuleSpec defines the desired state of SecurityRule.
 type SecurityRuleSpec struct {
 	// Tenant is the owning account/tenant of this security rule
-	// +kubebuilder:validation:Required
-	Tenant string `json:"tenant"`
+	Tenant string `json:"tenant,omitempty"`
 
 	// Tags are labels associated with the security rule
 	// +kubebuilder:validation:Optional

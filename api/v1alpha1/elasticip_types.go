@@ -31,8 +31,7 @@ type BillingPlan struct {
 // ElasticIpSpec defines the desired state of ElasticIp.
 type ElasticIpSpec struct {
 	// Tenant is the owning account/tenant of this elastic IP
-	// +kubebuilder:validation:Required
-	Tenant string `json:"tenant"`
+	Tenant string `json:"tenant,omitempty"`
 
 	// Tags are labels associated with the elastic IP
 	// +kubebuilder:validation:Optional

@@ -10,35 +10,41 @@ The Arubacloud Resource Operator is a Kubernetes operator that enables declarati
 
 ## Installation
 
-### Install via Helm Chart
+### Install the Chart
 
-The recommended way to install the Arubacloud Resource Operator is via Helm chart.
-
-#### Prerequisites
-
-- Kubernetes v1.11.3+ cluster
-- Helm 3.x
-- kubectl configured to communicate with your cluster
-
-#### Install the Chart
-
-Add the Arubacloud Helm repository (if not already added):
+Add the arubacloud Helm repository (if not already added):
 ```bash
 helm repo add arubacloud https://arubacloud.github.io/helm-charts/
 helm repo update
 ```
 
-Install the operator with automatic CRD installation (default):
+#### Single-Tenant Installation (Default)
+
+For single-tenant deployments with direct OAuth credentials:
+
 ```bash
 helm install arubacloud-operator arubacloud/arubacloud-resource-operator \
-  --namespace aruba-system --create-namespace
+  --namespace aruba-system \
+  --create-namespace \
+  --set config.auth.mode=single \
+  --set config.auth.single.clientId=<your-client-id> \
+  --set config.auth.single.clientSecret=<your-client-secret>
 ```
 
-Or install without CRDs (if managing them separately):
+#### Multi-Tenant Installation (Vault-based)
+
+For multi-tenant deployments using HashiCorp Vault:
+
 ```bash
 helm install arubacloud-operator arubacloud/arubacloud-resource-operator \
-  --namespace aruba-system --create-namespace \
-  --set crds.enabled=false
+  --namespace aruba-system \
+  --create-namespace \
+  --set config.auth.mode=multi \
+  --set config.auth.multi.vault.address=<vault-address> \
+  --set config.auth.multi.vault.rolePath=<vault-role-path> \
+  --set config.auth.multi.vault.roleId=<vault-role-id> \
+  --set config.auth.multi.vault.roleSecret=<vault-role-secret> \ 
+  --set config.auth.multi.vault.kvMount=<vault-role-kvMount>
 ```
 
 For detailed configuration options, values, and advanced usage, please refer to the [Helm chart documentation](https://github.com/Arubacloud/helm-charts/tree/main/charts/arubacloud-resource-operator).
@@ -70,24 +76,6 @@ To apply a sample:
 ```bash
 kubectl apply -f config/samples/arubacloud.com_v1alpha1_cloudserver.yaml
 ```
-
-## Development
-
-### Prerequisites
-
-- Go version v1.24.0+
-- Docker version 17.03+
-- kubectl version v1.11.3+
-- Access to a Kubernetes v1.11.3+ cluster
-
-### Building from Source
-
-Build and push your image:
-```sh
-make docker-build docker-push IMG=<some-registry>/aruba:tag
-```
-
-**NOTE:** Ensure you have proper permissions to push to the registry.
 
 ## Contributing
 

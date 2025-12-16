@@ -1,0 +1,65 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - arubacloud.com
+  resources:
+  - blockstorages
+  - cloudservers
+  - elasticips
+  - keypairs
+  - projects
+  - securitygroups
+  - securityrules
+  - subnets
+  - vpcs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - arubacloud.com
+  resources:
+  - blockstorages/finalizers
+  - cloudservers/finalizers
+  - elasticips/finalizers
+  - keypairs/finalizers
+  - projects/finalizers
+  - securitygroups/finalizers
+  - securityrules/finalizers
+  - subnets/finalizers
+  - vpcs/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - arubacloud.com
+  resources:
+  - blockstorages/status
+  - cloudservers/status
+  - elasticips/status
+  - keypairs/status
+  - projects/status
+  - securitygroups/status
+  - securityrules/status
+  - subnets/status
+  - vpcs/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - arubacloud.com
+  resources:
+  - configmaps
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch

@@ -2,7 +2,7 @@ apiVersion: arubacloud.com/v1alpha1
 kind: Project
 metadata:
   name: __NAME__
-  namespace: default
+  namespace: __NAMESPACE__
 spec:
   tenant: __TENANT__
   description: Test project for local development

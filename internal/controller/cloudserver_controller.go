@@ -334,12 +334,12 @@ func (r *CloudServerReconciler) Created(ctx context.Context, obj client.Object, 
 
 	// Check if data volumes need to be managed
 	_, toAttach, toDetach, err := r.resolveAndCheckDataVolumes(ctx, cloudServer)
-
-	needsVolumeUpdate := len(toAttach) > 0 || len(toDetach) > 0
 	if err != nil {
 		phaseLogger.Error(err, "failed to check data volume update status")
 		return r.NextToFailedOnApiError(ctx, obj, status, err)
 	}
+
+	needsVolumeUpdate := len(toAttach) > 0 || len(toDetach) > 0
 
 	if needsVolumeUpdate {
 		phaseLogger.Info("Data volumes need to be updated, transitioning to Updating phase")
@@ -360,7 +360,6 @@ func (r *CloudServerReconciler) Created(ctx context.Context, obj client.Object, 
 }
 
 // checkDataVolumesNeedUpdate checks if data volumes need to be attached or detached
-// Returns: needsUpdate (bool), desiredVolumeIDs ([]string), error
 func (r *CloudServerReconciler) resolveAndCheckDataVolumes(ctx context.Context, cloudServer *v1alpha1.CloudServer) ([]string, []string, []string, error) {
 	// Resolve desired data volume IDs from spec
 	desiredVolumeIDs := make([]string, 0, len(cloudServer.Spec.DataVolumeReferences))

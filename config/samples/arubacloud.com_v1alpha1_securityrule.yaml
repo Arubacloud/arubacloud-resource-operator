@@ -2,7 +2,7 @@ apiVersion: arubacloud.com/v1alpha1
 kind: SecurityRule
 metadata:
   name: __NAME__
-  namespace: default
+  namespace: __NAMESPACE__
 spec:
   tenant: __TENANT__
   tags:
@@ -18,10 +18,10 @@ spec:
     value: '0.0.0.0/0'
   securityGroupReference:
     name: __NAME__
-    namespace: default
+    namespace: __NAMESPACE__
   vpcReference:
     name: __NAME__
-    namespace: default
+    namespace: __NAMESPACE__
   projectReference:
     name: __NAME__
-    namespace: default
+    namespace: __NAMESPACE__

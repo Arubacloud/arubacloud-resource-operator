@@ -116,8 +116,8 @@ func (c *HelperClient) DeleteCloudServer(ctx context.Context, projectID, cloudSe
 }
 
 type AttachDetachDataVolumesRequest struct {
-	VolumesToAttach []CloudServerResourceReference `json:"volumesToAttach,omitempty"`
-	VolumesToDetach []CloudServerResourceReference `json:"volumesToDetach,omitempty"`
+	VolumesToAttach []CloudServerResourceReference `json:"volumesToAttach"`
+	VolumesToDetach []CloudServerResourceReference `json:"volumesToDetach"`
 }
 
 // AttachDetachDataVolumes manages data volumes for a cloud server via API

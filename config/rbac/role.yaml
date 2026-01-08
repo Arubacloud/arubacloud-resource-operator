@@ -5,6 +5,15 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
+  - ""
+  resources:
+  - configmaps
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - arubacloud.com
   resources:
   - blockstorages
@@ -54,12 +63,3 @@ rules:
   - get
   - patch
   - update
-- apiGroups:
-  - arubacloud.com
-  resources:
-  - configmaps
-  - secrets
-  verbs:
-  - get
-  - list
-  - watch

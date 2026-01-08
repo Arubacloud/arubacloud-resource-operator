@@ -2,7 +2,7 @@ apiVersion: arubacloud.com/v1alpha1
 kind: ElasticIp
 metadata:
   name: __NAME__03
-  namespace: default
+  namespace: __NAMESPACE__
 spec:
   tenant: __TENANT__
   tags:
@@ -15,4 +15,4 @@ spec:
     billingPeriod: Hour
   projectReference:
     name: __NAME__
-    namespace: default
+    namespace: __NAMESPACE__

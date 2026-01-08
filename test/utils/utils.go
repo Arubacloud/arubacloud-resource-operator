@@ -268,3 +268,27 @@ func UncommentCode(filename, target, prefix string) error {
 
 	return nil
 }
+
+// LoadSampleManifest loads a sample manifest from config/samples and replaces placeholders
+func LoadSampleManifest(sampleFileName string, replacements map[string]string) (string, error) {
+	dir, err := GetProjectDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get project dir: %w", err)
+	}
+
+	samplePath := fmt.Sprintf("%s/config/samples/%s", dir, sampleFileName)
+	// #nosec G304 -- samplePath is constructed from controlled test input within config/samples directory
+	content, err := os.ReadFile(samplePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read sample file %q: %w", samplePath, err)
+	}
+
+	manifest := string(content)
+
+	// Replace placeholders
+	for placeholder, value := range replacements {
+		manifest = strings.ReplaceAll(manifest, placeholder, value)
+	}
+
+	return manifest, nil
+}

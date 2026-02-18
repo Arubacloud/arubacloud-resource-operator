@@ -1,0 +1,19 @@
+apiVersion: arubacloud.com/v1alpha1
+kind: BlockStorage
+metadata:
+  name: __NAME__04
+  namespace: __NAMESPACE__
+spec:
+  tenant: __TENANT__
+  tags:
+    - tag-1
+  location:
+    value: ITBG-Bergamo
+  sizeGb: 40
+  billingPeriod: Hour
+  dataCenter: ITBG-1
+  bootable: true
+  image: LU20-001
+  projectReference:
+    name: __NAME__
+    namespace: __NAMESPACE__

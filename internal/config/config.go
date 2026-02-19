@@ -21,7 +21,7 @@ type MainConfig struct {
 	RoleID         string
 	RoleSecret     string
 	ClientID       string
-	ClientSecret   string
+	ClientSecret   string //nolint:gosec // G117: ClientSecret is intentionally storing OAuth secret
 }
 
 // Validate ensures all required fields are present.

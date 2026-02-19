@@ -30,7 +30,7 @@ type HelperClient struct {
 }
 
 type TokenResponse struct {
-	AccessToken string `json:"access_token"`
+	AccessToken string `json:"access_token"` //nolint:gosec // G117: AccessToken is intentionally storing API token
 	TokenType   string `json:"token_type"`
 	ExpiresIn   int    `json:"expires_in"`
 }

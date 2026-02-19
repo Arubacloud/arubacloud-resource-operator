@@ -59,7 +59,7 @@ type ReconcilerConfig struct {
 	Namespace      string
 	RolePath       string
 	ClientID       string
-	ClientSecret   string
+	ClientSecret   string //nolint:gosec // G117: ClientSecret is intentionally storing OAuth secret
 	RoleID         string
 	RoleSecret     string
 	KVMount        string

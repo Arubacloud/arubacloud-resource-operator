@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"fmt"
+	"os"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -27,6 +28,17 @@ func Load(ctx context.Context, mgr ctrl.Manager, configMapName, configNamespace,
 		return nil, fmt.Errorf("failed to read secret %s: %w", secretName, err)
 	}
 
+	// Read from secret first, fall back to environment variables
+	roleID := string(secret.Data["role-id"])
+	if roleID == "" {
+		roleID = os.Getenv("ROLE_ID")
+	}
+
+	roleSecret := string(secret.Data["role-secret"])
+	if roleSecret == "" {
+		roleSecret = os.Getenv("ROLE_SECRET")
+	}
+
 	mainConfig := &MainConfig{
 		APIGateway:     cfg.Data["api-gateway"],
 		VaultIsEnabled: cfg.Data["vault-enabled"] == "true",
@@ -36,8 +48,8 @@ func Load(ctx context.Context, mgr ctrl.Manager, configMapName, configNamespace,
 		Namespace:      cfg.Data["role-namespace"],
 		RolePath:       cfg.Data["role-path"],
 		KVMount:        cfg.Data["kv-mount"],
-		RoleID:         string(secret.Data["role-id"]),
-		RoleSecret:     string(secret.Data["role-secret"]),
+		RoleID:         roleID,
+		RoleSecret:     roleSecret,
 		ClientID:       string(secret.Data["client-id"]),
 		ClientSecret:   string(secret.Data["client-secret"]),
 	}

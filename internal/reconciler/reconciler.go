@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"slices"
@@ -87,7 +86,7 @@ func NewReconciler(mgr ctrl.Manager, cfg ReconcilerConfig) *Reconciler {
 			ctrl.Log.Error(err, "failed to init vault client: %v")
 			os.Exit(1)
 		}
-		//	defer vaultAuth.Close()
+		defer vaultAuth.Close()
 		ctrl.Log.V(1).Info("Vault integration is enabled; Vault client initialized")
 	}
 
@@ -114,14 +113,6 @@ func (r *Reconciler) Reconcile(
 	req ctrl.Request,
 	obj ResourceObject,
 	resourceReconciler ResourceReconciler) (ctrl.Result, error) {
-	// err := r.Get(ctx, req.NamespacedName, obj)
-	// if err != nil {
-	// 	if apierrors.IsNotFound(err) {
-	// 		return ctrl.Result{}, nil
-	// 	}
-	// 	return ctrl.Result{}, err
-	// }
-
 	tenant := obj.GetTenant()
 	status := obj.GetResourceStatus()
 
@@ -262,8 +253,6 @@ func (r *Reconciler) Next(
 		currentPhase = "Initializing"
 	}
 
-	log.Println("--->> BEGIN CURRENT PHASE IS ", "phase", currentPhase, "nextPhase", nextPhase, "reason", reason, "message", message, "name", obj.GetName())
-
 	phaseLogger := ctrl.Log.WithValues("Phase", currentPhase, "NextPhase", nextPhase, "Kind", obj.GetObjectKind().GroupVersionKind().Kind, "Name", obj.GetName())
 	// Debouncing logic: if this is a retry (requeue=true) with the same phase, check timing
 	if requeue && currentPhase == nextPhase && status.PhaseStartTime != nil {
@@ -328,7 +317,6 @@ func (r *Reconciler) Next(
 		phaseLogger.Error(err, "failed to update status after retry")
 		return ctrl.Result{}, err
 	}
-	log.Println("--->> END CURRENT PHASE IS ", "phase", currentPhase, "nextPhase", nextPhase, "reason", reason, "message", message, "name", obj.GetName())
 	phaseLogger.Info(message)
 	return ctrl.Result{Requeue: requeue, RequeueAfter: requeueAfter}, nil
 }

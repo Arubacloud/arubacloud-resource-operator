@@ -104,3 +104,11 @@ type BlockStorageList struct {
 func init() {
 	SchemeBuilder.Register(&BlockStorage{}, &BlockStorageList{})
 }
+
+func (b *BlockStorage) GetResourceStatus() *ResourceStatus {
+	return &b.Status.ResourceStatus
+}
+
+func (b *BlockStorage) GetTenant() string {
+	return b.Spec.Tenant
+}

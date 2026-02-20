@@ -76,3 +76,11 @@ type VpcList struct {
 func init() {
 	SchemeBuilder.Register(&Vpc{}, &VpcList{})
 }
+
+func (b *Vpc) GetResourceStatus() *ResourceStatus {
+	return &b.Status.ResourceStatus
+}
+
+func (b *Vpc) GetTenant() string {
+	return b.Spec.Tenant
+}

@@ -48,7 +48,11 @@ func NewBlockStorageReconciler(baseReconciler *reconciler.Reconciler) *BlockStor
 
 func (r *BlockStorageReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	obj := &v1alpha1.BlockStorage{}
-	return r.Reconciler.Reconcile(ctx, req, obj, &obj.Status.ResourceStatus, r, &obj.Spec.Tenant)
+	if err := r.Get(ctx, req.NamespacedName, obj); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	return r.Reconciler.Reconcile(ctx, req, obj, r)
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -63,11 +67,11 @@ const (
 	blockStorageFinalizerName = "blockstorage.arubacloud.com/finalizer"
 )
 
-func (r *BlockStorageReconciler) Init(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *BlockStorageReconciler) Init(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	return r.InitializeResource(ctx, obj, status, blockStorageFinalizerName)
 }
 
-func (r *BlockStorageReconciler) Creating(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *BlockStorageReconciler) Creating(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	blockStorage := obj.(*v1alpha1.BlockStorage)
 	return r.HandleCreating(ctx, obj, status, func(ctx context.Context) (string, string, error) {
 		projectID, err := r.GetProjectID(ctx, blockStorage.Spec.ProjectReference.Name, blockStorage.Spec.ProjectReference.Namespace)
@@ -109,7 +113,7 @@ func (r *BlockStorageReconciler) Creating(ctx context.Context, obj client.Object
 	})
 }
 
-func (r *BlockStorageReconciler) Provisioning(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *BlockStorageReconciler) Provisioning(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	blockStorage := obj.(*v1alpha1.BlockStorage)
 	return r.HandleProvisioning(ctx, obj, status, func(ctx context.Context) (string, error) {
 		blockStorageResp, err := r.GetBlockStorage(ctx, blockStorage.Status.ProjectID, status.ResourceID)
@@ -124,7 +128,7 @@ func (r *BlockStorageReconciler) Provisioning(ctx context.Context, obj client.Ob
 	})
 }
 
-func (r *BlockStorageReconciler) Updating(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *BlockStorageReconciler) Updating(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	blockStorage := obj.(*v1alpha1.BlockStorage)
 	return r.HandleUpdating(ctx, obj, status, func(ctx context.Context) error {
 		blockStorageReq := arubaClient.BlockStorageRequest{
@@ -147,11 +151,11 @@ func (r *BlockStorageReconciler) Updating(ctx context.Context, obj client.Object
 	})
 }
 
-func (r *BlockStorageReconciler) Created(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *BlockStorageReconciler) Created(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	return r.CheckForUpdates(ctx, obj, status)
 }
 
-func (r *BlockStorageReconciler) Deleting(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *BlockStorageReconciler) Deleting(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	blockStorage := obj.(*v1alpha1.BlockStorage)
 	return r.HandleDeletion(ctx, obj, status, blockStorageFinalizerName, func(ctx context.Context) error {
 		return r.DeleteBlockStorage(ctx, blockStorage.Status.ProjectID, status.ResourceID)

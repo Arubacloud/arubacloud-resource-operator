@@ -48,7 +48,11 @@ func NewSecurityGroupReconciler(reconciler *reconciler.Reconciler) *SecurityGrou
 
 func (r *SecurityGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	obj := &v1alpha1.SecurityGroup{}
-	return r.Reconciler.Reconcile(ctx, req, obj, &obj.Status.ResourceStatus, r, &obj.Spec.Tenant)
+	if err := r.Get(ctx, req.NamespacedName, obj); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	return r.Reconciler.Reconcile(ctx, req, obj, r)
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -63,11 +67,11 @@ const (
 	securityGroupFinalizerName = "securitygroup.arubacloud.com/finalizer"
 )
 
-func (r *SecurityGroupReconciler) Init(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *SecurityGroupReconciler) Init(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	return r.InitializeResource(ctx, obj, status, securityGroupFinalizerName)
 }
 
-func (r *SecurityGroupReconciler) Creating(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *SecurityGroupReconciler) Creating(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	securityGroup := obj.(*v1alpha1.SecurityGroup)
 	return r.HandleCreating(ctx, obj, status, func(ctx context.Context) (string, string, error) {
 		projectID, err := r.GetProjectID(
@@ -114,7 +118,7 @@ func (r *SecurityGroupReconciler) Creating(ctx context.Context, obj client.Objec
 	})
 }
 
-func (r *SecurityGroupReconciler) Provisioning(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *SecurityGroupReconciler) Provisioning(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	securityGroup := obj.(*v1alpha1.SecurityGroup)
 	return r.HandleProvisioning(ctx, obj, status, func(ctx context.Context) (string, error) {
 		securityGroupResp, err := r.GetSecurityGroup(ctx, securityGroup.Status.ProjectID, securityGroup.Status.VpcID, status.ResourceID)
@@ -129,7 +133,7 @@ func (r *SecurityGroupReconciler) Provisioning(ctx context.Context, obj client.O
 	})
 }
 
-func (r *SecurityGroupReconciler) Updating(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *SecurityGroupReconciler) Updating(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	securityGroup := obj.(*v1alpha1.SecurityGroup)
 	return r.HandleUpdating(ctx, obj, status, func(ctx context.Context) error {
 		securityGroupReq := arubaClient.SecurityGroupRequest{
@@ -150,11 +154,11 @@ func (r *SecurityGroupReconciler) Updating(ctx context.Context, obj client.Objec
 	})
 }
 
-func (r *SecurityGroupReconciler) Created(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *SecurityGroupReconciler) Created(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	return r.CheckForUpdates(ctx, obj, status)
 }
 
-func (r *SecurityGroupReconciler) Deleting(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *SecurityGroupReconciler) Deleting(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	securityGroup := obj.(*v1alpha1.SecurityGroup)
 	return r.HandleDeletion(ctx, obj, status, securityGroupFinalizerName, func(ctx context.Context) error {
 		return r.DeleteSecurityGroup(ctx, securityGroup.Status.ProjectID, securityGroup.Status.VpcID, status.ResourceID)

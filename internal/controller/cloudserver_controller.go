@@ -51,7 +51,11 @@ func NewCloudServerReconciler(reconciler *reconciler.Reconciler) *CloudServerRec
 
 func (r *CloudServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	obj := &v1alpha1.CloudServer{}
-	return r.Reconciler.Reconcile(ctx, req, obj, &obj.Status.ResourceStatus, r, &obj.Spec.Tenant)
+	if err := r.Get(ctx, req.NamespacedName, obj); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	return r.Reconciler.Reconcile(ctx, req, obj, r)
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -66,11 +70,11 @@ const (
 	cloudServerFinalizerName = "cloudserver.arubacloud.com/finalizer"
 )
 
-func (r *CloudServerReconciler) Init(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *CloudServerReconciler) Init(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	return r.InitializeResource(ctx, obj, status, cloudServerFinalizerName)
 }
 
-func (r *CloudServerReconciler) Creating(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *CloudServerReconciler) Creating(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	cloudServer := obj.(*v1alpha1.CloudServer)
 	return r.HandleCreating(ctx, obj, status, func(ctx context.Context) (string, string, error) {
 		projectID, err := r.GetProjectID(ctx, cloudServer.Spec.ProjectReference.Name, cloudServer.Spec.ProjectReference.Namespace)
@@ -180,7 +184,7 @@ func (r *CloudServerReconciler) Creating(ctx context.Context, obj client.Object,
 }
 
 // Provisioning handles checking remote state during provisioning
-func (r *CloudServerReconciler) Provisioning(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *CloudServerReconciler) Provisioning(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	cloudServer := obj.(*v1alpha1.CloudServer)
 	return r.HandleProvisioning(ctx, obj, status, func(ctx context.Context) (string, error) {
 		cloudServerResp, err := r.GetCloudServer(ctx, cloudServer.Status.ProjectID, status.ResourceID)
@@ -196,7 +200,7 @@ func (r *CloudServerReconciler) Provisioning(ctx context.Context, obj client.Obj
 }
 
 // Updating handles cloud server updates
-func (r *CloudServerReconciler) Updating(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *CloudServerReconciler) Updating(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	cloudServer := obj.(*v1alpha1.CloudServer)
 	return r.HandleUpdating(ctx, obj, status, func(ctx context.Context) error {
 		// Re-resolve all IDs in case references changed
@@ -328,7 +332,7 @@ func (r *CloudServerReconciler) manageDataVolumesInUpdate(ctx context.Context, c
 }
 
 // Created handles the steady state
-func (r *CloudServerReconciler) Created(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *CloudServerReconciler) Created(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	cloudServer := obj.(*v1alpha1.CloudServer)
 	phaseLogger := ctrl.Log.WithValues("Phase", status.Phase, "Kind", cloudServer.GetObjectKind().GroupVersionKind().Kind, "Name", cloudServer.GetName())
 
@@ -378,7 +382,7 @@ func (r *CloudServerReconciler) resolveAndCheckDataVolumes(ctx context.Context, 
 }
 
 // Deleting handles the actual cloud server deletion
-func (r *CloudServerReconciler) Deleting(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *CloudServerReconciler) Deleting(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	cloudServer := obj.(*v1alpha1.CloudServer)
 	return r.HandleDeletion(ctx, obj, status, cloudServerFinalizerName, func(ctx context.Context) error {
 		return r.DeleteCloudServer(ctx, cloudServer.Status.ProjectID, status.ResourceID)

@@ -150,3 +150,11 @@ type CloudServerList struct {
 func init() {
 	SchemeBuilder.Register(&CloudServer{}, &CloudServerList{})
 }
+
+func (b *CloudServer) GetResourceStatus() *ResourceStatus {
+	return &b.Status.ResourceStatus
+}
+
+func (b *CloudServer) GetTenant() string {
+	return b.Spec.Tenant
+}

@@ -88,3 +88,11 @@ type ElasticIpList struct {
 func init() {
 	SchemeBuilder.Register(&ElasticIp{}, &ElasticIpList{})
 }
+
+func (b *ElasticIp) GetResourceStatus() *ResourceStatus {
+	return &b.Status.ResourceStatus
+}
+
+func (b *ElasticIp) GetTenant() string {
+	return b.Spec.Tenant
+}

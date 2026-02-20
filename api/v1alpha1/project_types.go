@@ -68,3 +68,11 @@ type ProjectList struct {
 func init() {
 	SchemeBuilder.Register(&Project{}, &ProjectList{})
 }
+
+func (b *Project) GetResourceStatus() *ResourceStatus {
+	return &b.Status
+}
+
+func (b *Project) GetTenant() string {
+	return b.Spec.Tenant
+}

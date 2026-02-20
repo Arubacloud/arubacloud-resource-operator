@@ -48,7 +48,11 @@ func NewSubnetReconciler(reconciler *reconciler.Reconciler) *SubnetReconciler {
 
 func (r *SubnetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	obj := &v1alpha1.Subnet{}
-	return r.Reconciler.Reconcile(ctx, req, obj, &obj.Status.ResourceStatus, r, &obj.Spec.Tenant)
+	if err := r.Get(ctx, req.NamespacedName, obj); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	return r.Reconciler.Reconcile(ctx, req, obj, r)
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -63,11 +67,11 @@ const (
 	subnetFinalizerName = "subnet.arubacloud.com/finalizer"
 )
 
-func (r *SubnetReconciler) Init(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *SubnetReconciler) Init(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	return r.InitializeResource(ctx, obj, status, subnetFinalizerName)
 }
 
-func (r *SubnetReconciler) Creating(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *SubnetReconciler) Creating(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	subnet := obj.(*v1alpha1.Subnet)
 	return r.HandleCreating(ctx, obj, status, func(ctx context.Context) (string, string, error) {
 		projectID, err := r.GetProjectID(ctx, subnet.Spec.ProjectReference.Name, subnet.Spec.ProjectReference.Namespace)
@@ -114,7 +118,7 @@ func (r *SubnetReconciler) Creating(ctx context.Context, obj client.Object, stat
 	})
 }
 
-func (r *SubnetReconciler) Provisioning(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *SubnetReconciler) Provisioning(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	subnet := obj.(*v1alpha1.Subnet)
 	return r.HandleProvisioning(ctx, obj, status, func(ctx context.Context) (string, error) {
 		subnetResp, err := r.GetSubnet(ctx, subnet.Status.ProjectID, subnet.Status.VpcID, status.ResourceID)
@@ -129,7 +133,7 @@ func (r *SubnetReconciler) Provisioning(ctx context.Context, obj client.Object, 
 	})
 }
 
-func (r *SubnetReconciler) Updating(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *SubnetReconciler) Updating(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	subnet := obj.(*v1alpha1.Subnet)
 	return r.HandleUpdating(ctx, obj, status, func(ctx context.Context) error {
 		subnetReq := arubaClient.SubnetRequest{
@@ -154,11 +158,11 @@ func (r *SubnetReconciler) Updating(ctx context.Context, obj client.Object, stat
 	})
 }
 
-func (r *SubnetReconciler) Created(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *SubnetReconciler) Created(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	return r.CheckForUpdates(ctx, obj, status)
 }
 
-func (r *SubnetReconciler) Deleting(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *SubnetReconciler) Deleting(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	subnet := obj.(*v1alpha1.Subnet)
 	return r.HandleDeletion(ctx, obj, status, subnetFinalizerName, func(ctx context.Context) error {
 		return r.DeleteSubnet(ctx, subnet.Status.ProjectID, subnet.Status.VpcID, status.ResourceID)

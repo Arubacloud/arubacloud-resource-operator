@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"slices"
@@ -12,11 +13,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	apiError "k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
 	arubaClient "github.com/Arubacloud/arubacloud-resource-operator/internal/client"
@@ -31,12 +33,12 @@ const (
 
 // ResourceReconciler is an interface that must be implemented by all resource reconcilers
 type ResourceReconciler interface {
-	Init(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error)
-	Creating(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error)
-	Provisioning(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error)
-	Updating(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error)
-	Created(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error)
-	Deleting(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error)
+	Init(ctx context.Context, obj ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error)
+	Creating(ctx context.Context, obj ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error)
+	Provisioning(ctx context.Context, obj ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error)
+	Updating(ctx context.Context, obj ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error)
+	Created(ctx context.Context, obj ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error)
+	Deleting(ctx context.Context, obj ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error)
 }
 
 // Reconciler provides base functionality for all resource controllers
@@ -47,6 +49,12 @@ type Reconciler struct {
 	*arubaClient.AppRoleClient
 	TokenManager   arubaClient.ITokenManager
 	VaultIsEnabled bool
+}
+
+type ResourceObject interface {
+	client.Object
+	GetResourceStatus() *v1alpha1.ResourceStatus
+	GetTenant() string
 }
 
 // ReconcilerConfig holds configuration for setting up Reconciler
@@ -79,7 +87,7 @@ func NewReconciler(mgr ctrl.Manager, cfg ReconcilerConfig) *Reconciler {
 			ctrl.Log.Error(err, "failed to init vault client: %v")
 			os.Exit(1)
 		}
-		defer vaultAuth.Close()
+		//	defer vaultAuth.Close()
 		ctrl.Log.V(1).Info("Vault integration is enabled; Vault client initialized")
 	}
 
@@ -104,20 +112,20 @@ func NewReconciler(mgr ctrl.Manager, cfg ReconcilerConfig) *Reconciler {
 func (r *Reconciler) Reconcile(
 	ctx context.Context,
 	req ctrl.Request,
-	obj client.Object,
-	status *v1alpha1.ResourceStatus,
-	resourceReconciler ResourceReconciler,
-	tenant *string,
-) (ctrl.Result, error) {
-	err := r.Get(ctx, req.NamespacedName, obj)
-	if err != nil {
-		if apiError.IsNotFound(err) {
-			return ctrl.Result{}, nil
-		}
-		return ctrl.Result{}, err
-	}
+	obj ResourceObject,
+	resourceReconciler ResourceReconciler) (ctrl.Result, error) {
+	// err := r.Get(ctx, req.NamespacedName, obj)
+	// if err != nil {
+	// 	if apierrors.IsNotFound(err) {
+	// 		return ctrl.Result{}, nil
+	// 	}
+	// 	return ctrl.Result{}, err
+	// }
 
-	if tenant == nil || *tenant == "" {
+	tenant := obj.GetTenant()
+	status := obj.GetResourceStatus()
+
+	if tenant == "" {
 		if r.VaultIsEnabled {
 			errMsg := "Tenant ID is not specified in the resource spec"
 			ctrl.Log.Error(fmt.Errorf("%s", errMsg), "Cannot proceed without Tenant ID when Vault integration is enabled", "Resource", req.NamespacedName)
@@ -128,7 +136,7 @@ func (r *Reconciler) Reconcile(
 	}
 
 	ctrl.Log.V(1).Info("Setting tenant in Aruba client", "TenantID", tenant)
-	if err := r.Authenticate(ctx, *tenant); err != nil {
+	if err := r.Authenticate(ctx, tenant); err != nil {
 		ctrl.Log.Error(err, "Failed to authenticate Aruba client", "tenantID", tenant)
 		return ctrl.Result{}, err
 	}
@@ -171,7 +179,7 @@ func (r *Reconciler) Reconcile(
 }
 
 // HandlePhaseTimeout transitions the resource to failed state due to timeout
-func (r *Reconciler) HandlePhaseTimeout(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (bool, ctrl.Result, error) {
+func (r *Reconciler) HandlePhaseTimeout(ctx context.Context, obj ResourceObject, status *v1alpha1.ResourceStatus) (bool, ctrl.Result, error) {
 	isTimeout := false
 
 	if status.PhaseStartTime == nil {
@@ -215,7 +223,7 @@ func (r *Reconciler) HandlePhaseTimeout(ctx context.Context, obj client.Object, 
 }
 
 // HandleToDelete checks if resource should transition to deleting phase
-func (r *Reconciler) HandleToDelete(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (bool, ctrl.Result, error) {
+func (r *Reconciler) HandleToDelete(ctx context.Context, obj ResourceObject, status *v1alpha1.ResourceStatus) (bool, ctrl.Result, error) {
 	shouldBeDeleted := status.Phase != v1alpha1.ResourcePhaseDeleting &&
 		status.Phase != v1alpha1.ResourcePhaseFailed &&
 		!obj.GetDeletionTimestamp().IsZero()
@@ -240,23 +248,26 @@ func (r *Reconciler) HandleToDelete(ctx context.Context, obj client.Object, stat
 // Next transitions to the next phase with message and condition updates
 func (r *Reconciler) Next(
 	ctx context.Context,
-	obj client.Object,
+	obj ResourceObject,
 	resStatus *v1alpha1.ResourceStatus,
 	nextPhase v1alpha1.ResourcePhase,
 	condStatus metav1.ConditionStatus,
 	reason, message string,
 	requeue bool,
 ) (ctrl.Result, error) {
-	currentPhase := resStatus.Phase
+
+	status := obj.GetResourceStatus()
+	currentPhase := status.Phase
 	if currentPhase == "" {
 		currentPhase = "Initializing"
 	}
 
+	log.Println("--->> BEGIN CURRENT PHASE IS ", "phase", currentPhase, "nextPhase", nextPhase, "reason", reason, "message", message, "name", obj.GetName())
+
 	phaseLogger := ctrl.Log.WithValues("Phase", currentPhase, "NextPhase", nextPhase, "Kind", obj.GetObjectKind().GroupVersionKind().Kind, "Name", obj.GetName())
 	// Debouncing logic: if this is a retry (requeue=true) with the same phase, check timing
-	if requeue && currentPhase == nextPhase && resStatus.PhaseStartTime != nil {
-		timeSincePhaseStart := time.Since(resStatus.PhaseStartTime.Time)
-
+	if requeue && currentPhase == nextPhase && status.PhaseStartTime != nil {
+		timeSincePhaseStart := time.Since(status.PhaseStartTime.Time)
 		intervalsElapsed := int(timeSincePhaseStart / requeueAfter)
 		nextInterval := time.Duration(intervalsElapsed+1) * requeueAfter
 		timeToNextInterval := nextInterval - timeSincePhaseStart
@@ -275,26 +286,55 @@ func (r *Reconciler) Next(
 	}
 
 	// Update phase start time ONLY if phase is changing or not set
-	if resStatus.PhaseStartTime == nil || currentPhase != nextPhase {
+	if status.PhaseStartTime == nil || currentPhase != nextPhase {
 		now := metav1.Now()
-		resStatus.PhaseStartTime = &now
+		status.PhaseStartTime = &now
 	}
-	resStatus.Phase = nextPhase
-	resStatus.Message = message
-	resStatus.ObservedGeneration = obj.GetGeneration()
-	resStatus.Conditions = util.UpdateConditions(resStatus.Conditions, v1alpha1.ConditionTypeSynchronized, condStatus, reason, message)
 
-	if err := r.Client.Status().Update(ctx, obj); err != nil {
-		phaseLogger.Error(err, "failed to update status")
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+
+		// ALWAYS fetch fresh object into obj
+		if err := r.Get(ctx, client.ObjectKeyFromObject(obj), obj); err != nil {
+			return err
+		}
+
+		status := obj.GetResourceStatus()
+
+		// Update phase start time only if phase changes
+		if status.PhaseStartTime == nil || status.Phase != nextPhase {
+			now := metav1.Now()
+			status.PhaseStartTime = &now
+		}
+
+		status.Phase = nextPhase
+		status.Message = message
+		status.ObservedGeneration = obj.GetGeneration()
+		status.Conditions = util.UpdateConditions(
+			status.Conditions,
+			v1alpha1.ConditionTypeSynchronized,
+			condStatus,
+			reason,
+			message,
+		)
+
+		return r.Status().Update(ctx, obj)
+	})
+	if err != nil {
+		if apierrors.IsConflict(err) {
+			phaseLogger.Info("Conflict detected while updating status, will requeue")
+			return ctrl.Result{Requeue: true}, nil
+		}
+
+		phaseLogger.Error(err, "failed to update status after retry")
 		return ctrl.Result{}, err
 	}
-
+	log.Println("--->> END CURRENT PHASE IS ", "phase", currentPhase, "nextPhase", nextPhase, "reason", reason, "message", message, "name", obj.GetName())
 	phaseLogger.Info(message)
 	return ctrl.Result{Requeue: requeue, RequeueAfter: requeueAfter}, nil
 }
 
 // NextToFailedOnApiError handles API errors with proper 4xx/5xx logic and condition management
-func (r *Reconciler) NextToFailedOnApiError(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus, err error) (ctrl.Result, error) {
+func (r *Reconciler) NextToFailedOnApiError(ctx context.Context, obj ResourceObject, status *v1alpha1.ResourceStatus, err error) (ctrl.Result, error) {
 	var apiErr *arubaClient.ApiError
 	if errors.As(err, &apiErr) {
 		statusCode := apiErr.Status
@@ -348,7 +388,7 @@ func (r *Reconciler) NextToFailedOnApiError(ctx context.Context, obj client.Obje
 }
 
 // NextToFailedOnReconcileError handles generic reconcile errors
-func (r *Reconciler) NextToFailedOnReconcileError(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus, err error) (ctrl.Result, error) {
+func (r *Reconciler) NextToFailedOnReconcileError(ctx context.Context, obj ResourceObject, status *v1alpha1.ResourceStatus, err error) (ctrl.Result, error) {
 	return r.Next(
 		ctx,
 		obj,
@@ -362,7 +402,7 @@ func (r *Reconciler) NextToFailedOnReconcileError(ctx context.Context, obj clien
 }
 
 // InitializeResource handles the initialization phase with finalizer management
-func (r *Reconciler) InitializeResource(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus, finalizerName string) (ctrl.Result, error) {
+func (r *Reconciler) InitializeResource(ctx context.Context, obj ResourceObject, status *v1alpha1.ResourceStatus, finalizerName string) (ctrl.Result, error) {
 	// Add finalizer if not present
 	if !controllerutil.ContainsFinalizer(obj, finalizerName) {
 		controllerutil.AddFinalizer(obj, finalizerName)
@@ -376,7 +416,7 @@ func (r *Reconciler) InitializeResource(ctx context.Context, obj client.Object, 
 }
 
 // HandleDeletion handles the deletion phase with finalizer removal
-func (r *Reconciler) HandleDeletion(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus, finalizerName string, deleteFunc func(context.Context) error) (ctrl.Result, error) {
+func (r *Reconciler) HandleDeletion(ctx context.Context, obj ResourceObject, status *v1alpha1.ResourceStatus, finalizerName string, deleteFunc func(context.Context) error) (ctrl.Result, error) {
 	err := deleteFunc(ctx)
 	if err != nil {
 		return r.NextToFailedOnApiError(ctx, obj, status, err)
@@ -395,7 +435,21 @@ func (r *Reconciler) HandleDeletion(ctx context.Context, obj client.Object, stat
 }
 
 // HandleCreating handles the resource creation phase
-func (r *Reconciler) HandleCreating(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus, createFunc func(context.Context) (string, string, error)) (ctrl.Result, error) {
+func (r *Reconciler) HandleCreating(ctx context.Context, obj ResourceObject, status *v1alpha1.ResourceStatus, createFunc func(context.Context) (string, string, error)) (ctrl.Result, error) {
+	if status.ResourceID != "" {
+		// Resource already created, skip create call
+		return r.Next(
+			ctx,
+			obj,
+			status,
+			v1alpha1.ResourcePhaseCreated,
+			metav1.ConditionTrue,
+			"AlreadyCreated",
+			"Resource already has an ID",
+			true,
+		)
+	}
+
 	resourceID, state, err := createFunc(ctx)
 	if err != nil {
 		return r.NextToFailedOnApiError(ctx, obj, status, err)
@@ -403,6 +457,9 @@ func (r *Reconciler) HandleCreating(ctx context.Context, obj client.Object, stat
 
 	// Update status with resource ID
 	status.ResourceID = resourceID
+	if err := r.Status().Update(ctx, obj); err != nil {
+		return ctrl.Result{}, err
+	}
 
 	if state == "InCreation" || state == "Provisioning" {
 		return r.Next(
@@ -430,7 +487,7 @@ func (r *Reconciler) HandleCreating(ctx context.Context, obj client.Object, stat
 }
 
 // HandleUpdating handles the resource update phase
-func (r *Reconciler) HandleUpdating(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus, updateFunc func(context.Context) error) (ctrl.Result, error) {
+func (r *Reconciler) HandleUpdating(ctx context.Context, obj ResourceObject, status *v1alpha1.ResourceStatus, updateFunc func(context.Context) error) (ctrl.Result, error) {
 	err := updateFunc(ctx)
 	if err != nil {
 		return r.NextToFailedOnApiError(ctx, obj, status, err)
@@ -449,7 +506,7 @@ func (r *Reconciler) HandleUpdating(ctx context.Context, obj client.Object, stat
 }
 
 // HandleProvisioning handles the provisioning state check with configurable state transitions
-func (r *Reconciler) HandleProvisioning(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus, getStatusFunc func(context.Context) (string, error)) (ctrl.Result, error) {
+func (r *Reconciler) HandleProvisioning(ctx context.Context, obj ResourceObject, status *v1alpha1.ResourceStatus, getStatusFunc func(context.Context) (string, error)) (ctrl.Result, error) {
 	state, err := getStatusFunc(ctx)
 	if err != nil {
 		return r.NextToFailedOnApiError(ctx, obj, status, err)
@@ -494,7 +551,7 @@ func (r *Reconciler) HandleProvisioning(ctx context.Context, obj client.Object, 
 }
 
 // CheckForUpdates checks if resource needs update based on generation
-func (r *Reconciler) CheckForUpdates(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *Reconciler) CheckForUpdates(ctx context.Context, obj ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	phaseLogger := ctrl.Log.WithValues("Phase", status.Phase, "Kind", obj.GetObjectKind().GroupVersionKind().Kind, "Name", obj.GetName())
 
 	// Check if resource needs update
@@ -542,7 +599,6 @@ func (r *Reconciler) Authenticate(ctx context.Context, tenantId string) error {
 		clientId, _ := apiKeyData["client-id"].(string)
 		ctrl.Log.V(1).Info("Authenticating Aruba client", "ClientID", clientId)
 		clientSecret, _ := apiKeyData["client-secret"].(string)
-		ctrl.Log.V(1).Info("Authenticating Aruba client", "ClientSecret", clientSecret)
 
 		r.TokenManager.SetClientIdAndSecret(clientId, clientSecret)
 	}

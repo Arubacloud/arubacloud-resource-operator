@@ -81,3 +81,11 @@ type KeyPairList struct {
 func init() {
 	SchemeBuilder.Register(&KeyPair{}, &KeyPairList{})
 }
+
+func (b *KeyPair) GetResourceStatus() *ResourceStatus {
+	return &b.Status.ResourceStatus
+}
+
+func (b *KeyPair) GetTenant() string {
+	return b.Spec.Tenant
+}

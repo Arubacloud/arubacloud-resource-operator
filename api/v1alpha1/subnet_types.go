@@ -112,3 +112,11 @@ type SubnetList struct {
 func init() {
 	SchemeBuilder.Register(&Subnet{}, &SubnetList{})
 }
+
+func (b *Subnet) GetResourceStatus() *ResourceStatus {
+	return &b.Status.ResourceStatus
+}
+
+func (b *Subnet) GetTenant() string {
+	return b.Spec.Tenant
+}

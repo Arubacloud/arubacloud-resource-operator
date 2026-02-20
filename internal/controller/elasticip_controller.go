@@ -30,7 +30,11 @@ func NewElasticIpReconciler(reconciler *reconciler.Reconciler) *ElasticIpReconci
 
 func (r *ElasticIpReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	obj := &v1alpha1.ElasticIp{}
-	return r.Reconciler.Reconcile(ctx, req, obj, &obj.Status.ResourceStatus, r, &obj.Spec.Tenant)
+	if err := r.Get(ctx, req.NamespacedName, obj); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	return r.Reconciler.Reconcile(ctx, req, obj, r)
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -45,11 +49,11 @@ const (
 	elasticIpFinalizerName = "elasticip.arubacloud.com/finalizer"
 )
 
-func (r *ElasticIpReconciler) Init(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *ElasticIpReconciler) Init(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	return r.InitializeResource(ctx, obj, status, elasticIpFinalizerName)
 }
 
-func (r *ElasticIpReconciler) Creating(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *ElasticIpReconciler) Creating(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	elasticIp := obj.(*v1alpha1.ElasticIp)
 	return r.HandleCreating(ctx, obj, status, func(ctx context.Context) (string, string, error) {
 		projectID, err := r.GetProjectID(
@@ -92,7 +96,7 @@ func (r *ElasticIpReconciler) Creating(ctx context.Context, obj client.Object, s
 	})
 }
 
-func (r *ElasticIpReconciler) Provisioning(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *ElasticIpReconciler) Provisioning(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	elasticIp := obj.(*v1alpha1.ElasticIp)
 	return r.HandleProvisioning(ctx, obj, status, func(ctx context.Context) (string, error) {
 		elasticIpResp, err := r.GetElasticIp(ctx, elasticIp.Status.ProjectID, status.ResourceID)
@@ -107,7 +111,7 @@ func (r *ElasticIpReconciler) Provisioning(ctx context.Context, obj client.Objec
 	})
 }
 
-func (r *ElasticIpReconciler) Updating(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *ElasticIpReconciler) Updating(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	elasticIp := obj.(*v1alpha1.ElasticIp)
 	return r.HandleUpdating(ctx, obj, status, func(ctx context.Context) error {
 		elasticIpReq := arubaClient.ElasticIpRequest{
@@ -130,11 +134,11 @@ func (r *ElasticIpReconciler) Updating(ctx context.Context, obj client.Object, s
 	})
 }
 
-func (r *ElasticIpReconciler) Created(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *ElasticIpReconciler) Created(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	return r.CheckForUpdates(ctx, obj, status)
 }
 
-func (r *ElasticIpReconciler) Deleting(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *ElasticIpReconciler) Deleting(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	elasticIp := obj.(*v1alpha1.ElasticIp)
 	return r.HandleDeletion(ctx, obj, status, elasticIpFinalizerName, func(ctx context.Context) error {
 		return r.DeleteElasticIp(ctx, elasticIp.Status.ProjectID, status.ResourceID)

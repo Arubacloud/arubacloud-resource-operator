@@ -21,7 +21,6 @@ import (
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
 	arubaClient "github.com/Arubacloud/arubacloud-resource-operator/internal/client"
@@ -60,9 +59,6 @@ func (r *ProjectReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.Project{}).
 		Named("project").
-		WithOptions(controller.Options{
-			MaxConcurrentReconciles: 10,
-		}).
 		Complete(r)
 }
 

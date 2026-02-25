@@ -127,3 +127,11 @@ type SecurityRuleList struct {
 func init() {
 	SchemeBuilder.Register(&SecurityRule{}, &SecurityRuleList{})
 }
+
+func (b *SecurityRule) GetResourceStatus() *ResourceStatus {
+	return &b.Status.ResourceStatus
+}
+
+func (b *SecurityRule) GetTenant() string {
+	return b.Spec.Tenant
+}

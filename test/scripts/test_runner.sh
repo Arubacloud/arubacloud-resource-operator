@@ -1,7 +1,7 @@
 #!/bin/bash
 # Usage: NN=9 ACTION=apply ./test_runner.sh
 
-set -hex
+#set -hex
 NN=${NN:-1}
 ACTION=${ACTION:-apply}
 TENANT=${TENANT:-ARU-329997}

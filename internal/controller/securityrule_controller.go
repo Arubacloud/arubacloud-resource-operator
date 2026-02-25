@@ -48,7 +48,11 @@ func NewSecurityRuleReconciler(reconciler *reconciler.Reconciler) *SecurityRuleR
 
 func (r *SecurityRuleReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	obj := &v1alpha1.SecurityRule{}
-	return r.Reconciler.Reconcile(ctx, req, obj, &obj.Status.ResourceStatus, r, &obj.Spec.Tenant)
+	if err := r.Get(ctx, req.NamespacedName, obj); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	return r.Reconciler.Reconcile(ctx, req, obj, r)
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -63,11 +67,11 @@ const (
 	securityRuleFinalizerName = "securityrule.arubacloud.com/finalizer"
 )
 
-func (r *SecurityRuleReconciler) Init(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *SecurityRuleReconciler) Init(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	return r.InitializeResource(ctx, obj, status, securityRuleFinalizerName)
 }
 
-func (r *SecurityRuleReconciler) Creating(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *SecurityRuleReconciler) Creating(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	securityRule := obj.(*v1alpha1.SecurityRule)
 	return r.HandleCreating(ctx, obj, status, func(ctx context.Context) (string, string, error) {
 		projectID, err := r.GetProjectID(
@@ -130,7 +134,7 @@ func (r *SecurityRuleReconciler) Creating(ctx context.Context, obj client.Object
 	})
 }
 
-func (r *SecurityRuleReconciler) Provisioning(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *SecurityRuleReconciler) Provisioning(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	securityRule := obj.(*v1alpha1.SecurityRule)
 	return r.HandleProvisioning(ctx, obj, status, func(ctx context.Context) (string, error) {
 		securityRuleResp, err := r.GetSecurityRule(ctx, securityRule.Status.ProjectID, securityRule.Status.VpcID, securityRule.Status.SecurityGroupID, status.ResourceID)
@@ -145,7 +149,7 @@ func (r *SecurityRuleReconciler) Provisioning(ctx context.Context, obj client.Ob
 	})
 }
 
-func (r *SecurityRuleReconciler) Updating(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *SecurityRuleReconciler) Updating(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	securityRule := obj.(*v1alpha1.SecurityRule)
 	return r.HandleUpdating(ctx, obj, status, func(ctx context.Context) error {
 		securityRuleReq := arubaClient.SecurityRuleRequest{
@@ -172,11 +176,11 @@ func (r *SecurityRuleReconciler) Updating(ctx context.Context, obj client.Object
 	})
 }
 
-func (r *SecurityRuleReconciler) Created(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *SecurityRuleReconciler) Created(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	return r.CheckForUpdates(ctx, obj, status)
 }
 
-func (r *SecurityRuleReconciler) Deleting(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *SecurityRuleReconciler) Deleting(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	securityRule := obj.(*v1alpha1.SecurityRule)
 	return r.HandleDeletion(ctx, obj, status, securityRuleFinalizerName, func(ctx context.Context) error {
 		return r.DeleteSecurityRule(ctx, securityRule.Status.ProjectID, securityRule.Status.VpcID, securityRule.Status.SecurityGroupID, status.ResourceID)

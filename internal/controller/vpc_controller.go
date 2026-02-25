@@ -48,7 +48,11 @@ func NewVpcReconciler(reconciler *reconciler.Reconciler) *VpcReconciler {
 
 func (r *VpcReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	obj := &v1alpha1.Vpc{}
-	return r.Reconciler.Reconcile(ctx, req, obj, &obj.Status.ResourceStatus, r, &obj.Spec.Tenant)
+	if err := r.Get(ctx, req.NamespacedName, obj); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	return r.Reconciler.Reconcile(ctx, req, obj, r)
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -63,11 +67,11 @@ const (
 	vpcFinalizerName = "vpc.arubacloud.com/finalizer"
 )
 
-func (r *VpcReconciler) Init(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *VpcReconciler) Init(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	return r.InitializeResource(ctx, obj, status, vpcFinalizerName)
 }
 
-func (r *VpcReconciler) Creating(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *VpcReconciler) Creating(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	vpc := obj.(*v1alpha1.Vpc)
 	return r.HandleCreating(ctx, obj, status, func(ctx context.Context) (string, string, error) {
 		projectID, err := r.GetProjectID(
@@ -109,7 +113,7 @@ func (r *VpcReconciler) Creating(ctx context.Context, obj client.Object, status 
 	})
 }
 
-func (r *VpcReconciler) Provisioning(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *VpcReconciler) Provisioning(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	vpc := obj.(*v1alpha1.Vpc)
 	return r.HandleProvisioning(ctx, obj, status, func(ctx context.Context) (string, error) {
 		vpcResp, err := r.GetVpc(ctx, vpc.Status.ProjectID, status.ResourceID)
@@ -124,7 +128,7 @@ func (r *VpcReconciler) Provisioning(ctx context.Context, obj client.Object, sta
 	})
 }
 
-func (r *VpcReconciler) Updating(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *VpcReconciler) Updating(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	vpc := obj.(*v1alpha1.Vpc)
 	return r.HandleUpdating(ctx, obj, status, func(ctx context.Context) error {
 		vpcReq := arubaClient.VpcRequest{
@@ -142,11 +146,11 @@ func (r *VpcReconciler) Updating(ctx context.Context, obj client.Object, status 
 	})
 }
 
-func (r *VpcReconciler) Created(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *VpcReconciler) Created(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	return r.CheckForUpdates(ctx, obj, status)
 }
 
-func (r *VpcReconciler) Deleting(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *VpcReconciler) Deleting(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	vpc := obj.(*v1alpha1.Vpc)
 	return r.HandleDeletion(ctx, obj, status, vpcFinalizerName, func(ctx context.Context) error {
 		return r.DeleteVpc(ctx, vpc.Status.ProjectID, status.ResourceID)

@@ -88,3 +88,11 @@ type SecurityGroupList struct {
 func init() {
 	SchemeBuilder.Register(&SecurityGroup{}, &SecurityGroupList{})
 }
+
+func (b *SecurityGroup) GetResourceStatus() *ResourceStatus {
+	return &b.Status.ResourceStatus
+}
+
+func (b *SecurityGroup) GetTenant() string {
+	return b.Spec.Tenant
+}

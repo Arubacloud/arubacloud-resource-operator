@@ -47,7 +47,11 @@ func NewProjectReconciler(reconciler *reconciler.Reconciler) *ProjectReconciler 
 
 func (r *ProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	obj := &v1alpha1.Project{}
-	return r.Reconciler.Reconcile(ctx, req, obj, &obj.Status, r, &obj.Spec.Tenant)
+	if err := r.Get(ctx, req.NamespacedName, obj); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	return r.Reconciler.Reconcile(ctx, req, obj, r)
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -62,11 +66,11 @@ const (
 	projectFinalizerName = "project.arubacloud.com/finalizer"
 )
 
-func (r *ProjectReconciler) Init(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *ProjectReconciler) Init(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	return r.InitializeResource(ctx, obj, status, projectFinalizerName)
 }
 
-func (r *ProjectReconciler) Creating(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *ProjectReconciler) Creating(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	project := obj.(*v1alpha1.Project)
 	return r.HandleCreating(ctx, obj, status, func(ctx context.Context) (string, string, error) {
 		projectReq := arubaClient.ProjectRequest{
@@ -89,11 +93,11 @@ func (r *ProjectReconciler) Creating(ctx context.Context, obj client.Object, sta
 	})
 }
 
-func (r *ProjectReconciler) Provisioning(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *ProjectReconciler) Provisioning(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	return ctrl.Result{}, nil
 }
 
-func (r *ProjectReconciler) Updating(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *ProjectReconciler) Updating(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	project := obj.(*v1alpha1.Project)
 	return r.HandleUpdating(ctx, obj, status, func(ctx context.Context) error {
 		projectReq := arubaClient.ProjectRequest{
@@ -112,11 +116,11 @@ func (r *ProjectReconciler) Updating(ctx context.Context, obj client.Object, sta
 	})
 }
 
-func (r *ProjectReconciler) Created(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *ProjectReconciler) Created(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	return r.CheckForUpdates(ctx, obj, status)
 }
 
-func (r *ProjectReconciler) Deleting(ctx context.Context, obj client.Object, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
+func (r *ProjectReconciler) Deleting(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
 	return r.HandleDeletion(ctx, obj, status, projectFinalizerName, func(ctx context.Context) error {
 		return r.DeleteProject(ctx, status.ResourceID)
 	})

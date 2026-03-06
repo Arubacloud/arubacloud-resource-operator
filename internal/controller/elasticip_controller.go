@@ -48,6 +48,8 @@ func (r *ElasticIpReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			oldObj := e.ObjectOld.(*v1alpha1.ElasticIp)
 			newObj := e.ObjectNew.(*v1alpha1.ElasticIp)
 			log.Println("Update event received for ElasticIp", "name", newObj.Name, "namespace", newObj.Namespace)
+			log.Println("Difference between old and new object are", "diff", cmp.Diff(oldObj, newObj))
+
 			// spec is updated in updating phase, so we need to trigger reconciliation if it changed
 			if !cmp.Equal(oldObj.Spec, newObj.Spec) {
 				return true
@@ -60,9 +62,13 @@ func (r *ElasticIpReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			return false
 		},
 		CreateFunc: func(e event.CreateEvent) bool {
+			newObj := e.Object.(*v1alpha1.ElasticIp)
+			log.Println("Create event received for ElasticIp", "name", newObj.Name, "namespace", newObj.Namespace)
 			return true
 		},
 		DeleteFunc: func(e event.DeleteEvent) bool {
+			newObj := e.Object.(*v1alpha1.ElasticIp)
+			log.Println("Delete event received for ElasticIp", "name", newObj.Name, "namespace", newObj.Namespace)
 			return true
 		},
 	}

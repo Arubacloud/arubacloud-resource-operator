@@ -19,15 +19,19 @@ package controller
 import (
 	"context"
 	"fmt"
+	"log"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
 	arubaClient "github.com/Arubacloud/arubacloud-resource-operator/internal/client"
 	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
 	"github.com/Arubacloud/arubacloud-resource-operator/internal/util"
+	"github.com/google/go-cmp/cmp"
 )
 
 // +kubebuilder:rbac:groups=arubacloud.com,resources=cloudservers,verbs=get;list;watch;create;update;patch;delete
@@ -60,8 +64,32 @@ func (r *CloudServerReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *CloudServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	specOrStatusChanged := predicate.Funcs{
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldObj := e.ObjectOld.(*v1alpha1.CloudServer)
+			newObj := e.ObjectNew.(*v1alpha1.CloudServer)
+			log.Println("Update event received for CloudServer", "name", newObj.Name, "namespace", newObj.Namespace)
+			// spec is updated in updating phase, so we need to trigger reconciliation if it changed
+			if !cmp.Equal(oldObj.Spec, newObj.Spec) {
+				return true
+			}
+			// status is updated in provisioning phase, so we need to trigger reconciliation if it changed
+			if !cmp.Equal(oldObj.Status, newObj.Status) {
+				return true
+			}
+
+			return false
+		},
+		CreateFunc: func(e event.CreateEvent) bool {
+			return true
+		},
+		DeleteFunc: func(e event.DeleteEvent) bool {
+			return true
+		},
+	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.CloudServer{}).
+		WithEventFilter(specOrStatusChanged).
 		Named("cloudserver").
 		Complete(r)
 }

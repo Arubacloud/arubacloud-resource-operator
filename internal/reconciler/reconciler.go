@@ -215,8 +215,9 @@ func (r *Reconciler) HandlePhaseTimeout(ctx context.Context, obj ResourceObject,
 
 // HandleToDelete checks if resource should transition to deleting phase
 func (r *Reconciler) HandleToDelete(ctx context.Context, obj ResourceObject, status *v1alpha1.ResourceStatus) (bool, ctrl.Result, error) {
-	shouldBeDeleted := status.Phase != v1alpha1.ResourcePhaseDeleting &&
-		status.Phase != v1alpha1.ResourcePhaseFailed &&
+	shouldBeDeleted := status.Phase != v1alpha1.ResourcePhaseCreating &&
+		status.Phase != v1alpha1.ResourcePhaseUpdating &&
+		status.Phase != v1alpha1.ResourcePhaseDeleting &&
 		!obj.GetDeletionTimestamp().IsZero()
 
 	if !shouldBeDeleted {

@@ -18,17 +18,25 @@ package controller
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
+	"slices"
 
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/event"
-	"sigs.k8s.io/controller-runtime/pkg/predicate"
+
+	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
-	arubaClient "github.com/Arubacloud/arubacloud-resource-operator/internal/client"
 	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
-	"github.com/google/go-cmp/cmp"
+)
+
+const (
+	blockStorageFinalizerName = "blockstorage.arubacloud.com/finalizer"
+)
+
+var (
+	errBlockStorageNotFound = errors.New("blockstorage not found")
 )
 
 // BlockStorageReconciler reconciles a BlockStorage object
@@ -51,142 +59,290 @@ func NewBlockStorageReconciler(baseReconciler *reconciler.Reconciler) *BlockStor
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 
 func (r *BlockStorageReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	obj := &v1alpha1.BlockStorage{}
-	if err := r.Get(ctx, req.NamespacedName, obj); err != nil {
-		return ctrl.Result{}, client.IgnoreNotFound(err)
+	return r.Reconciler.Reconcile(ctx, req, r)
+}
+
+func (r *BlockStorageReconciler) Object() reconciler.ResourceObject {
+	return &v1alpha1.BlockStorage{}
+}
+
+func (r *BlockStorageReconciler) Finalizer() string {
+	return blockStorageFinalizerName
+}
+
+func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconciler.ResourceObject) (ctrl.Result, error) {
+	// 1 - Convert-back the generic resource to the concrete type
+	k8sBs, ok := obj.(*v1alpha1.BlockStorage)
+	if !ok {
+		return ctrl.Result{}, errors.New("obj is not a *v1alpha1.BlockStorage") // TODO: better error handling
 	}
 
-	return r.Reconciler.Reconcile(ctx, req, obj, r)
+	// 2 - Create the Aruba search parameters to retrieve the desired resource
+	// from Aruba API
+	bsName, prjName := k8sBs.Name, k8sBs.Spec.ProjectReference.Name
+	bsFilter := fmt.Sprintf(`name:eq("%s")`, bsName)
+	prjFilter := fmt.Sprintf(`name:eq("%s")`, prjName)
+
+	// 3 - Chech if the desired project exists in Aruba CMP
+	prjResp, err := r.ArubaClient.FromProject().List(ctx, &arubatypes.RequestParameters{Filter: &prjFilter})
+	// 3.1 - In case we have some technical issue, so we propagate the error
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf( // TODO: better error handling
+			"failed to find project in Aruba cloud: %w, project_name: '%s', project_filter: '%s'",
+			err, prjName, prjFilter,
+		)
+	}
+	// 3.2 - In case we have some server or business issue, so we propagate
+	// the error
+	if prjResp.IsError() {
+		return ctrl.Result{}, fmt.Errorf( // TODO: better error handling
+			"failed to find project in Aruba cloud: status_code: %d, project_name: '%s', project_filter: '%s'",
+			prjResp.StatusCode, prjName, prjFilter,
+		)
+	}
+	// 3.3 - In case the project was not found but the object still not have a
+	// project id on its status, so we consider that the project is still being
+	// created and we requeue the reconciliation
+	if prjResp.Data.Total == 0 && k8sBs.Status.ProjectID != "" {
+		return ctrl.Result{RequeueAfter: reconciler.RequeueAfter}, nil
+	}
+	// 3.4 - In case we find more then a single project, so we consider as an
+	// inconsistency
+	if prjResp.Data.Total != 1 {
+		return ctrl.Result{}, fmt.Errorf( // TODO: better error handling
+			"inconsistent data in project list: expected: 1, found: %d, project_name: '%s', project_filter: '%s'",
+			prjResp.Data.Total, prjName, prjFilter,
+		)
+	}
+
+	prjID := *(prjResp.Data.Values[0].Metadata.ID)
+
+	// 3.5 - In case the id of the project retrieved using the project name on
+	// the object project reference differs from the project id present in the
+	// object status, we consider that the user wants to change the reference
+	// project of the block storage and then we block this not allowed
+	// operation by returning an error
+	if k8sBs.Status.ProjectID != "" && k8sBs.Status.ProjectID != prjID {
+		return ctrl.Result{}, fmt.Errorf( // TODO: better error handling
+			"inconsistent project id in blockstorage: blockstorage_name: '%s', blockstorage_project_id: '%s', project_name: '%s', project_id: '%s'",
+			bsName, k8sBs.Status.ProjectID, prjName, prjID,
+		)
+	}
+
+	// 4 - Chech if the desired block storage exists in Aruba CMP
+	bsResp, err := r.ArubaClient.FromStorage().Volumes().List(ctx, prjID, &arubatypes.RequestParameters{Filter: &bsFilter})
+	// 4.1 - In case we have some technical issue, so we propagate the error
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf( // TODO: better error handling
+			"failed to find blockstorage in Aruba cloud: %w, blockstorage_name: '%s', blockstorage_filter: '%s', project_name: '%s'",
+			err, bsName, bsFilter, prjName,
+		)
+	}
+	// 4.2 - In case we have some server or business issue, so we propagate
+	// the error
+	if bsResp.IsError() {
+		return ctrl.Result{}, fmt.Errorf( // TODO: better error handling
+			"failed to find blockstorage in Aruba cloud: status_code: %d, blockstorage_name: '%s', project_name: '%s'",
+			bsResp.StatusCode, bsName, prjName,
+		)
+	}
+
+	// 4.3 - In case we find more then a single block storage or a bizarre
+	// negative number, so we consider as an inconsistency
+	if bsResp.Data.Total < 0 || bsResp.Data.Total > 1 {
+		return ctrl.Result{}, fmt.Errorf( // TODO: better error handling
+			"inconsistent data in blockstorage list: blockstorage_name: '%s', blockstorage_filter: '%s', project_name: '%s', instances: %d",
+			bsName, bsFilter, prjName, len(bsResp.Data.Values),
+		)
+	}
+
+	var toUpdate bool
+	var toDelete bool
+	if bsResp.Data.Total == 1 {
+		toUpdate = k8sBs.GetDeletionTimestamp().IsZero()
+		toDelete = !toUpdate
+	}
+
+	// 5 - In case we have found a single resource, we enter the "updating"
+	// path
+	if toUpdate {
+		// 5.1 - Assess the resource state nature in the Aruba CMP
+		arubaBS := &bsResp.Data.Values[0]
+		stateNature := AssesCSPResourceStateNature(&arubaBS.Status)
+		switch stateNature {
+		case CSPResourceStateNatureUndetermined, CSPResourceStateNatureInvalid:
+			// 5.1.1 - In case the nature is undetermined or invalid, we close
+			// the reconciliation loop by reporting an error
+			return ctrl.Result{}, fmt.Errorf( // TODO: better error handling
+				"failed asses the blockstorage state in Aruba cloud: blockstorage_name: '%s', project_name: '%s', status: '%v'",
+				bsName, prjName, arubaBS.Status,
+			)
+
+		case CSPResourceStateNatureTransitory:
+			// 5.1.2 - In case the nature is transitory, we requeue the
+			// reconciliation request to wait the resource to achieve a final
+			// state in the Aruba CMP
+			return ctrl.Result{RequeueAfter: reconciler.RequeueAfter}, nil
+
+		case CSPResourceStateNatureFinal:
+			// 5.1.2 - In case the nature is final we just continue below...
+		default:
+			log.Fatalf("the `AssesCSPResourceStateNature` should never return this value: %d", stateNature)
+		}
+
+		// 5.2 - Assess the updating conditions
+		request, mustUpdate, err := convertAndCheckForUpdate(k8sBs, arubaBS)
+		// 5.2.1 - In case some not allowed condition is found, we close the
+		// reconciliation loop by reporting an error
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to convert and check blockstorage: %w", err) // TODO: better error handling
+		}
+
+		// 5.3 - In case some valid updating condition is found...
+		if mustUpdate {
+			// 5.3.1 - Set the k8s resource as updating if it is not yet
+			if k8sBs.Status.Phase != v1alpha1.ResourcePhaseUpdating {
+				k8sBsCopy := k8sBs.DeepCopy()
+				k8sBsCopy.Status.Phase = v1alpha1.ResourcePhaseUpdating
+				if err := r.Client.Status().Update(ctx, k8sBsCopy); err != nil {
+					return ctrl.Result{}, fmt.Errorf("failed set blockstorage state as 'updating': %w", err) // TODO: better error handling
+				}
+			}
+
+			// 5.3.2 - Request the resource update to the Arube CMP
+			if updateResp, err := r.ArubaClient.FromStorage().Volumes().Update(ctx, prjID, *arubaBS.Metadata.ID, *request, nil); err != nil || updateResp.IsError() {
+				return ctrl.Result{}, fmt.Errorf( // TODO: better error handling
+					"failed update blockstorage in Aruba CMP: err: '%w', status_code: '%d', title: '%s', detail: '%s'",
+					err, *updateResp.Error.Status, *updateResp.Error.Title, *updateResp.Error.Detail,
+				)
+			}
+
+			// 5.3.3 - Requeue the request to wait the results from the
+			// Aruba CSP
+			return ctrl.Result{RequeueAfter: reconciler.RequeueAfter}, nil
+		}
+
+		// 5.4 - In case we have no valid updating conditions, so we need to
+		// mark the resource as "Created"
+		if k8sBs.Status.Phase == v1alpha1.ResourcePhaseUpdating {
+			k8sBsCopy := k8sBs.DeepCopy()
+			k8sBsCopy.Status.Phase = v1alpha1.ResourcePhaseCreated
+			if err := r.Client.Status().Update(ctx, k8sBsCopy); err != nil {
+				return ctrl.Result{}, fmt.Errorf("failed set blockstorage state as 'created': %w", err) // TODO: better error handling
+			}
+		}
+
+		// 5.5 Than we return a zeroed result in order to finish the updating
+		// cycle
+		return ctrl.Result{}, nil
+	}
+
+	// 6 - The resource IS NOT present on the Aruba Cloud
+	//
+	// A very important point here: Is the resource to be created? Or is the resource deleted?
+	// How to decide which case to react to?
+	if toDelete {
+		// This is the **DELETING** branch
+		// So we need to signal the generic reconciler to enter in the "removing finalizer branch"
+
+		// This branch MUST return
+		return ctrl.Result{}, nil
+	}
+
+	// 7 - Create the resource
+
+	return ctrl.Result{}, nil
+}
+
+func convertAndCheckForUpdate(
+	k8sObj *v1alpha1.BlockStorage,
+	arubaObj *arubatypes.BlockStorageResponse,
+) (*arubatypes.BlockStorageRequest, bool, error) {
+	request := blockStorageRequestFromResponse(arubaObj)
+
+	//
+	// Not allowed cases
+	//
+	// An error is returned to block the reconciliation if a single not
+	// allowed condition is found
+
+	errs := []error{}
+
+	if k8sObj.Spec.Bootable != *request.Properties.Bootable {
+		errs = append(errs, fmt.Errorf("%w: change the 'bootable' is not allowed", ErrNotAllowedChange))
+	}
+
+	if k8sObj.Spec.Image != *request.Properties.Image {
+		errs = append(errs, fmt.Errorf("%w: change the 'image' is not allowed", ErrNotAllowedChange))
+	}
+
+	if k8sObj.Spec.Type != string(request.Properties.Type) {
+		errs = append(errs, fmt.Errorf("%w: change the 'type' is not allowed", ErrNotAllowedChange))
+	}
+
+	if k8sObj.Spec.Location.Value != request.Metadata.Location.Value {
+		errs = append(errs, fmt.Errorf("%w: change the 'location' is not allowed", ErrNotAllowedChange))
+	}
+
+	if len(errs) > 0 {
+		return nil, false, errors.Join(errs...)
+	}
+
+	//
+	// Updating cases
+	//
+	// We allow the reconciliation to continue when we find the first valid
+	// case
+
+	if k8sObj.Spec.BillingPeriod != request.Properties.BillingPeriod ||
+		k8sObj.Spec.Bootable != *request.Properties.Bootable ||
+		k8sObj.Spec.DataCenter != *request.Properties.Zone ||
+		k8sObj.Spec.SizeGb != int32(request.Properties.SizeGB) ||
+		!areTagsEqual(k8sObj, request) {
+		request.Properties.BillingPeriod = k8sObj.Spec.BillingPeriod
+		bootable := k8sObj.Spec.Bootable
+		request.Properties.Bootable = &bootable
+		zone := k8sObj.Spec.DataCenter
+		request.Properties.Zone = &zone
+		request.Properties.SizeGB = int(k8sObj.Spec.SizeGb)
+		tags := make([]string, len(k8sObj.Spec.Tags))
+		copy(tags, k8sObj.Spec.Tags)
+		request.Metadata.Tags = tags
+		return request, true, nil
+	}
+
+	// If we do not find any allowed updating condition, so we signal the
+	// caller to not proceed the reconciliation
+	return nil, false, nil
+}
+
+func blockStorageRequestFromResponse(response *arubatypes.BlockStorageResponse) *arubatypes.BlockStorageRequest {
+	return nil
+}
+
+func areTagsEqual(k8sObj *v1alpha1.BlockStorage, request *arubatypes.BlockStorageRequest) bool {
+	// TODO: generalize this function
+
+	if len(k8sObj.Spec.Tags) != len(request.Metadata.Tags) {
+		return false
+	}
+
+	slices.Sort(k8sObj.Spec.Tags)
+	slices.Sort(request.Metadata.Tags)
+
+	for i, tag := range k8sObj.Spec.Tags {
+		if tag != request.Metadata.Tags[i] {
+			return false
+		}
+	}
+
+	return true
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *BlockStorageReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	specOrStatusChanged := predicate.Funcs{
-		UpdateFunc: func(e event.UpdateEvent) bool {
-			oldObj := e.ObjectOld.(*v1alpha1.BlockStorage)
-			newObj := e.ObjectNew.(*v1alpha1.BlockStorage)
-			log.Println("Update event received for BlockStorage", "name", newObj.Name, "namespace", newObj.Namespace)
-			// spec is updated in updating phase, so we need to trigger reconciliation if it changed
-			if !cmp.Equal(oldObj.Spec, newObj.Spec) {
-				return true
-			}
-			// status is updated in provisioning phase, so we need to trigger reconciliation if it changed
-			if !cmp.Equal(oldObj.Status, newObj.Status) {
-				return true
-			}
-
-			return false
-		},
-		CreateFunc: func(e event.CreateEvent) bool {
-			return true
-		},
-		DeleteFunc: func(e event.DeleteEvent) bool {
-			return true
-		},
-	}
-
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.BlockStorage{}).
-		WithEventFilter(specOrStatusChanged).
 		Named("blockstorage").
 		Complete(r)
-}
-
-const (
-	blockStorageFinalizerName = "blockstorage.arubacloud.com/finalizer"
-)
-
-func (r *BlockStorageReconciler) Init(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
-	return r.InitializeResource(ctx, obj, status, blockStorageFinalizerName)
-}
-
-func (r *BlockStorageReconciler) Creating(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
-	blockStorage := obj.(*v1alpha1.BlockStorage)
-	return r.HandleCreating(ctx, obj, status, func(ctx context.Context) (string, string, error) {
-		projectID, err := r.GetProjectID(ctx, blockStorage.Spec.ProjectReference.Name, blockStorage.Spec.ProjectReference.Namespace)
-		if err != nil {
-			return "", "", err
-		}
-
-		blockStorageReq := arubaClient.BlockStorageRequest{
-			Metadata: arubaClient.BlockStorageMetadata{
-				Name: blockStorage.Name,
-				Tags: blockStorage.Spec.Tags,
-				Location: arubaClient.BlockStorageLocation{
-					Value: blockStorage.Spec.Location.Value,
-				},
-			},
-			Properties: arubaClient.BlockStorageProperties{
-				SizeGb:        blockStorage.Spec.SizeGb,
-				BillingPeriod: blockStorage.Spec.BillingPeriod,
-				DataCenter:    blockStorage.Spec.DataCenter,
-				Type:          blockStorage.Spec.Type,
-				Bootable:      blockStorage.Spec.Bootable,
-				Image:         blockStorage.Spec.Image,
-			},
-		}
-
-		blockStorageResp, err := r.CreateBlockStorage(ctx, projectID, blockStorageReq)
-		if err != nil {
-			return "", "", err
-		}
-
-		blockStorage.Status.ProjectID = projectID
-
-		state := ""
-		if blockStorageResp.Status != nil {
-			state = blockStorageResp.Status.State
-		}
-
-		return blockStorageResp.Metadata.ID, state, nil
-	})
-}
-
-func (r *BlockStorageReconciler) Provisioning(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
-	blockStorage := obj.(*v1alpha1.BlockStorage)
-	return r.HandleProvisioning(ctx, obj, status, func(ctx context.Context) (string, error) {
-		blockStorageResp, err := r.GetBlockStorage(ctx, blockStorage.Status.ProjectID, status.ResourceID)
-		if err != nil {
-			return "", err
-		}
-
-		if blockStorageResp.Status != nil {
-			return blockStorageResp.Status.State, nil
-		}
-		return "", nil
-	})
-}
-
-func (r *BlockStorageReconciler) Updating(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
-	blockStorage := obj.(*v1alpha1.BlockStorage)
-	return r.HandleUpdating(ctx, obj, status, func(ctx context.Context) error {
-		blockStorageReq := arubaClient.BlockStorageRequest{
-			Metadata: arubaClient.BlockStorageMetadata{
-				Name: blockStorage.Name,
-				Tags: blockStorage.Spec.Tags,
-				Location: arubaClient.BlockStorageLocation{
-					Value: blockStorage.Spec.Location.Value,
-				},
-			},
-			Properties: arubaClient.BlockStorageProperties{
-				SizeGb:        blockStorage.Spec.SizeGb,
-				BillingPeriod: blockStorage.Spec.BillingPeriod,
-				DataCenter:    blockStorage.Spec.DataCenter,
-			},
-		}
-
-		_, err := r.UpdateBlockStorage(ctx, blockStorage.Status.ProjectID, status.ResourceID, blockStorageReq)
-		return err
-	})
-}
-
-func (r *BlockStorageReconciler) Created(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
-	return r.CheckForUpdates(ctx, obj, status)
-}
-
-func (r *BlockStorageReconciler) Deleting(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
-	blockStorage := obj.(*v1alpha1.BlockStorage)
-	return r.HandleDeletion(ctx, obj, status, blockStorageFinalizerName, func(ctx context.Context) error {
-		return r.DeleteBlockStorage(ctx, blockStorage.Status.ProjectID, status.ResourceID)
-	})
 }

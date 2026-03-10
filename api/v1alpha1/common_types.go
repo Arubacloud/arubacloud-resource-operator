@@ -92,6 +92,36 @@ type ResourceStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
 }
 
+type ResourcePhaseNature int
+
+const (
+	PhaseNatureInvalid ResourcePhaseNature = iota
+	PhaseNatureTransitory
+	PhaseNatureFinal
+	PhaseNatureUndetermined
+)
+
+func (s *ResourceStatus) AssessPhaseNature() ResourcePhaseNature {
+	if s == nil {
+		return PhaseNatureUndetermined
+	}
+
+	switch s.Phase {
+	case ResourcePhaseCreating,
+		ResourcePhaseProvisioning,
+		ResourcePhaseUpdating,
+		ResourcePhaseDeleting:
+		return PhaseNatureTransitory
+
+	case ResourcePhaseCreated,
+		ResourcePhaseDeleted,
+		ResourcePhaseFailed:
+		return PhaseNatureFinal
+	}
+
+	return PhaseNatureInvalid
+}
+
 // Object is the common Schema for the API.
 type Object struct {
 	metav1.TypeMeta   `json:",inline"`

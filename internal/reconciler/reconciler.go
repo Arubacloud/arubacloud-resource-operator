@@ -64,11 +64,11 @@ type ReconcilerConfig struct {
 func NewReconciler(mgr ctrl.Manager, cfg ReconcilerConfig) *Reconciler {
 	options := aruba.NewOptions().WithVaultCredentialsRepository(
 		cfg.VaultAddress, cfg.KVMount, "./", cfg.Namespace, cfg.RolePath, cfg.RoleID, cfg.RoleSecret,
-	)
+	).WithBaseURL(cfg.APIGateway).WithTokenIssuerURL(cfg.KeycloakURL)
 
 	arubaClient, err := aruba.NewClient(options)
 	if err != nil {
-		log.Fatalf("failed to create Aruba Client: %v, optins: `%v`", err, options)
+		log.Fatalf("failed to create Aruba Client: %v, options: `%v`", err, options)
 	}
 
 	return &Reconciler{

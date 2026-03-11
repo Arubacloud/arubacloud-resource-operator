@@ -20,7 +20,7 @@ import (
 const (
 	RequeueAfter = 20 * time.Second
 	// MaxPhaseTimeout defines the maximum time a resource can remain in a non-final phase
-	MaxPhaseTimeout = 5 * time.Minute
+	MaxPhaseTimeout = 2 * time.Minute
 )
 
 // ResourceReconciler is an interface that must be implemented by all resource reconcilers
@@ -104,6 +104,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request, resourceRe
 
 	// 3 - Call the specific resource reconciler to handle the details of the
 	//     reconciliation and the phase drifting
+
 	result, err := resourceReconciler.HandleReconcile(ctx, obj)
 	if err != nil {
 		return result, err

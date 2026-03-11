@@ -26,8 +26,8 @@ const (
 	ResourcePhaseCreating ResourcePhase = "Creating"
 	// ResourcePhaseProvisioning indicates the resource is being provisioned remotely
 	ResourcePhaseProvisioning ResourcePhase = "Provisioning"
-	// ResourcePhaseCreated indicates the resource has been created successfully
-	ResourcePhaseCreated ResourcePhase = "Created"
+	// ResourcePhaseActive indicates the resource has been created successfully
+	ResourcePhaseActive ResourcePhase = "Active"
 	// ResourcePhaseUpdating indicates the resource is being updated
 	ResourcePhaseUpdating ResourcePhase = "Updating"
 	// ResourcePhaseDeleting indicates the resource is being deleted
@@ -113,7 +113,7 @@ func (s *ResourceStatus) AssessPhaseNature() ResourcePhaseNature {
 		ResourcePhaseDeleting:
 		return PhaseNatureTransitory
 
-	case ResourcePhaseCreated,
+	case ResourcePhaseActive,
 		ResourcePhaseDeleted,
 		ResourcePhaseFailed:
 		return PhaseNatureFinal

@@ -15,7 +15,6 @@ const (
 	CSPResourceStateCreating     string = "Creating"
 	CSPResourceStateUpdating     string = "Updating"
 	CSPResourceStateDeleting     string = "Deleting"
-	CSPResourceStatePending      string = "Pending"
 	CSPResourceStateProvisioning string = "Provisioning"
 	CSPResourceStateActive       string = "Active"
 	CSPResourceStateNotUsed      string = "NotUsed"
@@ -23,6 +22,12 @@ const (
 	CSPResourceStateUsed         string = "Used"
 	CSPResourceStateStopped      string = "Stopped"
 	CSPResourceStateRunning      string = "Running"
+
+	CSPResourceStateDisabling string = "Disabling" //after recharge credits is not succesfully applied, the resource is in "Disabling" state, and then it will be "Disabled"
+	CSPResourceStateEnabling  string = "Enabling"  // after recharge credits is not succesfully applied, the resource is in "Enabling" state, and then it will be "Active"
+
+	CSPResourceStateDisabled string = "Disabled" // final state after "Disabling"; customer cannot use the resource until is enabled agaim
+	CSPResourceStateFailed   string = "Failed"   // final state when some error occurs during creation or update of the resource; customer cannot use the resource and need to delete it
 )
 
 type CSPResourceStateNature int
@@ -48,8 +53,9 @@ func AssesCSPResourceStateNature(status *arubatypes.ResourceStatus) CSPResourceS
 		CSPResourceStateCreating,
 		CSPResourceStateUpdating,
 		CSPResourceStateDeleting,
-		CSPResourceStatePending,
-		CSPResourceStateProvisioning:
+		CSPResourceStateProvisioning,
+		CSPResourceStateDisabling,
+		CSPResourceStateEnabling:
 		return CSPResourceStateNatureTransitory
 
 	case CSPResourceStateActive,
@@ -57,7 +63,9 @@ func AssesCSPResourceStateNature(status *arubatypes.ResourceStatus) CSPResourceS
 		CSPResourceStateInUse,
 		CSPResourceStateUsed,
 		CSPResourceStateStopped,
-		CSPResourceStateRunning:
+		CSPResourceStateRunning,
+		CSPResourceStateDisabled,
+		CSPResourceStateFailed:
 		return CSPResourceStateNatureFinal
 	}
 

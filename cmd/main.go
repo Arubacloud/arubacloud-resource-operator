@@ -259,12 +259,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Setup ElasticIp controller
-	elasticIpReconciler := controller.NewElasticIpReconciler(baseReconciler)
-	if err = elasticIpReconciler.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "ElasticIp")
-		os.Exit(1)
-	}
+	// // Setup ElasticIp controller
+	// elasticIpReconciler := controller.NewElasticIpReconciler(baseReconciler)
+	// if err = elasticIpReconciler.SetupWithManager(mgr); err != nil {
+	// 	setupLog.Error(err, "unable to create controller", "controller", "ElasticIp")
+	// 	os.Exit(1)
+	// }
 
 	// Setup BlockStorage controller
 	blockStorageReconciler := controller.NewBlockStorageReconciler(baseReconciler)
@@ -273,47 +273,47 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Setup CloudServer controller
-	cloudServerReconciler := controller.NewCloudServerReconciler(baseReconciler)
-	if err = cloudServerReconciler.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "CloudServer")
-		os.Exit(1)
-	}
+	// // Setup CloudServer controller
+	// cloudServerReconciler := controller.NewCloudServerReconciler(baseReconciler)
+	// if err = cloudServerReconciler.SetupWithManager(mgr); err != nil {
+	// 	setupLog.Error(err, "unable to create controller", "controller", "CloudServer")
+	// 	os.Exit(1)
+	// }
 
-	// Setup KeyPair controller
-	keyPairReconciler := controller.NewKeyPairReconciler(baseReconciler)
-	if err = keyPairReconciler.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "KeyPair")
-		os.Exit(1)
-	}
+	// // Setup KeyPair controller
+	// keyPairReconciler := controller.NewKeyPairReconciler(baseReconciler)
+	// if err = keyPairReconciler.SetupWithManager(mgr); err != nil {
+	// 	setupLog.Error(err, "unable to create controller", "controller", "KeyPair")
+	// 	os.Exit(1)
+	// }
 
-	// Setup SecurityGroup controller
-	securityGroupReconciler := controller.NewSecurityGroupReconciler(baseReconciler)
-	if err = securityGroupReconciler.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "SecurityGroup")
-		os.Exit(1)
-	}
+	// // Setup SecurityGroup controller
+	// securityGroupReconciler := controller.NewSecurityGroupReconciler(baseReconciler)
+	// if err = securityGroupReconciler.SetupWithManager(mgr); err != nil {
+	// 	setupLog.Error(err, "unable to create controller", "controller", "SecurityGroup")
+	// 	os.Exit(1)
+	// }
 
-	// Setup SecurityRule controller
-	securityRuleReconciler := controller.NewSecurityRuleReconciler(baseReconciler)
-	if err = securityRuleReconciler.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "SecurityRule")
-		os.Exit(1)
-	}
+	// // Setup SecurityRule controller
+	// securityRuleReconciler := controller.NewSecurityRuleReconciler(baseReconciler)
+	// if err = securityRuleReconciler.SetupWithManager(mgr); err != nil {
+	// 	setupLog.Error(err, "unable to create controller", "controller", "SecurityRule")
+	// 	os.Exit(1)
+	// }
 
-	// Setup Subnet controller
-	subnetReconciler := controller.NewSubnetReconciler(baseReconciler)
-	if err = subnetReconciler.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "Subnet")
-		os.Exit(1)
-	}
+	// // Setup Subnet controller
+	// subnetReconciler := controller.NewSubnetReconciler(baseReconciler)
+	// if err = subnetReconciler.SetupWithManager(mgr); err != nil {
+	// 	setupLog.Error(err, "unable to create controller", "controller", "Subnet")
+	// 	os.Exit(1)
+	// }
 
-	// Setup Vpc controller
-	vpcReconciler := controller.NewVpcReconciler(baseReconciler)
-	if err = vpcReconciler.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "Vpc")
-		os.Exit(1)
-	}
+	// // Setup Vpc controller
+	// vpcReconciler := controller.NewVpcReconciler(baseReconciler)
+	// if err = vpcReconciler.SetupWithManager(mgr); err != nil {
+	// 	setupLog.Error(err, "unable to create controller", "controller", "Vpc")
+	// 	os.Exit(1)
+	// }
 
 	if metricsCertWatcher != nil {
 		setupLog.Info("Adding metrics certificate watcher to manager")

@@ -186,6 +186,9 @@ func (r *ProjectReconciler) HandleReconcile(ctx context.Context, obj reconciler.
 		}
 
 		if mustUpdate {
+			if updateReq == nil {
+				return ctrl.Result{}, fmt.Errorf("update required but project request is nil, project_name: '%s'", projectName)
+			}
 			if k8sProject.Status.Phase != v1alpha1.ResourcePhaseUpdating {
 				k8sProjectCopy := k8sProject.DeepCopy()
 				k8sProjectCopy.Status.Phase = v1alpha1.ResourcePhaseUpdating
@@ -195,11 +198,27 @@ func (r *ProjectReconciler) HandleReconcile(ctx context.Context, obj reconciler.
 			}
 
 			// 5.3.2 - Request the resource update to the Arube CMP
-			if updateResp, err := r.ArubaClient.FromProject().Update(ctx, prjID, *updateReq, nil); err != nil || updateResp.IsError() {
-				return ctrl.Result{}, fmt.Errorf( // TODO: better error handling
-					"failed update project in Aruba CMP: err: '%w', status_code: '%d', title: '%s', detail: '%s'",
-					err, *updateResp.Error.Status, *updateResp.Error.Title, *updateResp.Error.Detail,
-				)
+			updateResp, err := r.ArubaClient.FromProject().Update(ctx, prjID, *updateReq, nil)
+			if err != nil {
+				return ctrl.Result{}, fmt.Errorf("failed update project in Aruba CMP: %w, project_name: '%s'", err, projectName)
+			}
+			if updateResp != nil && updateResp.IsError() {
+				errDetail := ""
+				if updateResp.Error != nil {
+					var status int32
+					title, detail := "", ""
+					if updateResp.Error.Status != nil {
+						status = *updateResp.Error.Status
+					}
+					if updateResp.Error.Title != nil {
+						title = *updateResp.Error.Title
+					}
+					if updateResp.Error.Detail != nil {
+						detail = *updateResp.Error.Detail
+					}
+					errDetail = fmt.Sprintf("status_code: '%d', title: '%s', detail: '%s'", status, title, detail)
+				}
+				return ctrl.Result{}, fmt.Errorf("failed update project in Aruba CMP: %s, project_name: '%s'", errDetail, projectName)
 			}
 
 			// 5.3.3 - Requeue the request to wait the results from the
@@ -273,7 +292,9 @@ func projectRequestFromK8s(k8sProject *v1alpha1.Project) *arubatypes.ProjectRequ
 
 func projectTagsAreEquals(k8sObj *v1alpha1.Project, request *arubatypes.ProjectRequest) bool {
 	// TODO: generalize this function
-
+	if request == nil {
+		return false
+	}
 	if len(k8sObj.Spec.Tags) != len(request.Metadata.Tags) {
 		return false
 	}
@@ -304,7 +325,8 @@ func projectConvertAndCheckForUpdate(
 
 	if k8sObj.Spec.Description != *arubaObj.Properties.Description ||
 		!projectTagsAreEquals(k8sObj, request) {
-		return request, true, nil
+		// Return desired state from K8s spec for the update (not current API state)
+		return projectRequestFromK8s(k8sObj), true, nil
 	}
 
 	// If we do not find any allowed updating condition, so we signal the
@@ -313,7 +335,25 @@ func projectConvertAndCheckForUpdate(
 }
 
 func projectRequestFromResponse(response *arubatypes.ProjectResponse) *arubatypes.ProjectRequest {
-	return nil
+	if response == nil {
+		return nil
+	}
+	name := ""
+	if response.Metadata.Name != nil {
+		name = *response.Metadata.Name
+	}
+	tags := make([]string, len(response.Metadata.Tags))
+	copy(tags, response.Metadata.Tags)
+	return &arubatypes.ProjectRequest{
+		Metadata: arubatypes.ResourceMetadataRequest{
+			Name: name,
+			Tags: tags,
+		},
+		Properties: arubatypes.ProjectPropertiesRequest{
+			Description: response.Properties.Description,
+			Default:     response.Properties.Default,
+		},
+	}
 }
 
 // SetupWithManager sets up the controller with the Manager.

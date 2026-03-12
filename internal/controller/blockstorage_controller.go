@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"slices"
 
@@ -158,13 +157,13 @@ func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconc
 		)
 	}
 
-	var toUpdate bool
 	var toDelete bool
 
 	// 4.4 - In case we do not find the resource on the Aruba CMP
 	// we need to understand if we are in the "creating" or "deleting" path
 	// checking k8s resource status phase and then we need to react accordingly
 	if bsResp.Data.Total == 0 {
+		// resource would need to be created, already deleted or in deleting state
 
 		if k8sBs.Status.Phase == v1alpha1.ResourcePhaseDeleted {
 			// 4.4.1 - In case we do not find the resource on the Aruba CMP but the resource is already marked as "deleted" on its status, we consider that the resource has been already deleted on the Aruba CMP and then we can proceed with the finalizer removal by marking the resource as "deleted" on its status
@@ -184,18 +183,6 @@ func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconc
 			return ctrl.Result{}, nil
 		}
 
-		if k8sBs.Status.Phase != v1alpha1.ResourcePhaseCreating && k8sBs.Status.Phase != v1alpha1.ResourcePhaseDeleted {
-			// 4.5 - In case we do not find the resource on the Aruba CMP and the
-			// resource is not yet marked as "creating" on its status, we consider}
-			k8sBsCopy := k8sBs.DeepCopy()
-			k8sBsCopy.Status.Phase = v1alpha1.ResourcePhaseCreating
-			if err := r.Client.Status().Patch(ctx, k8sBsCopy, client.MergeFrom(k8sBs)); err != nil {
-				return ctrl.Result{}, fmt.Errorf("failed set blockstorage state as 'creating': %w", err) // TODO: better error handling
-			}
-
-			return ctrl.Result{RequeueAfter: reconciler.RequeueAfter}, nil
-		}
-
 		bsCreateResp, err := r.ArubaClient.FromStorage().Volumes().Create(ctx, prjID, *blockStorageRequestFromK8s(k8sBs), nil)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to create blockstorage in Aruba CMP: %w", err) // TODO: better error handling
@@ -207,7 +194,7 @@ func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconc
 
 		switch bsCreateResp.StatusCode {
 		case http.StatusOK, http.StatusCreated, http.StatusAccepted:
-			status = v1alpha1.ResourcePhaseActive
+			status = v1alpha1.ResourcePhaseCreating
 		case http.StatusBadRequest:
 			status = v1alpha1.ResourcePhaseFailed
 		default:
@@ -224,43 +211,24 @@ func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconc
 			return ctrl.Result{}, fmt.Errorf("failed set blockstorage state as %s: %w", status, err) // TODO: better error handling
 		}
 
-		return ctrl.Result{}, nil
+		return ctrl.Result{RequeueAfter: reconciler.RequeueAfter}, nil
 	}
 
-	toUpdate = k8sBs.GetDeletionTimestamp().IsZero()
-	toDelete = !toUpdate
-	// }
+	// The resource present on the Aruba Cloud
+	// resource would be to delete
+	// resource would be to update
+	// resource is in creating or active or failed
 
-	// 5 - In case we have found a single resource, we enter the "updating"
+	toDelete = !k8sBs.GetDeletionTimestamp().IsZero()
+
+	// 5 - In case we have found a single resource, we need to check if  the resource is in a final state and then we enter the "updating"
 	// path
-	if toUpdate {
-		// 5.1 - Assess the resource state nature in the Aruba CMP
-		arubaBS := &bsResp.Data.Values[0]
-		stateNature := AssesCSPResourceStateNature(&arubaBS.Status)
-		switch stateNature {
-		case CSPResourceStateNatureUndetermined, CSPResourceStateNatureInvalid:
-			// 5.1.1 - In case the nature is undetermined or invalid, we close
-			// the reconciliation loop by reporting an error
-			return ctrl.Result{}, fmt.Errorf( // TODO: better error handling
-				"failed asses the blockstorage state in Aruba cloud: blockstorage_name: '%s', project_name: '%s', status: '%v'",
-				bsName, prjName, arubaBS.Status,
-			)
+	arubaBS := &bsResp.Data.Values[0]
+	if !toDelete && AssesCSPResourceStateNature(&arubaBS.Status) == CSPResourceStateNatureFinal {
 
-		case CSPResourceStateNatureTransitory:
-			// 5.1.2 - In case the nature is transitory, we requeue the
-			// reconciliation request to wait the resource to achieve a final
-			// state in the Aruba CMP
-			return ctrl.Result{RequeueAfter: reconciler.RequeueAfter}, nil
-
-		case CSPResourceStateNatureFinal:
-			// 5.1.2 - In case the nature is final we just continue below...
-		default:
-			log.Fatalf("the `AssesCSPResourceStateNature` should never return this value: %d", stateNature)
-		}
-
-		// 5.2 - Assess the updating conditions
+		// 5.1 - Assess the updating conditions
 		request, mustUpdate, err := convertAndCheckForUpdate(k8sBs, arubaBS)
-		// 5.2.1 - In case some not allowed condition is found, we close the
+		// 5.1.1 - In case some not allowed condition is found, we close the
 		// reconciliation loop by reporting an error
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to convert and check blockstorage: %w", err) // TODO: better error handling
@@ -319,12 +287,8 @@ func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconc
 			}
 		}
 
-		// 5.5 Than we return a zeroed result in order to finish the updating
-		// cycle
-		return ctrl.Result{}, nil
 	}
 
-	// 6 - The resource IS NOT present on the Aruba Cloud
 	//
 	// A very important point here: Is the resource to be created? Or is the resource deleted?
 	// How to decide which case to react to?
@@ -346,7 +310,7 @@ func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconc
 		}
 
 		switch bsResp.StatusCode {
-		case http.StatusOK, http.StatusAccepted, http.StatusNoContent:
+		case http.StatusOK, http.StatusAccepted, http.StatusNoContent, http.StatusNotFound:
 			// Do nothing, we can consider the delete request as successful
 
 		case http.StatusBadRequest:
@@ -368,12 +332,18 @@ func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconc
 	}
 
 	// cmp resource can be failed, creaed or creating
+
 	k8sBsCopy := k8sBs.DeepCopy()
 
+	if k8sBsCopy.Status.Phase == v1alpha1.ResourcePhaseActive {
+		return ctrl.Result{}, nil
+	}
+
 	if k8sBsCopy.Status.Phase == v1alpha1.ResourcePhaseCreating {
-		if *bsResp.Data.Values[0].Status.State == CSPResourceStateFailed {
+		switch *bsResp.Data.Values[0].Status.State {
+		case CSPResourceStateFailed:
 			k8sBsCopy.Status.Phase = v1alpha1.ResourcePhaseFailed
-		} else if *bsResp.Data.Values[0].Status.State == CSPResourceStateActive {
+		case CSPResourceStateActive, CSPResourceStateInUse, CSPResourceStateNotUsed:
 			k8sBsCopy.Status.Phase = v1alpha1.ResourcePhaseActive
 		}
 

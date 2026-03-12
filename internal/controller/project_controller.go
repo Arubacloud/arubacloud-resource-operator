@@ -149,11 +149,21 @@ func (r *ProjectReconciler) HandleReconcile(ctx context.Context, obj reconciler.
 	}
 	// 3.4 - In case we find more then a single project, so we consider as an
 	// inconsistency
-	if prjResp.Data.Total != 1 {
+	if prjResp.Data.Total > 1 {
 		return ctrl.Result{}, fmt.Errorf( // TODO: better error handling
 			"inconsistent data in project list: expected: 1, found: %d, project_name: '%s', project_filter: '%s'",
 			prjResp.Data.Total, projectName, projectFilter,
 		)
+	}
+
+	if prjResp.Data.Total == 0 && k8sProject.Status.Phase == v1alpha1.ResourcePhaseDeleting {
+		k8sProjectCopy := k8sProject.DeepCopy()
+		k8sProjectCopy.Status.Phase = v1alpha1.ResourcePhaseDeleted
+		if err := r.Client.Status().Patch(ctx, k8sProjectCopy, client.MergeFrom(k8sProject)); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed set project state as 'deleted': %w", err) // TODO: better error handling
+		}
+		// This branch MUST return
+		return ctrl.Result{}, nil
 	}
 
 	prjID := *(prjResp.Data.Values[0].Metadata.ID)
@@ -231,6 +241,8 @@ func (r *ProjectReconciler) HandleReconcile(ctx context.Context, obj reconciler.
 			if err := r.Client.Status().Patch(ctx, k8sProjectCopy, client.MergeFrom(k8sProject)); err != nil {
 				return ctrl.Result{}, fmt.Errorf("failed set project state as 'active': %w", err) // TODO: better error handling
 			}
+			// This branch MUST return
+			return ctrl.Result{}, nil
 		}
 
 		// 5.5 Than we return a zeroed result in order to finish the updating
@@ -248,9 +260,8 @@ func (r *ProjectReconciler) HandleReconcile(ctx context.Context, obj reconciler.
 		}
 
 		switch bsResp.StatusCode {
-		case http.StatusOK, http.StatusAccepted, http.StatusNoContent:
+		case http.StatusOK, http.StatusAccepted, http.StatusNoContent, http.StatusNotFound:
 			// Do nothing, we can consider the delete request as successful
-
 		case http.StatusBadRequest:
 			return ctrl.Result{RequeueAfter: reconciler.RequeueAfter}, nil // TODO: better error handling, we can consider to requeue the request in order to retry the delete operation
 

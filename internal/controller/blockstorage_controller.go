@@ -165,6 +165,13 @@ func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconc
 	// we need to understand if we are in the "creating" or "deleting" path
 	// checking k8s resource status phase and then we need to react accordingly
 	if bsResp.Data.Total == 0 {
+
+		if k8sBs.Status.Phase == v1alpha1.ResourcePhaseDeleted {
+			// 4.4.1 - In case we do not find the resource on the Aruba CMP but the resource is already marked as "deleted" on its status, we consider that the resource has been already deleted on the Aruba CMP and then we can proceed with the finalizer removal by marking the resource as "deleted" on its status
+			return ctrl.Result{}, nil
+		}
+
+		// 4.4.1 - In case we do not find the resource on the Aruba CMP but the resource is already marked as "deleting" on its status, we consider that the resource has been already deleted on the Aruba CMP and then we can proceed with the finalizer removal by marking the resource as "deleted" on its status
 		if k8sBs.Status.Phase == v1alpha1.ResourcePhaseDeleting {
 			// 4.4 - In case we do not find the resource on the Aruba CMP but the resource is already marked as "deleting" on its status, we consider that the resource has been already deleted on the Aruba CMP and then we can proceed with the finalizer removal by marking the resource as "deleted" on its status
 			k8sBsCopy := k8sBs.DeepCopy()
@@ -177,7 +184,7 @@ func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconc
 			return ctrl.Result{}, nil
 		}
 
-		if k8sBs.Status.Phase != v1alpha1.ResourcePhaseCreating {
+		if k8sBs.Status.Phase != v1alpha1.ResourcePhaseCreating && k8sBs.Status.Phase != v1alpha1.ResourcePhaseDeleted {
 			// 4.5 - In case we do not find the resource on the Aruba CMP and the
 			// resource is not yet marked as "creating" on its status, we consider}
 			k8sBsCopy := k8sBs.DeepCopy()

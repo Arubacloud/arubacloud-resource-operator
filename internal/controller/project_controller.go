@@ -23,6 +23,7 @@ import (
 	"net/http"
 
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
 
@@ -106,7 +107,7 @@ func (r *ProjectReconciler) HandleReconcile(ctx context.Context, obj reconciler.
 		// must be created the project on Aruba CMP before
 		k8sProjectCopy := k8sProject.DeepCopy()
 		k8sProjectCopy.Status.Phase = v1alpha1.ResourcePhaseCreating
-		if err := r.Status().Update(ctx, k8sProjectCopy); err != nil {
+		if err := r.Status().Patch(ctx, k8sProjectCopy, client.MergeFrom(k8sProject)); err != nil {
 			return ctrl.Result{}, fmt.Errorf( // TODO: better error handling
 				"failed to update project status to 'creating': %w, project_name: '%s'",
 				err, projectName,
@@ -137,7 +138,7 @@ func (r *ProjectReconciler) HandleReconcile(ctx context.Context, obj reconciler.
 		k8sProjectCopy = k8sProject.DeepCopy()
 		k8sProjectCopy.Status.ResourceID = *prjResp.Data.Metadata.ID
 		k8sProjectCopy.Status.Phase = status
-		if err := r.Status().Update(ctx, k8sProjectCopy); err != nil {
+		if err := r.Status().Patch(ctx, k8sProjectCopy, client.MergeFrom(k8sProject)); err != nil {
 			return ctrl.Result{}, fmt.Errorf( // TODO: better error handling
 				"failed to update project status to '%s': %w, project_name: '%s'",
 				status, err, projectName)
@@ -187,7 +188,7 @@ func (r *ProjectReconciler) HandleReconcile(ctx context.Context, obj reconciler.
 			if k8sProject.Status.Phase != v1alpha1.ResourcePhaseUpdating {
 				k8sProjectCopy := k8sProject.DeepCopy()
 				k8sProjectCopy.Status.Phase = v1alpha1.ResourcePhaseUpdating
-				if err := r.Client.Status().Update(ctx, k8sProjectCopy); err != nil {
+				if err := r.Client.Status().Patch(ctx, k8sProjectCopy, client.MergeFrom(k8sProject)); err != nil {
 					return ctrl.Result{}, fmt.Errorf("failed set project state as 'updating': %w", err) // TODO: better error handling
 				}
 			}
@@ -207,7 +208,7 @@ func (r *ProjectReconciler) HandleReconcile(ctx context.Context, obj reconciler.
 		if k8sProject.Status.Phase == v1alpha1.ResourcePhaseUpdating {
 			k8sProjectCopy := k8sProject.DeepCopy()
 			k8sProjectCopy.Status.Phase = v1alpha1.ResourcePhaseActive
-			if err := r.Client.Status().Update(ctx, k8sProjectCopy); err != nil {
+			if err := r.Client.Status().Patch(ctx, k8sProjectCopy, client.MergeFrom(k8sProject)); err != nil {
 				return ctrl.Result{}, fmt.Errorf("failed set project state as 'active': %w", err) // TODO: better error handling
 			}
 		}
@@ -241,7 +242,7 @@ func (r *ProjectReconciler) HandleReconcile(ctx context.Context, obj reconciler.
 
 		k8sProjectCopy := k8sProject.DeepCopy()
 		k8sProjectCopy.Status.Phase = v1alpha1.ResourcePhaseDeleting
-		if err := r.Client.Status().Update(ctx, k8sProjectCopy); err != nil {
+		if err := r.Client.Status().Patch(ctx, k8sProjectCopy, client.MergeFrom(k8sProject)); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed set project state as 'deleting': %w", err) // TODO: better error handling
 		}
 		// This branch MUST return

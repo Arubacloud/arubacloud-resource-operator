@@ -25,6 +25,7 @@ import (
 	"slices"
 
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
 
@@ -168,7 +169,7 @@ func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconc
 			// 4.4 - In case we do not find the resource on the Aruba CMP but the resource is already marked as "deleting" on its status, we consider that the resource has been already deleted on the Aruba CMP and then we can proceed with the finalizer removal by marking the resource as "deleted" on its status
 			k8sBsCopy := k8sBs.DeepCopy()
 			k8sBsCopy.Status.Phase = v1alpha1.ResourcePhaseDeleted
-			if err := r.Client.Status().Update(ctx, k8sBsCopy); err != nil {
+			if err := r.Client.Status().Patch(ctx, k8sBsCopy, client.MergeFrom(k8sBs)); err != nil {
 				return ctrl.Result{}, fmt.Errorf("failed set blockstorage state as 'deleted': %w", err) // TODO: better error handling
 			}
 
@@ -181,7 +182,7 @@ func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconc
 			// resource is not yet marked as "creating" on its status, we consider}
 			k8sBsCopy := k8sBs.DeepCopy()
 			k8sBsCopy.Status.Phase = v1alpha1.ResourcePhaseCreating
-			if err := r.Client.Status().Update(ctx, k8sBsCopy); err != nil {
+			if err := r.Client.Status().Patch(ctx, k8sBsCopy, client.MergeFrom(k8sBs)); err != nil {
 				return ctrl.Result{}, fmt.Errorf("failed set blockstorage state as 'creating': %w", err) // TODO: better error handling
 			}
 
@@ -212,7 +213,7 @@ func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconc
 		k8sBsCopy.Status.ProjectID = prjID
 		k8sBsCopy.Status.Phase = status
 		k8sBsCopy.Status.ResourceID = *bsCreateResp.Data.Metadata.ID
-		if err := r.Client.Status().Update(ctx, k8sBsCopy); err != nil {
+		if err := r.Client.Status().Patch(ctx, k8sBsCopy, client.MergeFrom(k8sBs)); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed set blockstorage state as %s: %w", status, err) // TODO: better error handling
 		}
 
@@ -267,7 +268,7 @@ func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconc
 			if k8sBs.Status.Phase != v1alpha1.ResourcePhaseUpdating {
 				k8sBsCopy := k8sBs.DeepCopy()
 				k8sBsCopy.Status.Phase = v1alpha1.ResourcePhaseUpdating
-				if err := r.Client.Status().Update(ctx, k8sBsCopy); err != nil {
+				if err := r.Client.Status().Patch(ctx, k8sBsCopy, client.MergeFrom(k8sBs)); err != nil {
 					return ctrl.Result{}, fmt.Errorf("failed set blockstorage state as 'updating': %w", err) // TODO: better error handling
 				}
 			}
@@ -306,7 +307,7 @@ func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconc
 		if k8sBs.Status.Phase == v1alpha1.ResourcePhaseUpdating {
 			k8sBsCopy := k8sBs.DeepCopy()
 			k8sBsCopy.Status.Phase = v1alpha1.ResourcePhaseActive
-			if err := r.Client.Status().Update(ctx, k8sBsCopy); err != nil {
+			if err := r.Client.Status().Patch(ctx, k8sBsCopy, client.MergeFrom(k8sBs)); err != nil {
 				return ctrl.Result{}, fmt.Errorf("failed set blockstorage state as 'created': %w", err) // TODO: better error handling
 			}
 		}
@@ -352,7 +353,7 @@ func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconc
 
 		k8sBsCopy := k8sBs.DeepCopy()
 		k8sBsCopy.Status.Phase = v1alpha1.ResourcePhaseDeleting
-		if err := r.Client.Status().Update(ctx, k8sBsCopy); err != nil {
+		if err := r.Client.Status().Patch(ctx, k8sBsCopy, client.MergeFrom(k8sBs)); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed set blockstorage state as 'deleting': %w", err) // TODO: better error handling
 		}
 		// This branch MUST return
@@ -369,7 +370,7 @@ func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconc
 			k8sBsCopy.Status.Phase = v1alpha1.ResourcePhaseActive
 		}
 
-		if err := r.Client.Status().Update(ctx, k8sBsCopy); err != nil {
+		if err := r.Client.Status().Patch(ctx, k8sBsCopy, client.MergeFrom(k8sBs)); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed set blockstorage state as 'created': %w", err) // TODO: better error handling
 		}
 	}

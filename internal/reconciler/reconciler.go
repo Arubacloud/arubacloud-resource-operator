@@ -62,9 +62,15 @@ type ReconcilerConfig struct {
 
 // NewReconciler creates a new base reconciler
 func NewReconciler(mgr ctrl.Manager, cfg ReconcilerConfig) *Reconciler {
-	options := aruba.NewOptions().WithVaultCredentialsRepository(
-		cfg.VaultAddress, cfg.KVMount, "./", cfg.Namespace, cfg.RolePath, cfg.RoleID, cfg.RoleSecret,
-	).WithBaseURL(cfg.APIGateway).WithTokenIssuerURL(cfg.KeycloakURL)
+	options := aruba.NewOptions().WithBaseURL(cfg.APIGateway).WithDefaultTokenIssuerURL()
+
+	if cfg.VaultIsEnabled {
+		options = options.WithVaultCredentialsRepository(
+			cfg.VaultAddress, cfg.KVMount, "test-tenant", cfg.Namespace, cfg.RolePath, cfg.RoleID, cfg.RoleSecret,
+		)
+	} else {
+		options = options.WithClientCredentials(cfg.ClientID, cfg.ClientSecret)
+	}
 
 	arubaClient, err := aruba.NewClient(options)
 	if err != nil {

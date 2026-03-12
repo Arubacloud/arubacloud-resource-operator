@@ -422,7 +422,7 @@ func convertAndCheckForUpdate(
 		k8sObj.Spec.Bootable != *request.Properties.Bootable ||
 		k8sObj.Spec.DataCenter != *request.Properties.Zone ||
 		k8sObj.Spec.SizeGb != int32(request.Properties.SizeGB) ||
-		!areTagsEqual(k8sObj, request) {
+		!blockStorageTagsAreEquals(k8sObj, request) {
 		request.Properties.BillingPeriod = k8sObj.Spec.BillingPeriod
 		bootable := k8sObj.Spec.Bootable
 		request.Properties.Bootable = &bootable
@@ -444,7 +444,7 @@ func blockStorageRequestFromResponse(response *arubatypes.BlockStorageResponse) 
 	return nil
 }
 
-func areTagsEqual(k8sObj *v1alpha1.BlockStorage, request *arubatypes.BlockStorageRequest) bool {
+func blockStorageTagsAreEquals(k8sObj *v1alpha1.BlockStorage, request *arubatypes.BlockStorageRequest) bool {
 	// TODO: generalize this function
 
 	if len(k8sObj.Spec.Tags) != len(request.Metadata.Tags) {

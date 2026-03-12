@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -270,6 +271,25 @@ func projectRequestFromK8s(k8sProject *v1alpha1.Project) *arubatypes.ProjectRequ
 	}
 }
 
+func projectTagsAreEquals(k8sObj *v1alpha1.Project, request *arubatypes.ProjectRequest) bool {
+	// TODO: generalize this function
+
+	if len(k8sObj.Spec.Tags) != len(request.Metadata.Tags) {
+		return false
+	}
+
+	slices.Sort(k8sObj.Spec.Tags)
+	slices.Sort(request.Metadata.Tags)
+
+	for i, tag := range k8sObj.Spec.Tags {
+		if tag != request.Metadata.Tags[i] {
+			return false
+		}
+	}
+
+	return true
+}
+
 func projectConvertAndCheckForUpdate(
 	k8sObj *v1alpha1.Project,
 	arubaObj *arubatypes.ProjectResponse,
@@ -282,7 +302,8 @@ func projectConvertAndCheckForUpdate(
 	// We allow the reconciliation to continue when we find the first valid
 	// case
 
-	if k8sObj.Spec.Description != *arubaObj.Properties.Description {
+	if k8sObj.Spec.Description != *arubaObj.Properties.Description ||
+		!projectTagsAreEquals(k8sObj, request) {
 		return request, true, nil
 	}
 

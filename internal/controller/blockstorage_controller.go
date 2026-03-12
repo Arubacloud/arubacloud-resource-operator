@@ -260,6 +260,9 @@ func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconc
 
 		// 5.3 - In case some valid updating condition is found...
 		if mustUpdate {
+			if request == nil {
+				return ctrl.Result{}, fmt.Errorf("update required but block storage request is nil, blockstorage_name: '%s', project_name: '%s'", bsName, prjName)
+			}
 			// 5.3.1 - Set the k8s resource as updating if it is not yet
 			if k8sBs.Status.Phase != v1alpha1.ResourcePhaseUpdating {
 				k8sBsCopy := k8sBs.DeepCopy()
@@ -270,11 +273,27 @@ func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconc
 			}
 
 			// 5.3.2 - Request the resource update to the Arube CMP
-			if updateResp, err := r.ArubaClient.FromStorage().Volumes().Update(ctx, prjID, *arubaBS.Metadata.ID, *request, nil); err != nil || updateResp.IsError() {
-				return ctrl.Result{}, fmt.Errorf( // TODO: better error handling
-					"failed update blockstorage in Aruba CMP: err: '%w', status_code: '%d', title: '%s', detail: '%s'",
-					err, *updateResp.Error.Status, *updateResp.Error.Title, *updateResp.Error.Detail,
-				)
+			updateResp, err := r.ArubaClient.FromStorage().Volumes().Update(ctx, prjID, *arubaBS.Metadata.ID, *request, nil)
+			if err != nil {
+				return ctrl.Result{}, fmt.Errorf("failed update blockstorage in Aruba CMP: %w, blockstorage_name: '%s', project_name: '%s'", err, bsName, prjName)
+			}
+			if updateResp != nil && updateResp.IsError() {
+				errDetail := ""
+				if updateResp.Error != nil {
+					var status int32
+					title, detail := "", ""
+					if updateResp.Error.Status != nil {
+						status = *updateResp.Error.Status
+					}
+					if updateResp.Error.Title != nil {
+						title = *updateResp.Error.Title
+					}
+					if updateResp.Error.Detail != nil {
+						detail = *updateResp.Error.Detail
+					}
+					errDetail = fmt.Sprintf("status_code: '%d', title: '%s', detail: '%s'", status, title, detail)
+				}
+				return ctrl.Result{}, fmt.Errorf("failed update blockstorage in Aruba CMP: %s, blockstorage_name: '%s', project_name: '%s'", errDetail, bsName, prjName)
 			}
 
 			// 5.3.3 - Requeue the request to wait the results from the
@@ -383,6 +402,9 @@ func convertAndCheckForUpdate(
 	arubaObj *arubatypes.BlockStorageResponse,
 ) (*arubatypes.BlockStorageRequest, bool, error) {
 	request := blockStorageRequestFromResponse(arubaObj)
+	if request == nil {
+		return nil, false, fmt.Errorf("block storage request from response is nil")
+	}
 
 	//
 	// Not allowed cases
@@ -441,12 +463,44 @@ func convertAndCheckForUpdate(
 }
 
 func blockStorageRequestFromResponse(response *arubatypes.BlockStorageResponse) *arubatypes.BlockStorageRequest {
-	return nil
+	if response == nil {
+		return nil
+	}
+	name := ""
+	if response.Metadata.Name != nil {
+		name = *response.Metadata.Name
+	}
+	tags := make([]string, len(response.Metadata.Tags))
+	copy(tags, response.Metadata.Tags)
+	location := arubatypes.LocationRequest{Value: ""}
+	if response.Metadata.LocationResponse != nil {
+		location.Value = response.Metadata.LocationResponse.Value
+	}
+	zone := response.Properties.Zone
+	return &arubatypes.BlockStorageRequest{
+		Metadata: arubatypes.RegionalResourceMetadataRequest{
+			ResourceMetadataRequest: arubatypes.ResourceMetadataRequest{
+				Name: name,
+				Tags: tags,
+			},
+			Location: location,
+		},
+		Properties: arubatypes.BlockStoragePropertiesRequest{
+			SizeGB:        response.Properties.SizeGB,
+			BillingPeriod: response.Properties.BillingPeriod,
+			Zone:          &zone,
+			Type:          response.Properties.Type,
+			Bootable:      response.Properties.Bootable,
+			Image:         response.Properties.Image,
+		},
+	}
 }
 
 func blockStorageTagsAreEquals(k8sObj *v1alpha1.BlockStorage, request *arubatypes.BlockStorageRequest) bool {
 	// TODO: generalize this function
-
+	if request == nil {
+		return false
+	}
 	if len(k8sObj.Spec.Tags) != len(request.Metadata.Tags) {
 		return false
 	}

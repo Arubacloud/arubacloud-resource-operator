@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"slices"
 
@@ -248,8 +249,19 @@ func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconc
 	arubaBS := &bsResp.Data.Values[0]
 
 	//CASE A)
-	if AssesCSPResourceStateNature(&arubaBS.Status) == CSPResourceStateNatureTransitory { // DELETING IN ARUBA CMP FOR EXAMPLE
+	switch AssesCSPResourceStateNature(&arubaBS.Status) {
+	case CSPResourceStateNatureTransitory:
 		return ctrl.Result{RequeueAfter: reconciler.RequeueAfter}, nil
+
+	case CSPResourceStateNatureUndetermined:
+		// TODO: implement a timeout mechanism to that condition
+		return ctrl.Result{RequeueAfter: reconciler.RequeueAfter}, nil
+
+	case CSPResourceStateNatureFinal:
+		// Do nothing, just follow below
+
+	default:
+		return ctrl.Result{}, fmt.Errorf("resource in inconsistent state: status: '%v'", arubaBS.Status) // TODO: better error handling
 	}
 
 	// CASE B) resource would be deleted
@@ -294,10 +306,6 @@ func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconc
 	}
 
 	if mustUpdate { // CASE C)
-
-		if request == nil {
-			return ctrl.Result{}, fmt.Errorf("update required but block storage request is nil, blockstorage_name: '%s', project_name: '%s'", bsName, prjName)
-		}
 		// 5.3.1 - Set the k8s resource as updating if it is not yet
 		if k8sBs.Status.Phase != v1alpha1.ResourcePhaseUpdating {
 			k8sBsCopy := k8sBs.DeepCopy()
@@ -309,9 +317,10 @@ func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconc
 
 		// BLOCK STORAGE CAN BE ACTIVE, FAILED OR DISABLED
 
-		if (arubaBS.Status.State != nil && *arubaBS.Status.State == CSPResourceStateActive) ||
-			(arubaBS.Status.State != nil && *arubaBS.Status.State == CSPResourceStateInUse) ||
-			(arubaBS.Status.State != nil && *arubaBS.Status.State == CSPResourceStateNotUsed) {
+		if arubaBS.Status.State != nil &&
+			(*arubaBS.Status.State == CSPResourceStateActive ||
+				*arubaBS.Status.State == CSPResourceStateInUse ||
+				*arubaBS.Status.State == CSPResourceStateNotUsed) {
 
 			// 5.3.2 - Request the resource update to the Arube CMP
 			updateResp, err := r.ArubaClient.FromStorage().Volumes().Update(ctx, prjID, *arubaBS.Metadata.ID, *request, nil)
@@ -336,13 +345,14 @@ func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconc
 				}
 				return ctrl.Result{}, fmt.Errorf("failed update blockstorage in Aruba CMP: %s, blockstorage_name: '%s', project_name: '%s'", errDetail, bsName, prjName)
 			}
-
 		}
 
 		return ctrl.Result{RequeueAfter: reconciler.RequeueAfter}, nil
 	}
 
 	if k8sBs.Status.Phase == v1alpha1.ResourcePhaseUpdating && *arubaBS.Status.State == CSPResourceStateUpdating { //UPDATING NOT FINISHED YET
+		// TODO: check if this condition really happens
+		log.Println("--->>> Condition: 'k8sBs.Status.Phase == v1alpha1.ResourcePhaseUpdating && *arubaBS.Status.State == CSPResourceStateUpdating'")
 		return ctrl.Result{RequeueAfter: reconciler.RequeueAfter}, nil
 	}
 
@@ -423,6 +433,7 @@ func convertAndCheckForUpdate(
 	k8sObj *v1alpha1.BlockStorage,
 	arubaObj *arubatypes.BlockStorageResponse,
 ) (*arubatypes.BlockStorageRequest, bool, error) {
+	// TODO: think about the possibility to split this function in two: lokk for changes and conversion
 	request := blockStorageRequestFromResponse(arubaObj)
 	if request == nil {
 		return nil, false, fmt.Errorf("block storage request from response is nil")
@@ -437,23 +448,23 @@ func convertAndCheckForUpdate(
 	errs := []error{}
 
 	if k8sObj.Spec.Bootable != *request.Properties.Bootable {
-		errs = append(errs, fmt.Errorf("%w: change the 'bootable' is not allowed", ErrNotAllowedChange))
+		errs = append(errs, errors.New("change the 'bootable' is not allowed"))
 	}
 
 	if k8sObj.Spec.Image != *request.Properties.Image {
-		errs = append(errs, fmt.Errorf("%w: change the 'image' is not allowed", ErrNotAllowedChange))
+		errs = append(errs, errors.New("change the 'image' is not allowed"))
 	}
 
 	if k8sObj.Spec.Type != string(request.Properties.Type) {
-		errs = append(errs, fmt.Errorf("%w: change the 'type' is not allowed", ErrNotAllowedChange))
+		errs = append(errs, errors.New("change the 'type' is not allowed"))
 	}
 
 	if k8sObj.Spec.Location.Value != request.Metadata.Location.Value {
-		errs = append(errs, fmt.Errorf("%w: change the 'location' is not allowed", ErrNotAllowedChange))
+		errs = append(errs, errors.New("change the 'location' is not allowed"))
 	}
 
 	if len(errs) > 0 {
-		return nil, false, errors.Join(errs...)
+		return nil, false, fmt.Errorf("%w: %w", ErrNotAllowedChanges, errors.Join(errs...))
 	}
 
 	//

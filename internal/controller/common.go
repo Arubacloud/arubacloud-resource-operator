@@ -7,7 +7,7 @@ import (
 )
 
 var (
-	ErrNotAllowedChange = errors.New("not allowed change")
+	ErrNotAllowedChanges = errors.New("not allowed change")
 )
 
 const (

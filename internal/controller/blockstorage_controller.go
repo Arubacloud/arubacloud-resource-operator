@@ -20,9 +20,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"slices"
+	"strings"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -41,16 +41,25 @@ var (
 	errBlockStorageNotFound = errors.New("blockstorage not found")
 )
 
+type contextKey string
+
+const projectIDKey contextKey = "projectID"
+
 // BlockStorageReconciler reconciles a BlockStorage object
 type BlockStorageReconciler struct {
 	*reconciler.Reconciler
+	ts *TransitionSet[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]
 }
 
 // NewBlockStorageReconciler creates a new BlockStorageReconciler
 func NewBlockStorageReconciler(baseReconciler *reconciler.Reconciler) *BlockStorageReconciler {
-	return &BlockStorageReconciler{
+	r := &BlockStorageReconciler{
 		Reconciler: baseReconciler,
 	}
+
+	r.ts = r.newBlockStorageTransisionSet()
+
+	return r
 }
 
 // +kubebuilder:rbac:groups=arubacloud.com,resources=blockstorages,verbs=get;list;watch;create;update;patch;delete
@@ -73,340 +82,561 @@ func (r *BlockStorageReconciler) Finalizer() string {
 }
 
 func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconciler.ResourceObject) (ctrl.Result, error) {
-	// 1 - Convert-back the generic resource to the concrete type
 	k8sBs, ok := obj.(*v1alpha1.BlockStorage)
 	if !ok {
 		return ctrl.Result{}, errors.New("obj is not a *v1alpha1.BlockStorage") // TODO: better error handling
 	}
 
-	//		--------------------------------
-	//		CHECK PROJECT REFERENCE
-	//		--------------------------------
-	//
-
-	// 1.1 - Check if the project reference is valid
 	if k8sBs.Spec.ProjectReference.Name == "" {
 		return ctrl.Result{}, fmt.Errorf("project reference is not valid") // TODO: better error handling
 	}
 
-	// 1.2 - Check if the project reference exists
-
-	// 2 - Create the Aruba search parameters to retrieve the desired resource
-	// from Aruba API
 	bsName, prjName := k8sBs.Name, k8sBs.Spec.ProjectReference.Name
 	bsFilter := fmt.Sprintf(`name:eq("%s")`, bsName)
 	prjFilter := fmt.Sprintf(`name:eq("%s")`, prjName)
 
-	// 3 - Chech if the desired project exists in Aruba CMP
 	prjResp, err := r.ArubaClient.FromProject().List(ctx, &arubatypes.RequestParameters{Filter: &prjFilter})
-	// 3.1 - In case we have some technical issue, so we propagate the error
 	if err != nil {
-		return ctrl.Result{}, fmt.Errorf( // TODO: better error handling
+		return ctrl.Result{}, fmt.Errorf(
 			"failed to find project in Aruba cloud: %w, project_name: '%s', project_filter: '%s'",
 			err, prjName, prjFilter,
 		)
 	}
-	// 3.2 - In case we have some server or business issue, so we propagate
-	// the error
 	if prjResp.IsError() {
-		return ctrl.Result{}, fmt.Errorf( // TODO: better error handling
+		return ctrl.Result{}, fmt.Errorf(
 			"failed to find project in Aruba cloud: status_code: %d, project_name: '%s', project_filter: '%s'",
 			prjResp.StatusCode, prjName, prjFilter,
 		)
 	}
-	// 3.3 - In case the project was not found but the object still not have a
-	// project id on its status, so we consider that the project is still being
-	// created and we requeue the reconciliation
 	if prjResp.Data.Total == 0 && k8sBs.Status.ProjectID != "" {
-		return ctrl.Result{}, fmt.Errorf( // TODO: better error handling
+		return ctrl.Result{}, fmt.Errorf(
 			"inconsistent data in project list: expected: 1, project not found: project_name: '%s', project_filter: '%s'", prjName, prjFilter,
 		)
 	}
 
-	// 3.4 - In case we find more then a single project, so we consider as an
-	// inconsistency
 	if prjResp.Data.Total > 1 {
-		return ctrl.Result{}, fmt.Errorf( // TODO: better error handling
+		return ctrl.Result{}, fmt.Errorf(
 			"inconsistent data in project list: expected: 1, found: %d, project_name: '%s', project_filter: '%s'",
 			prjResp.Data.Total, prjName, prjFilter,
 		)
 	}
 
+	if prjResp.Data.Total == 0 {
+		// Wait for the project to be created
+		return ctrl.Result{RequeueAfter: reconciler.RequeueAfter}, nil
+	}
+
 	prjID := *(prjResp.Data.Values[0].Metadata.ID)
 
-	// 3.5 - In case the id of the project retrieved using the project name on
-	// the object project reference differs from the project id present in the
-	// object status, we consider that the user wants to change the reference
-	// project of the block storage and then we block this not allowed
-	// operation by returning an error
 	if k8sBs.Status.ProjectID != "" && k8sBs.Status.ProjectID != prjID {
-		return ctrl.Result{}, fmt.Errorf( // TODO: better error handling
+		return ctrl.Result{}, fmt.Errorf(
 			"inconsistent project id in blockstorage: blockstorage_name: '%s', blockstorage_project_id: '%s', project_name: '%s', project_id: '%s'",
 			bsName, k8sBs.Status.ProjectID, prjName, prjID,
 		)
 	}
 
-	//		-------------------------------------
-	//		CHECK IF BLOCK STORAGE EXISTS OR NOT
-	//		-------------------------------------
-	//
-
-	// 4 - Chech if the desired block storage exists in Aruba CMP
 	bsResp, err := r.ArubaClient.FromStorage().Volumes().List(ctx, prjID, &arubatypes.RequestParameters{Filter: &bsFilter})
-	// 4.1 - In case we have some technical issue, so we propagate the error
 	if err != nil {
-		return ctrl.Result{}, fmt.Errorf( // TODO: better error handling
+		return ctrl.Result{}, fmt.Errorf(
 			"failed to find blockstorage in Aruba cloud: %w, blockstorage_name: '%s', blockstorage_filter: '%s', project_name: '%s'",
 			err, bsName, bsFilter, prjName,
 		)
 	}
-	// 4.2 - In case we have some server or business issue, so we propagate
-	// the error
 	if bsResp.IsError() {
-		return ctrl.Result{}, fmt.Errorf( // TODO: better error handling
+		return ctrl.Result{}, fmt.Errorf(
 			"failed to find blockstorage in Aruba cloud: status_code: %d, blockstorage_name: '%s', project_name: '%s'",
 			bsResp.StatusCode, bsName, prjName,
 		)
 	}
 
-	// 4.3 - In case we find more then a single block storage or a bizarre
-	// negative number, so we consider as an inconsistency
 	if bsResp.Data.Total < 0 || bsResp.Data.Total > 1 {
-		return ctrl.Result{}, fmt.Errorf( // TODO: better error handling
+		return ctrl.Result{}, fmt.Errorf(
 			"inconsistent data in blockstorage list: blockstorage_name: '%s', blockstorage_filter: '%s', project_name: '%s', instances: %d",
 			bsName, bsFilter, prjName, len(bsResp.Data.Values),
 		)
 	}
 
-	// In case we do not find the resource on the Aruba CMP
-	// we need to understand if we are in the "new", "deleted" or "deleting" path
-	// checking k8s resource status phase and then we need to react accordingly
-	if bsResp.Data.Total == 0 { // BLOCK STORAGE NOT FOUND
-
-		//		-----------------------------------------------------------------------
-		//		A) BLOCK STORAGE K8S IS IN DELETED and already deleted in Aruba CMP
-		//		B) BLOCK STORAGE K8S IS IN DELETING and already deleted in Aruba CMP
-		//		C) BLOCK STORAGE CAN BE NEW SO SHOULD BE CREATED
-		//		-------------------------------------------------------------------------
-
-		// CASE A) BLOCK STORAGE CAN BE DELETED IN K8S and already deleted in Aruba CMP
-		if k8sBs.Status.Phase == v1alpha1.ResourcePhaseDeleted {
-			// In case we do not find the resource on the Aruba CMP but the resource is already marked as "deleted" on its status, we consider that the resource has been already deleted on the Aruba CMP and then we can proceed with the finalizer removal by marking the resource as "deleted" on its status
-			return ctrl.Result{}, nil
-		}
-
-		// CASE B) BLOCK STORAGE CAN BE DELETING in K8S and already deleted in Aruba CMP
-		if k8sBs.Status.Phase == v1alpha1.ResourcePhaseDeleting {
-			// In case we do not find the resource on the Aruba CMP but the resource is already marked as "deleting" on its status, we consider that the resource has been already deleted on the Aruba CMP and then we can proceed with the finalizer removal by marking the resource as "deleted" on its status
-			k8sBsCopy := k8sBs.DeepCopy()
-			k8sBsCopy.Status.Phase = v1alpha1.ResourcePhaseDeleted
-			if err := r.Client.Status().Patch(ctx, k8sBsCopy, client.MergeFrom(k8sBs)); err != nil {
-				return ctrl.Result{}, fmt.Errorf("failed set blockstorage state as 'deleted': %w", err) // TODO: better error handling
-			}
-
-			// This branch MUST return
-			return ctrl.Result{RequeueAfter: reconciler.RequeueAfter}, nil
-		}
-
-		// CASE C) BLOCK STORAGE CAN BE NEW SO SHOULD BE CREATED
-		bsCreateResp, err := r.ArubaClient.FromStorage().Volumes().Create(ctx, prjID, *blockStorageRequestFromK8s(k8sBs), nil)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to create blockstorage in Aruba CMP: %w", err) // TODO: better error handling
-		}
-
-		k8sBsCopy := k8sBs.DeepCopy()
-
-		var status v1alpha1.ResourcePhase
-
-		switch bsCreateResp.StatusCode {
-		case http.StatusOK, http.StatusCreated, http.StatusAccepted:
-			status = v1alpha1.ResourcePhaseCreating
-		case http.StatusBadRequest:
-			status = v1alpha1.ResourcePhaseFailed
-		default:
-			return ctrl.Result{RequeueAfter: reconciler.RequeueAfter}, fmt.Errorf( // TODO: better error handling
-				"failed to create blockstorage in Aruba CMP: status_code: %d, blockstorage_name: '%s', project_name: '%s'",
-				bsCreateResp.StatusCode, bsName, prjName,
-			)
-		}
-
-		k8sBsCopy.Status.ProjectID = prjID
-		k8sBsCopy.Status.Phase = status
-		k8sBsCopy.Status.ResourceID = *bsCreateResp.Data.Metadata.ID
-		if err := r.Client.Status().Patch(ctx, k8sBsCopy, client.MergeFrom(k8sBs)); err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed set blockstorage state as %s: %w", status, err) // TODO: better error handling
-		}
-
-		return ctrl.Result{RequeueAfter: reconciler.RequeueAfter}, nil
+	var arubaBS *arubatypes.BlockStorageResponse
+	if bsResp.Data.Total == 1 {
+		arubaBS = &bsResp.Data.Values[0]
 	}
 
-	// The resource present on the Aruba Cloud
-	// CASE A) resource is still in creating, updating, deleting, provisioning, disabling, enabling (TRANSIENT STATES)
-	// CASE B) resource would be deleted
-	// CASE C) resource would be to update
-	// CASE D) restore is active, failed or disabled (FINAL STATES)
+	ctx = context.WithValue(ctx, projectIDKey, prjID)
 
-	arubaBS := &bsResp.Data.Values[0]
+	return r.ts.Run(ctx, k8sBs, arubaBS)
+}
 
-	//CASE A)
-	switch AssesCSPResourceStateNature(&arubaBS.Status) {
-	case CSPResourceStateNatureTransitory:
-		return ctrl.Result{RequeueAfter: reconciler.RequeueAfter}, nil
+//
+// Transition Set Functions
+//
 
-	case CSPResourceStateNatureUndetermined:
-		// TODO: implement a timeout mechanism to that condition
-		return ctrl.Result{RequeueAfter: reconciler.RequeueAfter}, nil
+// Kubernetes BlockStorage Conditions
 
-	case CSPResourceStateNatureFinal:
-		// Do nothing, just follow below
+func kBsShouldBeDeleted(k *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) bool {
+	return !k.DeletionTimestamp.IsZero() &&
+		k.Status.Phase != v1alpha1.ResourcePhaseDeleting &&
+		k.Status.Phase != v1alpha1.ResourcePhaseDeleted
+}
 
-	default:
-		return ctrl.Result{}, fmt.Errorf("resource in inconsistent state: status: '%v'", arubaBS.Status) // TODO: better error handling
+func kBsDeletingInProgress(k *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) bool {
+	return !k.DeletionTimestamp.IsZero() &&
+		k.Status.Phase == v1alpha1.ResourcePhaseDeleting
+}
+
+func kBsDoesNotExistsInBoth(k *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) bool {
+	return k.DeletionTimestamp.IsZero() &&
+		k.Status.Phase == "" &&
+		k.Status.ResourceID == ""
+}
+
+func kBsDoesNotExistsInCMP(k *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) bool {
+	return k.DeletionTimestamp.IsZero() &&
+		k.Status.Phase == v1alpha1.ResourcePhaseCreating &&
+		k.Status.ResourceID == ""
+}
+
+func kBsWasRemovedFromCMP(k *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) bool {
+	return k.DeletionTimestamp.IsZero() &&
+		k.Status.Phase != "" &&
+		k.Status.ResourceID != ""
+}
+
+func kBsCreationInProgress(k *v1alpha1.BlockStorage, a *arubatypes.BlockStorageResponse) bool {
+	return k.DeletionTimestamp.IsZero() &&
+		k.Status.Phase != "" &&
+		(k.Status.ResourceID == "" || (a != nil && k.Status.ResourceID == *a.Metadata.ID))
+}
+
+func kBsIsActive(k *v1alpha1.BlockStorage, a *arubatypes.BlockStorageResponse) bool {
+	return k.DeletionTimestamp.IsZero() &&
+		k.Status.Phase != "" &&
+		k.Status.Phase != v1alpha1.ResourcePhaseUpdating &&
+		(k.Status.ResourceID == "" || (a != nil && k.Status.ResourceID == *a.Metadata.ID))
+}
+
+func kBsHasDeniedChanges(k *v1alpha1.BlockStorage, a *arubatypes.BlockStorageResponse) bool {
+	if !k.DeletionTimestamp.IsZero() {
+		return false
+	}
+	if a == nil {
+		return false
+	}
+	_, _, err := convertAndCheckForUpdate(k, a)
+	return err != nil
+}
+
+func kBsShouldBeUpdated(k *v1alpha1.BlockStorage, a *arubatypes.BlockStorageResponse) bool {
+	if !k.DeletionTimestamp.IsZero() || k.Status.Phase == v1alpha1.ResourcePhaseUpdating {
+		return false
+	}
+	if a == nil {
+		return false
+	}
+	_, mustUpdate, err := convertAndCheckForUpdate(k, a)
+	return err == nil && mustUpdate
+}
+
+func kBsUpdatingInProgress(k *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) bool {
+	return k.DeletionTimestamp.IsZero() && k.Status.Phase == v1alpha1.ResourcePhaseUpdating
+}
+
+func kBsUpdated(k *v1alpha1.BlockStorage, a *arubatypes.BlockStorageResponse) bool {
+	if !k.DeletionTimestamp.IsZero() || k.Status.Phase != v1alpha1.ResourcePhaseUpdating {
+		return false
+	}
+	if a == nil {
+		return false
+	}
+	_, mustUpdate, err := convertAndCheckForUpdate(k, a)
+	return err == nil && !mustUpdate
+}
+
+// Aruba CMP BlockStorage Conditions
+
+func aBsStateNatureFinal(_ *v1alpha1.BlockStorage, a *arubatypes.BlockStorageResponse) bool {
+	if a == nil || a.Status.State == nil {
+		return false
+	}
+	if *a.Status.State == CSPResourceStateDeleting || *a.Status.State == CSPResourceStateDeleted {
+		return false
+	}
+	return AssesCSPResourceStateNature(&a.Status) == CSPResourceStateNatureFinal
+}
+
+func aBsStateDeleting(_ *v1alpha1.BlockStorage, a *arubatypes.BlockStorageResponse) bool {
+	return a != nil && a.Status.State != nil && *a.Status.State == CSPResourceStateDeleting
+}
+
+func aBsNotExists(_ *v1alpha1.BlockStorage, a *arubatypes.BlockStorageResponse) bool {
+	return a == nil
+}
+
+func aBsStateCreating(_ *v1alpha1.BlockStorage, a *arubatypes.BlockStorageResponse) bool {
+	return a != nil && a.Status.State != nil &&
+		(*a.Status.State == CSPResourceStateCreating ||
+			*a.Status.State == CSPResourceStateInCreation ||
+			*a.Status.State == CSPResourceStateProvisioning)
+}
+
+func aBsStateActive(_ *v1alpha1.BlockStorage, a *arubatypes.BlockStorageResponse) bool {
+	return a != nil && a.Status.State != nil &&
+		(*a.Status.State == CSPResourceStateActive ||
+			*a.Status.State == CSPResourceStateNotUsed ||
+			*a.Status.State == CSPResourceStateInUse ||
+			*a.Status.State == CSPResourceStateUsed)
+}
+
+func aBsIsInError(_ *v1alpha1.BlockStorage, a *arubatypes.BlockStorageResponse) bool {
+	return a != nil && a.Status.State != nil && *a.Status.State == CSPResourceStateFailed
+}
+
+func aBsStateUpdating(_ *v1alpha1.BlockStorage, a *arubatypes.BlockStorageResponse) bool {
+	return a != nil && a.Status.State != nil && *a.Status.State == CSPResourceStateUpdating
+}
+
+func aBsStateNatureFinalForUpdate(_ *v1alpha1.BlockStorage, a *arubatypes.BlockStorageResponse) bool {
+	return a != nil && AssesCSPResourceStateNature(&a.Status) == CSPResourceStateNatureFinal
+}
+
+// Kubernetes Actions
+
+func (r *BlockStorageReconciler) setKBsState(ctx context.Context, k *v1alpha1.BlockStorage, state v1alpha1.ResourcePhase) error {
+	kCopy := k.DeepCopy()
+	kCopy.Status.Phase = state
+
+	if prjID, ok := ctx.Value(projectIDKey).(string); ok {
+		kCopy.Status.ProjectID = prjID
 	}
 
-	// CASE B) resource would be deleted
-	if !k8sBs.GetDeletionTimestamp().IsZero() { // CASE A)
+	if err := r.Status().Patch(ctx, kCopy, client.MergeFrom(k)); err != nil {
+		return fmt.Errorf("failed to update blockstorage '%s/%s' state to '%v': %w", kCopy.Namespace, kCopy.Name, state, err)
+	}
+	return nil
+}
 
-		if k8sBs.Status.Phase != v1alpha1.ResourcePhaseDeleting { // CASE A)
-			k8sBsCopy := k8sBs.DeepCopy()
-			k8sBsCopy.Status.Phase = v1alpha1.ResourcePhaseDeleting
-			if err := r.Client.Status().Patch(ctx, k8sBsCopy, client.MergeFrom(k8sBs)); err != nil {
-				return ctrl.Result{}, fmt.Errorf("failed set blockstorage state as 'deleting': %w", err) // TODO: better error handling
-			}
+func (r *BlockStorageReconciler) setBsToDeletingOnK8s(ctx context.Context, k *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {
+	return r.setKBsState(ctx, k, v1alpha1.ResourcePhaseDeleting)
+}
 
-			bsResp, err := r.ArubaClient.FromStorage().Volumes().Delete(ctx, prjID, *arubaBS.Metadata.ID, nil)
-			if err != nil {
-				return ctrl.Result{}, fmt.Errorf( // TODO: better error handling
-					"failed to delete blockstorage in Aruba CMP: %w, blockstorage_name: '%s', project_name: '%s'",
-					err, bsName, prjName)
+func (r *BlockStorageReconciler) setBsToDeletedOnK8s(ctx context.Context, k *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {
+	return r.setKBsState(ctx, k, v1alpha1.ResourcePhaseDeleted)
+}
 
-			}
+func (r *BlockStorageReconciler) setBsToCreatingOnK8s(ctx context.Context, k *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {
+	return r.setKBsState(ctx, k, v1alpha1.ResourcePhaseCreating)
+}
 
-			switch bsResp.StatusCode {
-			case http.StatusOK, http.StatusAccepted, http.StatusNoContent, http.StatusNotFound:
-				// Do nothing, we can consider the delete request as successful
+func (r *BlockStorageReconciler) setBsToUpdatingOnK8s(ctx context.Context, k *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {
+	return r.setKBsState(ctx, k, v1alpha1.ResourcePhaseUpdating)
+}
 
-			case http.StatusBadRequest:
-				return ctrl.Result{RequeueAfter: reconciler.RequeueAfter}, nil // TODO: better error handling, we can consider to requeue the request in order to retry the delete operation
+func (r *BlockStorageReconciler) setBsToCreatingAndUnsetResourceIDOnK8s(ctx context.Context, k *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {
+	kCopy := k.DeepCopy()
+	kCopy.Status.Phase = v1alpha1.ResourcePhaseCreating
+	kCopy.Status.ResourceID = ""
 
-			default:
-				return ctrl.Result{RequeueAfter: reconciler.RequeueAfter}, fmt.Errorf( // TODO: better error handling
-					"failed to delete blockstorage in Aruba CMP: status_code: %d, blockstorage_name: '%s', project_name: '%s'",
-					bsResp.StatusCode, bsName, prjName)
-			}
-		}
-
-		// This branch MUST return
-		return ctrl.Result{RequeueAfter: reconciler.RequeueAfter}, nil
+	if prjID, ok := ctx.Value(projectIDKey).(string); ok {
+		kCopy.Status.ProjectID = prjID
 	}
 
-	request, mustUpdate, err := convertAndCheckForUpdate(k8sBs, arubaBS)
+	if err := r.Status().Patch(ctx, kCopy, client.MergeFrom(k)); err != nil {
+		return fmt.Errorf("failed to update blockstorage '%s/%s' state to '%v': %w", kCopy.Namespace, kCopy.Name, v1alpha1.ResourcePhaseCreating, err)
+	}
+	return nil
+}
+
+func (r *BlockStorageReconciler) setBsToActiveAndSetResourceIDOnK8s(ctx context.Context, k *v1alpha1.BlockStorage, a *arubatypes.BlockStorageResponse) error {
+	kCopy := k.DeepCopy()
+	kCopy.Status.Phase = v1alpha1.ResourcePhaseActive
+	if a != nil {
+		kCopy.Status.ResourceID = *a.Metadata.ID
+	}
+
+	if prjID, ok := ctx.Value(projectIDKey).(string); ok {
+		kCopy.Status.ProjectID = prjID
+	}
+
+	if err := r.Status().Patch(ctx, kCopy, client.MergeFrom(k)); err != nil {
+		return fmt.Errorf("failed to update blockstorage '%s/%s' state to '%v': %w", kCopy.Namespace, kCopy.Name, v1alpha1.ResourcePhaseActive, err)
+	}
+	return nil
+}
+
+func (r *BlockStorageReconciler) setBsToCreatingAndSetResourceIDOnK8s(ctx context.Context, k *v1alpha1.BlockStorage, a *arubatypes.BlockStorageResponse) error {
+	kCopy := k.DeepCopy()
+	kCopy.Status.Phase = v1alpha1.ResourcePhaseCreating
+	if a != nil {
+		kCopy.Status.ResourceID = *a.Metadata.ID
+	}
+
+	if prjID, ok := ctx.Value(projectIDKey).(string); ok {
+		kCopy.Status.ProjectID = prjID
+	}
+
+	if err := r.Status().Patch(ctx, kCopy, client.MergeFrom(k)); err != nil {
+		return fmt.Errorf("failed to update blockstorage '%s/%s' state to '%v': %w", kCopy.Namespace, kCopy.Name, v1alpha1.ResourcePhaseCreating, err)
+	}
+	return nil
+}
+
+func (r *BlockStorageReconciler) setBsToFailedOnK8s(ctx context.Context, k *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {
+	return r.setKBsState(ctx, k, v1alpha1.ResourcePhaseFailed)
+}
+
+func (r *BlockStorageReconciler) setBsToActiveOnK8s(ctx context.Context, k *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {
+	return r.setKBsState(ctx, k, v1alpha1.ResourcePhaseActive)
+}
+
+func (r *BlockStorageReconciler) setBsToFailedOn400(ctx context.Context, k *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse, err error) error {
+	if strings.Contains(err.Error(), "status_code: 400") {
+		return r.setKBsState(ctx, k, v1alpha1.ResourcePhaseFailed)
+	}
+	return nil
+}
+
+// Aruba CMP Actions
+
+func (r *BlockStorageReconciler) deleteBsFromCMP(ctx context.Context, _ *v1alpha1.BlockStorage, a *arubatypes.BlockStorageResponse) error {
+	prjID := ctx.Value(projectIDKey).(string)
+	bsResp, err := r.ArubaClient.FromStorage().Volumes().Delete(ctx, prjID, *a.Metadata.ID, nil)
 	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to convert and check blockstorage: %w", err) // TODO: better error handling
+		return fmt.Errorf("failed to delete blockstorage '%s' in Aruba CMP: error: '%w'", *a.Metadata.Name, err)
 	}
 
-	if mustUpdate { // CASE C)
-		// 5.3.1 - Set the k8s resource as updating if it is not yet
-		if k8sBs.Status.Phase != v1alpha1.ResourcePhaseUpdating {
-			k8sBsCopy := k8sBs.DeepCopy()
-			k8sBsCopy.Status.Phase = v1alpha1.ResourcePhaseUpdating
-			if err := r.Client.Status().Patch(ctx, k8sBsCopy, client.MergeFrom(k8sBs)); err != nil {
-				return ctrl.Result{}, fmt.Errorf("failed set blockstorage state as 'updating': %w", err) // TODO: better error handling
+	switch bsResp.StatusCode {
+	case http.StatusOK, http.StatusAccepted, http.StatusNoContent, http.StatusNotFound:
+		// Do nothing, we can consider the delete request as successful
+	case http.StatusBadRequest:
+		return fmt.Errorf("failed to delete blockstorage '%s' in Aruba CMP: status_code: %d, error: 'semantic or precondition error'", *a.Metadata.Name, bsResp.StatusCode)
+	default:
+		return fmt.Errorf("failed to delete blockstorage '%s' in Aruba CMP: status_code: %d, error: 'internal error'", *a.Metadata.Name, bsResp.StatusCode)
+	}
+	return nil
+}
+
+func (r *BlockStorageReconciler) createBsInCMP(ctx context.Context, k *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {
+	prjID := ctx.Value(projectIDKey).(string)
+	bsCreateResp, err := r.ArubaClient.FromStorage().Volumes().Create(ctx, prjID, *blockStorageRequestFromK8s(k), nil)
+	if err != nil {
+		return fmt.Errorf("failed to create blockstorage '%s' in Aruba CMP: error: '%w'", k.Name, err)
+	}
+
+	switch bsCreateResp.StatusCode {
+	case http.StatusOK, http.StatusCreated, http.StatusAccepted:
+		// Success
+	case http.StatusBadRequest:
+		return fmt.Errorf("status_code: 400, failed to create blockstorage '%s' in Aruba CMP: semantic or precondition error", k.Name)
+	default:
+		return fmt.Errorf("status_code: %d, failed to create blockstorage '%s' in Aruba CMP: internal error", bsCreateResp.StatusCode, k.Name)
+	}
+	return nil
+}
+
+func (r *BlockStorageReconciler) updateBsInCMP(ctx context.Context, k *v1alpha1.BlockStorage, a *arubatypes.BlockStorageResponse) error {
+	prjID := ctx.Value(projectIDKey).(string)
+	request, _, err := convertAndCheckForUpdate(k, a)
+	if err != nil {
+		return err // Should be caught by ResourceHasDeniedChanges beforehand
+	}
+
+	updateResp, err := r.ArubaClient.FromStorage().Volumes().Update(ctx, prjID, *a.Metadata.ID, *request, nil)
+	if err != nil {
+		return fmt.Errorf("failed to update blockstorage '%s' in Aruba CMP: %w", k.Name, err)
+	}
+
+	if updateResp != nil && updateResp.IsError() {
+		errDetail := ""
+		if updateResp.Error != nil {
+			var status int32
+			title, detail := "", ""
+			if updateResp.Error.Status != nil {
+				status = *updateResp.Error.Status
 			}
-		}
-
-		// BLOCK STORAGE CAN BE ACTIVE, FAILED OR DISABLED
-
-		if arubaBS.Status.State != nil &&
-			(*arubaBS.Status.State == CSPResourceStateActive ||
-				*arubaBS.Status.State == CSPResourceStateInUse ||
-				*arubaBS.Status.State == CSPResourceStateNotUsed) {
-
-			// 5.3.2 - Request the resource update to the Arube CMP
-			updateResp, err := r.ArubaClient.FromStorage().Volumes().Update(ctx, prjID, *arubaBS.Metadata.ID, *request, nil)
-			if err != nil {
-				return ctrl.Result{}, fmt.Errorf("failed update blockstorage in Aruba CMP: %w, blockstorage_name: '%s', project_name: '%s'", err, bsName, prjName)
+			if updateResp.Error.Title != nil {
+				title = *updateResp.Error.Title
 			}
-			if updateResp != nil && updateResp.IsError() {
-				errDetail := ""
-				if updateResp.Error != nil {
-					var status int32
-					title, detail := "", ""
-					if updateResp.Error.Status != nil {
-						status = *updateResp.Error.Status
-					}
-					if updateResp.Error.Title != nil {
-						title = *updateResp.Error.Title
-					}
-					if updateResp.Error.Detail != nil {
-						detail = *updateResp.Error.Detail
-					}
-					errDetail = fmt.Sprintf("status_code: '%d', title: '%s', detail: '%s'", status, title, detail)
-				}
-				return ctrl.Result{}, fmt.Errorf("failed update blockstorage in Aruba CMP: %s, blockstorage_name: '%s', project_name: '%s'", errDetail, bsName, prjName)
+			if updateResp.Error.Detail != nil {
+				detail = *updateResp.Error.Detail
 			}
+			errDetail = fmt.Sprintf("status_code: '%d', title: '%s', detail: '%s'", status, title, detail)
 		}
-
-		return ctrl.Result{RequeueAfter: reconciler.RequeueAfter}, nil
+		return fmt.Errorf("failed to update blockstorage '%s' in Aruba CMP: %s", k.Name, errDetail)
 	}
 
-	if k8sBs.Status.Phase == v1alpha1.ResourcePhaseUpdating && *arubaBS.Status.State == CSPResourceStateUpdating { //UPDATING NOT FINISHED YET
-		// TODO: check if this condition really happens
-		log.Println("--->>> Condition: 'k8sBs.Status.Phase == v1alpha1.ResourcePhaseUpdating && *arubaBS.Status.State == CSPResourceStateUpdating'")
-		return ctrl.Result{RequeueAfter: reconciler.RequeueAfter}, nil
+	return nil
+}
+
+// Transition Set Builder
+
+func (r *BlockStorageReconciler) newBlockStorageTransisionSet() *TransitionSet[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse] {
+	ts := &TransitionSet[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		defaultKAction:         NoAction[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		defaultAAction:         NoAction[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		defaultKActionOnAError: NoActionOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		defaultRequeue:         DefaultRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		defaultRequeueOnError:  DefaultRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	}
 
-	if k8sBs.Status.Phase == v1alpha1.ResourcePhaseUpdating {
-		var status v1alpha1.ResourcePhase
+	// 1. ResourceShouldBeDeleted
+	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		name:            "ResourceShouldBeDeleted",
+		kCondition:      kBsShouldBeDeleted,
+		aCondition:      aBsStateNatureFinal,
+		kAction:         r.setBsToDeletingOnK8s,
+		aAction:         r.deleteBsFromCMP,
+		kActionOnAError: NoActionOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeue:         DefaultRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError:  DefaultRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
 
-		switch *arubaBS.Status.State {
-		case CSPResourceStateActive,
-			CSPResourceStateNotUsed,
-			CSPResourceStateInUse,
-			CSPResourceStateUsed,
-			CSPResourceStateStopped,
-			CSPResourceStateRunning,
-			CSPResourceStateDisabled:
-			status = v1alpha1.ResourcePhaseActive
-		case CSPResourceStateFailed:
-			status = v1alpha1.ResourcePhaseFailed
-		default:
-			// In case of an unexpected state, keep the current phase
-			status = k8sBs.Status.Phase
-		}
+	// 2. ResourceDeletingInProgress
+	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		name:            "ResourceDeletingInProgress",
+		kCondition:      kBsDeletingInProgress,
+		aCondition:      aBsStateDeleting,
+		kAction:         NoAction[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		aAction:         NoAction[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		kActionOnAError: NoActionOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeue:         DefaultRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError:  NoRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
 
-		k8sBsCopy := k8sBs.DeepCopy()
-		k8sBsCopy.Status.Phase = status
-		if err := r.Client.Status().Patch(ctx, k8sBsCopy, client.MergeFrom(k8sBs)); err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed set blockstorage state as '%s': %w", status, err) // TODO: better error handling
-		}
+	// 3. ResourceDeletionAccomplished
+	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		name:            "ResourceDeletionAccomplished",
+		kCondition:      kBsDeletingInProgress,
+		aCondition:      aBsNotExists,
+		kAction:         r.setBsToDeletedOnK8s,
+		aAction:         NoAction[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		kActionOnAError: NoActionOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeue:         NoRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError:  NoRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
 
-		// This branch MUST return
-		return ctrl.Result{}, nil
-	}
+	// 4. ResourceDoesNotExistsInBoth
+	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		name:            "ResourceDoesNotExistsInBoth",
+		kCondition:      kBsDoesNotExistsInBoth,
+		aCondition:      aBsNotExists,
+		kAction:         r.setBsToCreatingOnK8s,
+		aAction:         r.createBsInCMP,
+		kActionOnAError: r.setBsToFailedOn400,
+		requeue:         DefaultRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError:  DefaultRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
 
-	// cmp resource can be failed, creaed or creating
+	// 5. ResourceDoesNotExistsInCMP
+	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		name:            "ResourceDoesNotExistsInCMP",
+		kCondition:      kBsDoesNotExistsInCMP,
+		aCondition:      aBsNotExists,
+		kAction:         NoAction[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		aAction:         r.createBsInCMP,
+		kActionOnAError: NoActionOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeue:         DefaultRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError:  DefaultRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
 
-	k8sBsCopy := k8sBs.DeepCopy()
+	// 6. ResourceWasRemovedFromCMP
+	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		name:            "ResourceWasRemovedFromCMP",
+		kCondition:      kBsWasRemovedFromCMP,
+		aCondition:      aBsNotExists,
+		kAction:         r.setBsToCreatingAndUnsetResourceIDOnK8s,
+		aAction:         r.createBsInCMP,
+		kActionOnAError: r.setBsToFailedOn400,
+		requeue:         DefaultRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError:  DefaultRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
 
-	if k8sBsCopy.Status.Phase == v1alpha1.ResourcePhaseActive {
-		return ctrl.Result{}, nil
-	}
+	// 7. ResourceCreationInProgress
+	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		name:            "ResourceCreationInProgress",
+		kCondition:      kBsCreationInProgress,
+		aCondition:      aBsStateCreating,
+		kAction:         r.setBsToCreatingAndSetResourceIDOnK8s,
+		aAction:         NoAction[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		kActionOnAError: NoActionOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeue:         DefaultRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError:  DefaultRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
 
-	if k8sBsCopy.Status.Phase == v1alpha1.ResourcePhaseCreating {
-		switch *bsResp.Data.Values[0].Status.State {
-		case CSPResourceStateFailed:
-			k8sBsCopy.Status.Phase = v1alpha1.ResourcePhaseFailed
-		case CSPResourceStateActive, CSPResourceStateInUse, CSPResourceStateNotUsed:
-			k8sBsCopy.Status.Phase = v1alpha1.ResourcePhaseActive
-		}
+	// 8. ResourceIsActive
+	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		name:            "ResourceIsActive",
+		kCondition:      kBsIsActive,
+		aCondition:      aBsStateActive,
+		kAction:         r.setBsToActiveAndSetResourceIDOnK8s,
+		aAction:         NoAction[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		kActionOnAError: NoActionOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeue:         NoRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError:  DefaultRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
 
-		if err := r.Client.Status().Patch(ctx, k8sBsCopy, client.MergeFrom(k8sBs)); err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed set blockstorage state as 'created': %w", err) // TODO: better error handling
-		}
-	}
+	// 9. ResourceIsInError
+	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		name:            "ResourceIsInError",
+		kCondition:      AlwaysTrue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		aCondition:      aBsIsInError,
+		kAction:         r.setBsToFailedOnK8s,
+		aAction:         NoAction[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		kActionOnAError: NoActionOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeue:         NoRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError:  NoRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
 
-	return ctrl.Result{}, fmt.Errorf("Cannot be reached code: blockstorage_name: '%s', project_name: '%s'", bsName, prjName) // TODO: better error handling
+	// 9b. ResourceHasDeniedChanges (intercept before ResourceShouldBeUpdated to surface the error)
+	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		name:            "ResourceHasDeniedChanges",
+		kCondition:      kBsHasDeniedChanges,
+		aCondition:      AlwaysTrue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		kAction: func(ctx context.Context, k *v1alpha1.BlockStorage, a *arubatypes.BlockStorageResponse) error {
+			_, _, err := convertAndCheckForUpdate(k, a)
+			return fmt.Errorf("failed to convert and check blockstorage: %w", err)
+		},
+		aAction:         NoAction[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		kActionOnAError: NoActionOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeue:         NoRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse], // Don't requeue if denied changes
+		requeueOnError:  DefaultRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
+
+	// 10. ResourceShouldBeUpdated
+	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		name:            "ResourceShouldBeUpdated",
+		kCondition:      kBsShouldBeUpdated,
+		aCondition:      aBsStateNatureFinalForUpdate,
+		kAction:         r.setBsToUpdatingOnK8s,
+		aAction:         r.updateBsInCMP,
+		kActionOnAError: NoActionOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeue:         DefaultRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError:  DefaultRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
+
+	// 11. ResourceUpdatingInProgress
+	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		name:            "ResourceUpdatingInProgress",
+		kCondition:      kBsUpdatingInProgress,
+		aCondition:      aBsStateUpdating,
+		kAction:         NoAction[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		aAction:         NoAction[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		kActionOnAError: NoActionOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeue:         DefaultRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError:  DefaultRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
+
+	// 12. ResourceUpdated
+	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		name:            "ResourceUpdated",
+		kCondition:      kBsUpdated,
+		aCondition:      aBsStateActive,
+		kAction:         r.setBsToActiveOnK8s,
+		aAction:         NoAction[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		kActionOnAError: NoActionOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeue:         NoRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError:  DefaultRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
+
+	return ts
 }
 
 func blockStorageRequestFromK8s(k8sBs *v1alpha1.BlockStorage) *arubatypes.BlockStorageRequest {

@@ -512,139 +512,150 @@ func (r *ProjectReconciler) updateProjectInCMP(ctx context.Context, k *v1alpha1.
 
 func (r *ProjectReconciler) newProjectTransisionSet() *TransitionSet[*v1alpha1.Project, *arubatypes.ProjectResponse] {
 	ts := &TransitionSet[*v1alpha1.Project, *arubatypes.ProjectResponse]{
-		defaultKAction: NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
-		defaultAAction: NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
-		requeue:        NoRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-		requeueOnError: NoRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+		defaultKAction:         NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
+		defaultAAction:         NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
+		defaultKActionOnAError: NoActionOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+		defaultRequeue:         NoRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+		defaultRequeueOnError:  NoRequeueOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 	}
 
 	// Project should be deleted
 	ts.Add(
 		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
-			name:           "project_should_be_deleted",
-			kCondition:     kProjectShouldBeDeleted,
-			aCondition:     aProjectExixts,
-			kAction:        r.setProjectToDeletingOnK8s,
-			aAction:        r.deleteProjectFromCMP,
-			requeue:        DefaultRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeueOnError: DefaultRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			name:            "project_should_be_deleted",
+			kCondition:      kProjectShouldBeDeleted,
+			aCondition:      aProjectExixts,
+			kAction:         r.setProjectToDeletingOnK8s,
+			aAction:         r.deleteProjectFromCMP,
+			kActionOnAError: NoActionOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeue:         DefaultRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError:  DefaultRequeueOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
 	)
 
 	// Project deletion in progress
 	ts.Add(
 		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
-			name:           "project_deletion_in_project",
-			kCondition:     kProjectDeletingInProgress,
-			aCondition:     aProjectExixts,
-			kAction:        NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			aAction:        NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeue:        DefaultRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeueOnError: NoRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			name:            "project_deletion_in_progress",
+			kCondition:      kProjectDeletingInProgress,
+			aCondition:      aProjectExixts,
+			kAction:         NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			aAction:         NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			kActionOnAError: NoActionOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeue:         DefaultRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError:  NoRequeueOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
 	)
 
 	// Project deletion accomplished
 	ts.Add(
 		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
-			name:           "project_deletion_accomplished",
-			kCondition:     kProjectDeletingInProgress,
-			aCondition:     aProjectNotExixts,
-			kAction:        r.setProjectToDeletedOnK8s,
-			aAction:        NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeue:        NoRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeueOnError: NoRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			name:            "project_deletion_accomplished",
+			kCondition:      kProjectDeletingInProgress,
+			aCondition:      aProjectNotExixts,
+			kAction:         r.setProjectToDeletedOnK8s,
+			aAction:         NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			kActionOnAError: NoActionOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeue:         NoRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError:  NoRequeueOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
 	)
 
 	// Project does not exists in both
 	ts.Add(
 		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
-			name:           "project_does_not_exists_in_both",
-			kCondition:     kProjectInFirstReconcilation,
-			aCondition:     aProjectNotExixts,
-			kAction:        r.setProjectToCreatingOnK8s,
-			aAction:        r.createProjectInCMP,
-			requeue:        DefaultRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeueOnError: DefaultRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			name:            "project_does_not_exists_in_both",
+			kCondition:      kProjectInFirstReconcilation,
+			aCondition:      aProjectNotExixts,
+			kAction:         r.setProjectToCreatingOnK8s,
+			aAction:         r.createProjectInCMP,
+			kActionOnAError: NoActionOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeue:         DefaultRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError:  DefaultRequeueOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
 	)
 
 	// Project does not exists in CMP
 	ts.Add(
 		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
-			name:           "project_does_not_exixts_in_cmp",
-			kCondition:     kProjectCreationInitiated,
-			aCondition:     aProjectNotExixts,
-			kAction:        NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			aAction:        r.createProjectInCMP,
-			requeue:        DefaultRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeueOnError: DefaultRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			name:            "project_does_not_exixts_in_cmp",
+			kCondition:      kProjectCreationInitiated,
+			aCondition:      aProjectNotExixts,
+			kAction:         NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			aAction:         r.createProjectInCMP,
+			kActionOnAError: NoActionOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeue:         DefaultRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError:  DefaultRequeueOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
 	)
 
 	// Project existed but was removed in CMP
 	ts.Add(
 		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
-			name:           "project_existed_but_was_removed_from_cmp",
-			kCondition:     kProjectExistedButRemoved,
-			aCondition:     aProjectNotExixts,
-			kAction:        r.setProjectToCreatingAndUnsetResourceIDOnK8s,
-			aAction:        r.createProjectInCMP,
-			requeue:        DefaultRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeueOnError: DefaultRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			name:            "project_existed_but_was_removed_from_cmp",
+			kCondition:      kProjectExistedButRemoved,
+			aCondition:      aProjectNotExixts,
+			kAction:         r.setProjectToCreatingAndUnsetResourceIDOnK8s,
+			aAction:         r.createProjectInCMP,
+			kActionOnAError: NoActionOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeue:         DefaultRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError:  DefaultRequeueOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
 	)
 
 	// Project creation accomplished
 	ts.Add(
 		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
-			name:           "project_creation_accomplished",
-			kCondition:     kProjectCreationInitiated,
-			aCondition:     aProjectExixts,
-			kAction:        r.setProjectToActiveAndSetResourceIDOnK8s,
-			aAction:        NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeue:        NoRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeueOnError: DefaultRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			name:            "project_creation_accomplished",
+			kCondition:      kProjectCreationInitiated,
+			aCondition:      aProjectExixts,
+			kAction:         r.setProjectToActiveAndSetResourceIDOnK8s,
+			aAction:         NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			kActionOnAError: NoActionOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeue:         NoRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError:  DefaultRequeueOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
 	)
 
 	// Project should be updated
 	ts.Add(
 		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
-			name:           "project_should_be_updated",
-			kCondition:     kProjectShouldBeUpdated,
-			aCondition:     aProjectExixts,
-			kAction:        r.setProjectToUpdatingOnK8s,
-			aAction:        r.updateProjectInCMP,
-			requeue:        DefaultRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeueOnError: DefaultRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			name:            "project_should_be_updated",
+			kCondition:      kProjectShouldBeUpdated,
+			aCondition:      aProjectExixts,
+			kAction:         r.setProjectToUpdatingOnK8s,
+			aAction:         r.updateProjectInCMP,
+			kActionOnAError: NoActionOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeue:         DefaultRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError:  DefaultRequeueOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
 	)
 
 	// Project updating is in progress
 	ts.Add(
 		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
-			name:           "project_updating_in_progress",
-			kCondition:     kProjectIsStillUpdating,
-			aCondition:     aProjectExixts,
-			kAction:        NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			aAction:        NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeue:        DefaultRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeueOnError: DefaultRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			name:            "project_updating_in_progress",
+			kCondition:      kProjectIsStillUpdating,
+			aCondition:      aProjectExixts,
+			kAction:         NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			aAction:         NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			kActionOnAError: NoActionOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeue:         DefaultRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError:  DefaultRequeueOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
 	)
 
 	// Project updating accomplished
 	ts.Add(
 		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
-			name:           "project_updating_accomplished",
-			kCondition:     kProjectUpdatingAccomplished,
-			aCondition:     aProjectExixts,
-			kAction:        r.setProjectToActiveAndSetResourceIDOnK8s,
-			aAction:        NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeue:        NoRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeueOnError: DefaultRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			name:            "project_updating_accomplished",
+			kCondition:      kProjectUpdatingAccomplished,
+			aCondition:      aProjectExixts,
+			kAction:         r.setProjectToActiveAndSetResourceIDOnK8s,
+			aAction:         NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			kActionOnAError: NoActionOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeue:         NoRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError:  DefaultRequeueOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
 	)
 

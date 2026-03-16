@@ -52,7 +52,7 @@ func NewProjectReconciler(baseReconciler *reconciler.Reconciler) *ProjectReconci
 		Reconciler: baseReconciler,
 	}
 
-	r.newProjectTransisionSet()
+	r.ts = r.newProjectTransisionSet()
 
 	return r
 }
@@ -512,8 +512,10 @@ func (r *ProjectReconciler) updateProjectInCMP(ctx context.Context, k *v1alpha1.
 
 func (r *ProjectReconciler) newProjectTransisionSet() *TransitionSet[*v1alpha1.Project, *arubatypes.ProjectResponse] {
 	ts := &TransitionSet[*v1alpha1.Project, *arubatypes.ProjectResponse]{
-		requeue:        DefaultRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-		requeueOnError: DefaultRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+		defaultKAction: NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
+		defaultAAction: NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
+		requeue:        NoRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+		requeueOnError: NoRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
 	}
 
 	// Project should be deleted
@@ -724,7 +726,7 @@ func projectConvertAndCheckForUpdate(
 }
 
 func projectCheckForUpdate(k8sObj *v1alpha1.Project, arubaObj *arubatypes.ProjectResponse) bool {
-	return !projectTagsAreEquals(k8sObj, arubaObj.Metadata.Tags) &&
+	return !projectTagsAreEquals(k8sObj, arubaObj.Metadata.Tags) ||
 		k8sObj.Spec.Description != *arubaObj.Properties.Description
 }
 

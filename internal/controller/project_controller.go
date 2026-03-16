@@ -506,29 +506,6 @@ func kubeProjectTagsAreEqual(kubeProj *v1alpha1.Project, tags []string) bool {
 	return true
 }
 
-func kubeProjectRequiresCMPUpdate(
-	kubeProj *v1alpha1.Project,
-	cmpProj *arubatypes.ProjectResponse,
-) (*arubatypes.ProjectRequest, bool, error) {
-	request := cmpProjectRequestFromResponse(cmpProj)
-
-	//
-	// Updating cases
-	//
-	// We allow the reconciliation to continue when we find the first valid
-	// case
-
-	if kubeProj.Spec.Description != *cmpProj.Properties.Description ||
-		!kubeProjectTagsAreEqual(kubeProj, request.Metadata.Tags) {
-		// Return desired state from Kube spec for the update (not current API state)
-		return cmpProjectRequestFromKube(kubeProj), true, nil
-	}
-
-	// If we do not find any allowed updating condition, so we signal the
-	// caller to not proceed the reconciliation
-	return nil, false, nil
-}
-
 func kubeProjectNeedsUpdate(kubeProj *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) bool {
 	return !kubeProjectTagsAreEqual(kubeProj, cmpProj.Metadata.Tags) ||
 		kubeProj.Spec.Description != *cmpProj.Properties.Description

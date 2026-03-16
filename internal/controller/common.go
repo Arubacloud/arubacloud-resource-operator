@@ -15,6 +15,7 @@ const (
 	CSPResourceStateCreating     string = "Creating"
 	CSPResourceStateUpdating     string = "Updating"
 	CSPResourceStateDeleting     string = "Deleting"
+	CSPResourceStateDeleted      string = "Deleted"
 	CSPResourceStateProvisioning string = "Provisioning"
 	CSPResourceStateActive       string = "Active"
 	CSPResourceStateNotUsed      string = "NotUsed"

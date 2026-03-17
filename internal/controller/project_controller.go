@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"slices"
 
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -191,33 +192,47 @@ func (r *ProjectReconciler) kubeSetUpdating(ctx context.Context, kubeProj *v1alp
 }
 
 func (r *ProjectReconciler) kubeSetCreatingAndUnsetID(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
-	kubeProjCopy := kubeProj.DeepCopy()
-	kubeProjCopy.Status.Phase = v1alpha1.ResourcePhaseCreating
-	kubeProjCopy.Status.ResourceID = ""
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		kubeProjCopy := kubeProj.DeepCopy()
 
-	if err := r.Status().Patch(ctx, kubeProjCopy, client.MergeFrom(kubeProj)); err != nil {
-		return fmt.Errorf(
-			"failed to update project '%s/%s' state to '%v': %w",
-			kubeProjCopy.Namespace, kubeProjCopy.Name, v1alpha1.ResourcePhaseCreating, err,
-		)
-	}
+		if err := r.Get(ctx, client.ObjectKeyFromObject(kubeProjCopy), kubeProjCopy); err != nil {
+			return err
+		}
 
-	return nil
+		kubeProjCopy.Status.Phase = v1alpha1.ResourcePhaseCreating
+		kubeProjCopy.Status.ResourceID = ""
+
+		if err := r.Status().Patch(ctx, kubeProjCopy, client.MergeFrom(kubeProj)); err != nil {
+			return fmt.Errorf(
+				"failed to update project '%s/%s' state to '%v': %w",
+				kubeProjCopy.Namespace, kubeProjCopy.Name, v1alpha1.ResourcePhaseCreating, err,
+			)
+		}
+
+		return nil
+	})
 }
 
 func (r *ProjectReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeProj *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) error {
-	kubeProjCopy := kubeProj.DeepCopy()
-	kubeProjCopy.Status.Phase = v1alpha1.ResourcePhaseActive
-	kubeProjCopy.Status.ResourceID = *cmpProj.Metadata.ID
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		kubeProjCopy := kubeProj.DeepCopy()
 
-	if err := r.Status().Patch(ctx, kubeProjCopy, client.MergeFrom(kubeProj)); err != nil {
-		return fmt.Errorf(
-			"failed to update project '%s/%s' state to '%v': %w",
-			kubeProjCopy.Namespace, kubeProjCopy.Name, v1alpha1.ResourcePhaseActive, err,
-		)
-	}
+		if err := r.Get(ctx, client.ObjectKeyFromObject(kubeProjCopy), kubeProjCopy); err != nil {
+			return err
+		}
 
-	return nil
+		kubeProjCopy.Status.Phase = v1alpha1.ResourcePhaseActive
+		kubeProjCopy.Status.ResourceID = *cmpProj.Metadata.ID
+
+		if err := r.Status().Patch(ctx, kubeProjCopy, client.MergeFrom(kubeProj)); err != nil {
+			return fmt.Errorf(
+				"failed to update project '%s/%s' state to '%v': %w",
+				kubeProjCopy.Namespace, kubeProjCopy.Name, v1alpha1.ResourcePhaseActive, err,
+			)
+		}
+
+		return nil
+	})
 }
 
 // Kubernetes Action On Errors
@@ -470,17 +485,24 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 // Helper Functions
 
 func (r *ProjectReconciler) kubeSetState(ctx context.Context, kubeProj *v1alpha1.Project, state v1alpha1.ResourcePhase) error {
-	kubeProjCopy := kubeProj.DeepCopy()
-	kubeProjCopy.Status.Phase = state
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		kubeProjCopy := kubeProj.DeepCopy()
 
-	if err := r.Status().Patch(ctx, kubeProjCopy, client.MergeFrom(kubeProj)); err != nil {
-		return fmt.Errorf(
-			"failed to update project '%s/%s' state to '%v': %w",
-			kubeProjCopy.Namespace, kubeProjCopy.Name, state, err,
-		)
-	}
+		if err := r.Get(ctx, client.ObjectKeyFromObject(kubeProjCopy), kubeProjCopy); err != nil {
+			return err
+		}
 
-	return nil
+		kubeProjCopy.Status.Phase = state
+
+		if err := r.Status().Patch(ctx, kubeProjCopy, client.MergeFrom(kubeProj)); err != nil {
+			return fmt.Errorf(
+				"failed to update project '%s/%s' state to '%v': %w",
+				kubeProjCopy.Namespace, kubeProjCopy.Name, state, err,
+			)
+		}
+
+		return nil
+	})
 }
 
 func cmpProjectRequestFromKube(kubeProj *v1alpha1.Project) *arubatypes.ProjectRequest {

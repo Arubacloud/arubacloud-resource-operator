@@ -24,6 +24,7 @@ import (
 	"slices"
 	"strings"
 
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -303,17 +304,25 @@ func cmpBlockStorageIsFinalForUpdate(_ *v1alpha1.BlockStorage, cmpBS *arubatypes
 // Kubernetes Actions
 
 func (r *BlockStorageReconciler) kubeSetState(ctx context.Context, kubeBS *v1alpha1.BlockStorage, state v1alpha1.ResourcePhase) error {
-	kubeBSCopy := kubeBS.DeepCopy()
-	kubeBSCopy.Status.Phase = state
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		kubeBSCopy := kubeBS.DeepCopy()
 
-	if prjID, ok := ctx.Value(projectIDKey).(string); ok {
-		kubeBSCopy.Status.ProjectID = prjID
-	}
+		if err := r.Get(ctx, client.ObjectKeyFromObject(kubeBSCopy), kubeBSCopy); err != nil {
+			return err
+		}
 
-	if err := r.Status().Patch(ctx, kubeBSCopy, client.MergeFrom(kubeBS)); err != nil {
-		return fmt.Errorf("failed to update blockstorage '%s/%s' state to '%v': %w", kubeBSCopy.Namespace, kubeBSCopy.Name, state, err)
-	}
-	return nil
+		kubeBSCopy.Status.Phase = state
+
+		if prjID, ok := ctx.Value(projectIDKey).(string); ok {
+			kubeBSCopy.Status.ProjectID = prjID
+		}
+
+		if err := r.Status().Patch(ctx, kubeBSCopy, client.MergeFrom(kubeBS)); err != nil {
+			return fmt.Errorf("failed to update blockstorage '%s/%s' state to '%v': %w", kubeBSCopy.Namespace, kubeBSCopy.Name, state, err)
+		}
+
+		return nil
+	})
 }
 
 func (r *BlockStorageReconciler) kubeSetDeleting(ctx context.Context, kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {
@@ -333,52 +342,75 @@ func (r *BlockStorageReconciler) kubeSetUpdating(ctx context.Context, kubeBS *v1
 }
 
 func (r *BlockStorageReconciler) kubeSetCreatingAndUnsetID(ctx context.Context, kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {
-	kubeBSCopy := kubeBS.DeepCopy()
-	kubeBSCopy.Status.Phase = v1alpha1.ResourcePhaseCreating
-	kubeBSCopy.Status.ResourceID = ""
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		kubeBSCopy := kubeBS.DeepCopy()
 
-	if prjID, ok := ctx.Value(projectIDKey).(string); ok {
-		kubeBSCopy.Status.ProjectID = prjID
-	}
+		if err := r.Get(ctx, client.ObjectKeyFromObject(kubeBSCopy), kubeBSCopy); err != nil {
+			return err
+		}
 
-	if err := r.Status().Patch(ctx, kubeBSCopy, client.MergeFrom(kubeBS)); err != nil {
-		return fmt.Errorf("failed to update blockstorage '%s/%s' state to '%v': %w", kubeBSCopy.Namespace, kubeBSCopy.Name, v1alpha1.ResourcePhaseCreating, err)
-	}
-	return nil
+		kubeBSCopy.Status.Phase = v1alpha1.ResourcePhaseCreating
+		kubeBSCopy.Status.ResourceID = ""
+
+		if prjID, ok := ctx.Value(projectIDKey).(string); ok {
+			kubeBSCopy.Status.ProjectID = prjID
+		}
+
+		if err := r.Status().Patch(ctx, kubeBSCopy, client.MergeFrom(kubeBS)); err != nil {
+			return fmt.Errorf("failed to update blockstorage '%s/%s' state to '%v': %w", kubeBSCopy.Namespace, kubeBSCopy.Name, v1alpha1.ResourcePhaseCreating, err)
+		}
+
+		return nil
+	})
 }
 
 func (r *BlockStorageReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeBS *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockStorageResponse) error {
-	kubeBSCopy := kubeBS.DeepCopy()
-	kubeBSCopy.Status.Phase = v1alpha1.ResourcePhaseActive
-	if cmpBS != nil {
-		kubeBSCopy.Status.ResourceID = *cmpBS.Metadata.ID
-	}
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		kubeBSCopy := kubeBS.DeepCopy()
 
-	if prjID, ok := ctx.Value(projectIDKey).(string); ok {
-		kubeBSCopy.Status.ProjectID = prjID
-	}
+		if err := r.Get(ctx, client.ObjectKeyFromObject(kubeBSCopy), kubeBSCopy); err != nil {
+			return err
+		}
 
-	if err := r.Status().Patch(ctx, kubeBSCopy, client.MergeFrom(kubeBS)); err != nil {
-		return fmt.Errorf("failed to update blockstorage '%s/%s' state to '%v': %w", kubeBSCopy.Namespace, kubeBSCopy.Name, v1alpha1.ResourcePhaseActive, err)
-	}
-	return nil
+		kubeBSCopy.Status.Phase = v1alpha1.ResourcePhaseActive
+		if cmpBS != nil {
+			kubeBSCopy.Status.ResourceID = *cmpBS.Metadata.ID
+		}
+
+		if prjID, ok := ctx.Value(projectIDKey).(string); ok {
+			kubeBSCopy.Status.ProjectID = prjID
+		}
+
+		if err := r.Status().Patch(ctx, kubeBSCopy, client.MergeFrom(kubeBS)); err != nil {
+			return fmt.Errorf("failed to update blockstorage '%s/%s' state to '%v': %w", kubeBSCopy.Namespace, kubeBSCopy.Name, v1alpha1.ResourcePhaseActive, err)
+		}
+
+		return nil
+	})
 }
 
 func (r *BlockStorageReconciler) kubeSetCreatingAndSetID(ctx context.Context, kubeBS *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockStorageResponse) error {
-	kubeBSCopy := kubeBS.DeepCopy()
-	kubeBSCopy.Status.Phase = v1alpha1.ResourcePhaseCreating
-	if cmpBS != nil {
-		kubeBSCopy.Status.ResourceID = *cmpBS.Metadata.ID
-	}
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		kubeBSCopy := kubeBS.DeepCopy()
 
-	if prjID, ok := ctx.Value(projectIDKey).(string); ok {
-		kubeBSCopy.Status.ProjectID = prjID
-	}
+		if err := r.Get(ctx, client.ObjectKeyFromObject(kubeBSCopy), kubeBSCopy); err != nil {
+			return err
+		}
 
-	if err := r.Status().Patch(ctx, kubeBSCopy, client.MergeFrom(kubeBS)); err != nil {
-		return fmt.Errorf("failed to update blockstorage '%s/%s' state to '%v': %w", kubeBSCopy.Namespace, kubeBSCopy.Name, v1alpha1.ResourcePhaseCreating, err)
-	}
-	return nil
+		kubeBSCopy.Status.Phase = v1alpha1.ResourcePhaseCreating
+		if cmpBS != nil {
+			kubeBSCopy.Status.ResourceID = *cmpBS.Metadata.ID
+		}
+
+		if prjID, ok := ctx.Value(projectIDKey).(string); ok {
+			kubeBSCopy.Status.ProjectID = prjID
+		}
+
+		if err := r.Status().Patch(ctx, kubeBSCopy, client.MergeFrom(kubeBS)); err != nil {
+			return fmt.Errorf("failed to update blockstorage '%s/%s' state to '%v': %w", kubeBSCopy.Namespace, kubeBSCopy.Name, v1alpha1.ResourcePhaseCreating, err)
+		}
+		return nil
+	})
 }
 
 func (r *BlockStorageReconciler) kubeSetFailed(ctx context.Context, kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {

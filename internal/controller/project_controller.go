@@ -118,8 +118,14 @@ func (r *ProjectReconciler) HandleReconcile(ctx context.Context, obj reconciler.
 
 func kubeProjectShouldDelete(kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) bool {
 	return !kubeProj.DeletionTimestamp.IsZero() &&
+		kubeProj.Status.Phase != v1alpha1.ResourcePhaseWaitingCondition &&
 		kubeProj.Status.Phase != v1alpha1.ResourcePhaseDeleting &&
 		kubeProj.Status.Phase != v1alpha1.ResourcePhaseDeleted
+}
+
+func kubeProjectIsWaitingConditionToDelete(kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) bool {
+	return !kubeProj.DeletionTimestamp.IsZero() &&
+		kubeProj.Status.Phase == v1alpha1.ResourcePhaseWaitingCondition
 }
 
 func kubeProjectIsDeleting(kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) bool {
@@ -194,18 +200,18 @@ func (r *ProjectReconciler) kubeSetUpdating(ctx context.Context, kubeProj *v1alp
 func (r *ProjectReconciler) kubeSetCreatingAndUnsetID(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		kubeProjCopy := kubeProj.DeepCopy()
-
-		if err := r.Get(ctx, client.ObjectKeyFromObject(kubeProjCopy), kubeProjCopy); err != nil {
+		if err := r.Get(ctx, client.ObjectKeyFromObject(kubeProj), kubeProjCopy); err != nil {
 			return err
 		}
 
-		kubeProjCopy.Status.Phase = v1alpha1.ResourcePhaseCreating
-		kubeProjCopy.Status.ResourceID = ""
+		kubeProjPatch := kubeProjCopy.DeepCopy()
+		kubeProjPatch.Status.Phase = v1alpha1.ResourcePhaseCreating
+		kubeProjPatch.Status.ResourceID = ""
 
-		if err := r.Status().Patch(ctx, kubeProjCopy, client.MergeFrom(kubeProj)); err != nil {
+		if err := r.Status().Patch(ctx, kubeProjPatch, client.MergeFrom(kubeProjCopy)); err != nil {
 			return fmt.Errorf(
 				"failed to update project '%s/%s' state to '%v': %w",
-				kubeProjCopy.Namespace, kubeProjCopy.Name, v1alpha1.ResourcePhaseCreating, err,
+				kubeProjPatch.Namespace, kubeProjPatch.Name, v1alpha1.ResourcePhaseCreating, err,
 			)
 		}
 
@@ -216,18 +222,20 @@ func (r *ProjectReconciler) kubeSetCreatingAndUnsetID(ctx context.Context, kubeP
 func (r *ProjectReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeProj *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		kubeProjCopy := kubeProj.DeepCopy()
-
-		if err := r.Get(ctx, client.ObjectKeyFromObject(kubeProjCopy), kubeProjCopy); err != nil {
+		if err := r.Get(ctx, client.ObjectKeyFromObject(kubeProj), kubeProjCopy); err != nil {
 			return err
 		}
 
-		kubeProjCopy.Status.Phase = v1alpha1.ResourcePhaseActive
-		kubeProjCopy.Status.ResourceID = *cmpProj.Metadata.ID
+		kubeProjPatch := kubeProjCopy.DeepCopy()
+		kubeProjPatch.Status.Phase = v1alpha1.ResourcePhaseActive
+		if kubeProjPatch.Status.ResourceID == "" && cmpProj != nil && cmpProj.Metadata.ID != nil {
+			kubeProjPatch.Status.ResourceID = *cmpProj.Metadata.ID
+		}
 
-		if err := r.Status().Patch(ctx, kubeProjCopy, client.MergeFrom(kubeProj)); err != nil {
+		if err := r.Status().Patch(ctx, kubeProjPatch, client.MergeFrom(kubeProjCopy)); err != nil {
 			return fmt.Errorf(
 				"failed to update project '%s/%s' state to '%v': %w",
-				kubeProjCopy.Namespace, kubeProjCopy.Name, v1alpha1.ResourcePhaseActive, err,
+				kubeProjPatch.Namespace, kubeProjPatch.Name, v1alpha1.ResourcePhaseActive, err,
 			)
 		}
 
@@ -237,10 +245,9 @@ func (r *ProjectReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeProj 
 
 // Kubernetes Action On Errors
 
-func (r *ProjectReconciler) ResetDeletingStateOnError(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse, err error) error {
-	log.Printf("error during deleting project '%s/%s': %v, resetting state to 'Active'", kubeProj.Namespace, kubeProj.Name, err)
-	return r.kubeSetState(ctx, kubeProj, v1alpha1.ResourcePhaseActive)
-
+func (r *ProjectReconciler) kubeSetWaitingConditionOnDeletingError(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse, err error) error {
+	log.Printf("error during deleting project '%s/%s': %v, setting state to 'WaitCondition'", kubeProj.Namespace, kubeProj.Name, err)
+	return r.kubeSetState(ctx, kubeProj, v1alpha1.ResourcePhaseWaitingCondition)
 }
 
 // Aruba CMP Project Actions
@@ -347,7 +354,21 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 			aCondition:      cmpProjectExists,
 			kAction:         r.kubeSetDeleting,
 			aAction:         r.cmpDelete,
-			kActionOnAError: r.ResetDeletingStateOnError,
+			kActionOnAError: r.kubeSetWaitingConditionOnDeletingError,
+			requeue:         DefaultRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError:  RequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+		},
+	)
+
+	// Project deletion waiting condition
+	ts.Add(
+		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+			name:            "ProjectDeletionWaitingCondition",
+			kCondition:      kubeProjectIsWaitingConditionToDelete,
+			aCondition:      cmpProjectExists,
+			kAction:         r.kubeSetDeleting,
+			aAction:         r.cmpDelete,
+			kActionOnAError: r.kubeSetWaitingConditionOnDeletingError,
 			requeue:         DefaultRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
 			requeueOnError:  RequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
@@ -363,7 +384,7 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 			aAction:         NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
 			kActionOnAError: NoActionOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 			requeue:         DefaultRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeueOnError:  NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError:  RequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
 	)
 
@@ -487,17 +508,17 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 func (r *ProjectReconciler) kubeSetState(ctx context.Context, kubeProj *v1alpha1.Project, state v1alpha1.ResourcePhase) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		kubeProjCopy := kubeProj.DeepCopy()
-
-		if err := r.Get(ctx, client.ObjectKeyFromObject(kubeProjCopy), kubeProjCopy); err != nil {
+		if err := r.Get(ctx, client.ObjectKeyFromObject(kubeProj), kubeProjCopy); err != nil {
 			return err
 		}
 
-		kubeProjCopy.Status.Phase = state
+		kubeProjPatch := kubeProjCopy.DeepCopy()
+		kubeProjPatch.Status.Phase = state
 
-		if err := r.Status().Patch(ctx, kubeProjCopy, client.MergeFrom(kubeProj)); err != nil {
+		if err := r.Status().Patch(ctx, kubeProjPatch, client.MergeFrom(kubeProjCopy)); err != nil {
 			return fmt.Errorf(
 				"failed to update project '%s/%s' state to '%v': %w",
-				kubeProjCopy.Namespace, kubeProjCopy.Name, state, err,
+				kubeProjPatch.Namespace, kubeProjPatch.Name, state, err,
 			)
 		}
 

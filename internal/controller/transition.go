@@ -204,7 +204,7 @@ func (s *TransitionSet[K, A]) DefaultAction(ctx context.Context, k K, a A) error
 			return fmt.Errorf("%w when reacting to error: %w", nestedErr, err)
 		}
 
-		return nil
+		return err
 	}
 
 	return nil
@@ -216,6 +216,7 @@ func (s *TransitionSet[K, A]) DefaultAction(ctx context.Context, k K, a A) error
 func (s *TransitionSet[K, A]) Run(ctx context.Context, k K, a A) (ctrl.Result, error) {
 	for _, t := range s.transitions {
 		if t.Condition(k, a) {
+			log.Printf("transition met condition: name: '%s'", t.Name()) // TODO: better logging
 			if err := t.Action(ctx, k, a); err != nil {
 				log.Printf("transition error: name: '%s', err: '%v'", t.Name(), err) // TODO: better logging
 				return t.RequeueOnError(k, a, err)

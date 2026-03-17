@@ -26,6 +26,8 @@ const (
 	ResourcePhaseCreating ResourcePhase = "Creating"
 	// ResourcePhaseProvisioning indicates the resource is being provisioned remotely
 	ResourcePhaseProvisioning ResourcePhase = "Provisioning"
+	// ResourcePhaseWaitingCondition indicates the resource is waiting for some particular condition
+	ResourcePhaseWaitingCondition ResourcePhase = "WaitingCondition"
 	// ResourcePhaseActive indicates the resource has been created successfully
 	ResourcePhaseActive ResourcePhase = "Active"
 	// ResourcePhaseUpdating indicates the resource is being updated

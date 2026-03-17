@@ -478,7 +478,7 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		defaultAAction:         NoAction[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 		defaultKActionOnAError: NoActionOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 		defaultRequeue:         DefaultRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		defaultRequeueOnError:  DefaultRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		defaultRequeueOnError:  RequeueAndIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	}
 
 	// 1. BlockStorageShouldBeDeleted
@@ -490,7 +490,7 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		aAction:         r.cmpDelete,
 		kActionOnAError: NoActionOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 		requeue:         DefaultRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		requeueOnError:  DefaultRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError:  RequeueAndIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
 	// 2. BlockStorageDeletingInProgress
@@ -502,7 +502,7 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		aAction:         NoAction[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 		kActionOnAError: NoActionOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 		requeue:         DefaultRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		requeueOnError:  NoRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError:  NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
 	// 3. BlockStorageDeletionAccomplishedInCMP
@@ -514,7 +514,7 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		aAction:         NoAction[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 		kActionOnAError: NoActionOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 		requeue:         DefaultRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		requeueOnError:  NoRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError:  NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
 	// 3.bis BlockStorageDeletionAccomplished
@@ -526,7 +526,7 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		aAction:         NoAction[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 		kActionOnAError: NoActionOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 		requeue:         NoRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		requeueOnError:  NoRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError:  NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
 	// 4. BlockStorageDoesNotExistsInBoth
@@ -538,7 +538,7 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		aAction:         r.cmpCreate,
 		kActionOnAError: r.kubeSetFailedOn400,
 		requeue:         DefaultRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		requeueOnError:  DefaultRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError:  RequeueAndIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
 	// 5. BlockStorageDoesNotExistsInCMP
@@ -550,7 +550,7 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		aAction:         r.cmpCreate,
 		kActionOnAError: NoActionOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 		requeue:         DefaultRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		requeueOnError:  DefaultRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError:  RequeueAndIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
 	// 6. BlockStorageWasRemovedFromCMP
@@ -562,7 +562,7 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		aAction:         r.cmpCreate,
 		kActionOnAError: r.kubeSetFailedOn400,
 		requeue:         DefaultRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		requeueOnError:  DefaultRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError:  RequeueAndIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
 	// 7. BlockStorageCreationInProgress
@@ -574,7 +574,7 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		aAction:         NoAction[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 		kActionOnAError: NoActionOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 		requeue:         DefaultRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		requeueOnError:  DefaultRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError:  RequeueAndIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
 	// 8. BlockStorageIsActive
@@ -586,7 +586,7 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		aAction:         NoAction[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 		kActionOnAError: NoActionOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 		requeue:         NoRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		requeueOnError:  DefaultRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError:  RequeueAndIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
 	// 9. BlockStorageIsInError
@@ -598,7 +598,7 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		aAction:         NoAction[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 		kActionOnAError: NoActionOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 		requeue:         NoRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		requeueOnError:  NoRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError:  NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
 	// 9b. BlockStorageHasDeniedChanges (intercept before BlockStorageShouldBeUpdated to surface the error)
@@ -612,7 +612,7 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		aAction:         NoAction[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 		kActionOnAError: NoActionOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 		requeue:         NoRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse], // Don't requeue if denied changes
-		requeueOnError:  DefaultRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError:  RequeueAndIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
 	// 10. BlockStorageShouldBeUpdated
@@ -624,7 +624,7 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		aAction:         r.cmpUpdate,
 		kActionOnAError: NoActionOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 		requeue:         DefaultRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		requeueOnError:  DefaultRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError:  RequeueAndIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
 	// 11. BlockStorageUpdatingInProgress
@@ -636,7 +636,7 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		aAction:         NoAction[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 		kActionOnAError: NoActionOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 		requeue:         DefaultRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		requeueOnError:  DefaultRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError:  RequeueAndIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
 	// 12. BlockStorageUpdated
@@ -648,7 +648,7 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		aAction:         NoAction[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 		kActionOnAError: NoActionOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 		requeue:         NoRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		requeueOnError:  DefaultRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError:  RequeueAndIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
 	return ts

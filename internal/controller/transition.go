@@ -49,17 +49,23 @@ func NoRequeue[K, A any](_ K, _ A) ctrl.Result { return ctrl.Result{} }
 
 // RequeueOnErrorFunc defines a function signature to determine the controller
 // requeue behavior after an error occurs during a transition.
-type RequeueOnErrorFunc[K, A any] func(k K, a A, err error) ctrl.Result
+type RequeueOnErrorFunc[K, A any] func(k K, a A, err error) (ctrl.Result, error)
 
-// DefaultRequeueOnError is a RequeueOnErrorFunc that returns a ctrl.Result
+// RequeueAndIgnoreError is a RequeueOnErrorFunc that returns a ctrl.Result
 // configured with the default requeue delay defined in the reconciler package.
-func DefaultRequeueOnError[K, A any](_ K, _ A, _ error) ctrl.Result {
-	return ctrl.Result{RequeueAfter: reconciler.RequeueAfter}
+func RequeueAndIgnoreError[K, A any](_ K, _ A, _ error) (ctrl.Result, error) {
+	return ctrl.Result{RequeueAfter: reconciler.RequeueAfter}, nil
 }
 
-// NoRequeueOnError is a RequeueOnErrorFunc that returns an empty ctrl.Result,
+// NoRequeueButIgnoreError is a RequeueOnErrorFunc that returns an empty ctrl.Result,
 // indicating that the request should not be requeued despite the error.
-func NoRequeueOnError[K, A any](_ K, _ A, _ error) ctrl.Result { return ctrl.Result{} }
+func NoRequeueButIgnoreError[K, A any](_ K, _ A, _ error) (ctrl.Result, error) {
+	return ctrl.Result{}, nil
+}
+
+func NoRequeueAndPropagateError[K, A any](_ K, _ A, err error) (ctrl.Result, error) {
+	return ctrl.Result{}, err
+}
 
 // Transition defines the interface for a state transition step in the reconciliation loop.
 // It dictates when the transition should occur and what actions should be performed.
@@ -80,7 +86,7 @@ type Transition[K, A any] interface {
 	// Requeue determines the requeue result upon successful completion of the transition.
 	Requeue(k K, a A) ctrl.Result
 	// RequeueOnError determines the requeue result when an error occurs during the transition.
-	RequeueOnError(k K, a A, err error) ctrl.Result
+	RequeueOnError(k K, a A, err error) (ctrl.Result, error)
 }
 
 // AbstractTransition is a concrete implementation of the Transition interface.
@@ -161,7 +167,7 @@ func (t *AbstractTransition[K, A]) Requeue(k K, a A) ctrl.Result {
 }
 
 // RequeueOnError calls the configured requeueOnError func to determine the ctrl.Result upon error.
-func (t *AbstractTransition[K, A]) RequeueOnError(k K, a A, err error) ctrl.Result {
+func (t *AbstractTransition[K, A]) RequeueOnError(k K, a A, err error) (ctrl.Result, error) {
 	return t.requeueOnError(k, a, err)
 }
 
@@ -212,7 +218,7 @@ func (s *TransitionSet[K, A]) Run(ctx context.Context, k K, a A) (ctrl.Result, e
 		if t.Condition(k, a) {
 			if err := t.Action(ctx, k, a); err != nil {
 				log.Printf("transition error: name: '%s', err: '%v'", t.Name(), err) // TODO: better logging
-				return t.RequeueOnError(k, a, err), nil
+				return t.RequeueOnError(k, a, err)
 			}
 
 			log.Printf("transition succeed: name: '%s'", t.Name()) // TODO: better logging
@@ -222,7 +228,7 @@ func (s *TransitionSet[K, A]) Run(ctx context.Context, k K, a A) (ctrl.Result, e
 
 	// For the case which no transition gives condition we run the default actions
 	if err := s.DefaultAction(ctx, k, a); err != nil {
-		return s.defaultRequeueOnError(k, a, err), nil
+		return s.defaultRequeueOnError(k, a, err)
 	}
 
 	return s.defaultRequeue(k, a), nil

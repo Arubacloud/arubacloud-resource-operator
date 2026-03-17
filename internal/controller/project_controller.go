@@ -321,7 +321,7 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 		defaultAAction:         NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		defaultKActionOnAError: NoActionOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		defaultRequeue:         NoRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-		defaultRequeueOnError:  NoRequeueOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+		defaultRequeueOnError:  NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 	}
 
 	// Project should be deleted
@@ -334,7 +334,7 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 			aAction:         r.cmpDelete,
 			kActionOnAError: r.ResetDeletingStateOnError,
 			requeue:         DefaultRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeueOnError:  DefaultRequeueOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError:  RequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
 	)
 
@@ -348,7 +348,7 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 			aAction:         NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
 			kActionOnAError: NoActionOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 			requeue:         DefaultRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeueOnError:  NoRequeueOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError:  NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
 	)
 
@@ -362,7 +362,7 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 			aAction:         NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
 			kActionOnAError: NoActionOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 			requeue:         NoRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeueOnError:  NoRequeueOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError:  NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
 	)
 
@@ -376,7 +376,7 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 			aAction:         r.cmpCreate,
 			kActionOnAError: NoActionOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 			requeue:         DefaultRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeueOnError:  DefaultRequeueOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError:  RequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
 	)
 
@@ -390,7 +390,7 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 			aAction:         r.cmpCreate,
 			kActionOnAError: NoActionOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 			requeue:         DefaultRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeueOnError:  DefaultRequeueOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError:  RequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
 	)
 
@@ -404,7 +404,7 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 			aAction:         r.cmpCreate,
 			kActionOnAError: NoActionOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 			requeue:         DefaultRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeueOnError:  DefaultRequeueOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError:  RequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
 	)
 
@@ -418,7 +418,7 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 			aAction:         NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
 			kActionOnAError: NoActionOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 			requeue:         NoRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeueOnError:  DefaultRequeueOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError:  RequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
 	)
 
@@ -432,7 +432,7 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 			aAction:         r.cmpUpdate,
 			kActionOnAError: NoActionOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 			requeue:         DefaultRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeueOnError:  DefaultRequeueOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError:  RequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
 	)
 
@@ -446,7 +446,7 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 			aAction:         NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
 			kActionOnAError: NoActionOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 			requeue:         DefaultRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeueOnError:  DefaultRequeueOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError:  RequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
 	)
 
@@ -460,7 +460,7 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 			aAction:         NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
 			kActionOnAError: NoActionOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 			requeue:         NoRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeueOnError:  DefaultRequeueOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError:  RequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
 	)
 

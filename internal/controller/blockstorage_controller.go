@@ -183,6 +183,11 @@ func kubeBlockStorageIsDeleting(kubeBS *v1alpha1.BlockStorage, _ *arubatypes.Blo
 		kubeBS.Status.Phase == v1alpha1.ResourcePhaseDeleting
 }
 
+func kubeBlockStorageIsDeleted(kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) bool {
+	return !kubeBS.DeletionTimestamp.IsZero() &&
+		kubeBS.Status.Phase == v1alpha1.ResourcePhaseDeleted
+}
+
 func kubeBlockStorageNotExists(kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) bool {
 	return kubeBS.DeletionTimestamp.IsZero() &&
 		kubeBS.Status.Phase == "" &&
@@ -500,12 +505,24 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		requeueOnError:  NoRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
-	// 3. ResourceDeletionAccomplished
+	// 3. ResourceDeletionAccomplishedInCMP
 	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
-		name:            "ResourceDeletionAccomplished",
+		name:            "ResourceDeletionAccomplishedInCMP",
 		kCondition:      kubeBlockStorageIsDeleting,
 		aCondition:      cmpBlockStorageNotExists,
 		kAction:         r.kubeSetDeleted,
+		aAction:         NoAction[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		kActionOnAError: NoActionOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeue:         DefaultRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError:  NoRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
+
+	// 3.bis ResourceDeletionAccomplished
+	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		name:            "ResourceDeletionAccomplished",
+		kCondition:      kubeBlockStorageIsDeleted,
+		aCondition:      cmpBlockStorageNotExists,
+		kAction:         NoAction[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 		aAction:         NoAction[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 		kActionOnAError: NoActionOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 		requeue:         NoRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
@@ -586,9 +603,9 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 
 	// 9b. ResourceHasDeniedChanges (intercept before ResourceShouldBeUpdated to surface the error)
 	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
-		name:            "ResourceHasDeniedChanges",
-		kCondition:      kubeBlockStorageHasDeniedChanges,
-		aCondition:      AlwaysTrue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		name:       "ResourceHasDeniedChanges",
+		kCondition: kubeBlockStorageHasDeniedChanges,
+		aCondition: AlwaysTrue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 		kAction: func(ctx context.Context, kubeBS *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockStorageResponse) error {
 			return fmt.Errorf("failed to convert and check blockstorage: %w", checkBlockStorageDeniedChanges(kubeBS, cmpBS))
 		},

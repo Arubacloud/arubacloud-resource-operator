@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -86,58 +87,76 @@ func NewReconciler(mgr ctrl.Manager, cfg ReconcilerConfig) *Reconciler {
 
 // Reconcile handles the common reconciliation logic for all resources
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request, resourceReconciler ResourceReconciler) (ctrl.Result, error) {
+	var result ctrl.Result
 
-	// 1 - Get the object from Kubernetes
+	// 1 - Make sure that the finalizers are in place when resource is not
+	//     being deleteing
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		obj, err := r.getResource(ctx, req, resourceReconciler.Object())
+		if obj == nil || err != nil {
+			return err
+		}
+
+		if obj.GetDeletionTimestamp().IsZero() && !slices.Contains(obj.GetFinalizers(), resourceReconciler.Finalizer()) {
+			obj.SetFinalizers(append(obj.GetFinalizers(), resourceReconciler.Finalizer()))
+			if err := r.Update(ctx, obj); err != nil {
+				// The reconcile loop ends in error when it's not possible to set
+				// the finalizar
+				return err
+			}
+
+			// The reconciliation is requeued after the finalizer have been set
+			result = ctrl.Result{RequeueAfter: 1 * time.Second}
+			return nil // TODO: better RequeueAfter management
+		}
+
+		return nil
+	})
+	if err != nil {
+		return ctrl.Result{}, err
+	} else if !result.IsZero() {
+		return result, nil
+	}
+
+	// 2 - Call the specific resource reconciler to handle the details of the
+	//     reconciliation and the phase drifting
 	obj, err := r.getResource(ctx, req, resourceReconciler.Object())
 	if obj == nil || err != nil {
 		return ctrl.Result{}, err
 	}
 
-	// 2 - Make sure that the finalizers are in place when resource is not
-	//     being deleteing
-	finalizer := resourceReconciler.Finalizer()
-	if obj.GetDeletionTimestamp().IsZero() && !slices.Contains(obj.GetFinalizers(), finalizer) {
-		obj.SetFinalizers(append(obj.GetFinalizers(), finalizer))
-		if err := r.Update(ctx, obj); err != nil {
-			// The reconcile loop ends in error when it's not possible to set
-			// the finalizar
-			return ctrl.Result{}, err
-		}
-
-		// The reconciliation is requeued after the finalizer have been set
-		return ctrl.Result{RequeueAfter: 1 * time.Second}, nil // TODO: better RequeueAfter management
-	}
-
-	// 3 - Call the specific resource reconciler to handle the details of the
-	//     reconciliation and the phase drifting
-
-	result, err := resourceReconciler.HandleReconcile(ctx, obj)
+	result, err = resourceReconciler.HandleReconcile(ctx, obj)
 	if err != nil {
-		return result, err
+		return ctrl.Result{}, err
 	} else if !result.IsZero() {
 		return result, nil
 	}
 
-	// 4 - Refresh the resource
-	obj, err = r.getResource(ctx, req, resourceReconciler.Object())
-	if obj == nil || err != nil {
-		return ctrl.Result{}, err
-	}
-
-	// 5 - Get the status from the object
-	status := obj.GetResourceStatus()
-
-	// 6 - Handle de deletion case by removing the finalizer
-	if !obj.GetDeletionTimestamp().IsZero() &&
-		status != nil &&
-		status.Phase == v1alpha1.ResourcePhaseDeleted &&
-		slices.Contains(obj.GetFinalizers(), finalizer) {
-		obj.SetFinalizers(slices.DeleteFunc(obj.GetFinalizers(), func(v string) bool {
-			return strings.EqualFold(v, finalizer)
-		}))
-		if err := r.Update(ctx, obj); err != nil {
-			return ctrl.Result{}, err
+	// 3 - Handle de deletion case by removing the finalizer
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		obj, err := r.getResource(ctx, req, resourceReconciler.Object())
+		if obj == nil || err != nil {
+			return err
 		}
+
+		status := obj.GetResourceStatus()
+
+		if !obj.GetDeletionTimestamp().IsZero() &&
+			status != nil &&
+			status.Phase == v1alpha1.ResourcePhaseDeleted &&
+			slices.Contains(obj.GetFinalizers(), resourceReconciler.Finalizer()) {
+			obj.SetFinalizers(slices.DeleteFunc(obj.GetFinalizers(), func(v string) bool {
+				return strings.EqualFold(v, resourceReconciler.Finalizer())
+			}))
+			if err := r.Update(ctx, obj); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		return ctrl.Result{}, err
 	}
 
 	return ctrl.Result{}, nil

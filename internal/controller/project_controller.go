@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"slices"
 
@@ -219,6 +220,14 @@ func (r *ProjectReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeProj 
 	return nil
 }
 
+// Kubernetes Action On Errors
+
+func (r *ProjectReconciler) ResetDeletingStateOnError(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse, err error) error {
+	log.Printf("error during deleting project '%s/%s': %v, resetting state to 'Active'", kubeProj.Namespace, kubeProj.Name, err)
+	return r.kubeSetState(ctx, kubeProj, v1alpha1.ResourcePhaseActive)
+
+}
+
 // Aruba CMP Project Actions
 
 func (r *ProjectReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) error {
@@ -318,12 +327,12 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 	// Project should be deleted
 	ts.Add(
 		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
-			name:            "project_should_be_deleted",
+			name:            "ProjectShouldBeDeleted",
 			kCondition:      kubeProjectShouldDelete,
 			aCondition:      cmpProjectExists,
 			kAction:         r.kubeSetDeleting,
 			aAction:         r.cmpDelete,
-			kActionOnAError: NoActionOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			kActionOnAError: r.ResetDeletingStateOnError,
 			requeue:         DefaultRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
 			requeueOnError:  DefaultRequeueOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
@@ -332,7 +341,7 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 	// Project deletion in progress
 	ts.Add(
 		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
-			name:            "project_deletion_in_progress",
+			name:            "ProjectDeletionInProgress",
 			kCondition:      kubeProjectIsDeleting,
 			aCondition:      cmpProjectExists,
 			kAction:         NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
@@ -346,7 +355,7 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 	// Project deletion accomplished
 	ts.Add(
 		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
-			name:            "project_deletion_accomplished",
+			name:            "ProjectDeletionAccomplished",
 			kCondition:      kubeProjectIsDeleting,
 			aCondition:      cmpProjectNotExists,
 			kAction:         r.kubeSetDeleted,
@@ -360,7 +369,7 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 	// Project does not exists in both
 	ts.Add(
 		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
-			name:            "project_does_not_exists_in_both",
+			name:            "ProjectDoesNotExistInBoth",
 			kCondition:      kubeProjectIsFirstReconciliation,
 			aCondition:      cmpProjectNotExists,
 			kAction:         r.kubeSetCreating,
@@ -374,7 +383,7 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 	// Project does not exists in CMP
 	ts.Add(
 		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
-			name:            "project_does_not_exixts_in_cmp",
+			name:            "ProjectDoesNotExistInCMP",
 			kCondition:      kubeProjectIsCreating,
 			aCondition:      cmpProjectNotExists,
 			kAction:         NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
@@ -388,7 +397,7 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 	// Project existed but was removed in CMP
 	ts.Add(
 		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
-			name:            "project_existed_but_was_removed_from_cmp",
+			name:            "ProjectExistedButWasRemovedFromCMP",
 			kCondition:      kubeProjectWasRemoved,
 			aCondition:      cmpProjectNotExists,
 			kAction:         r.kubeSetCreatingAndUnsetID,
@@ -402,7 +411,7 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 	// Project creation accomplished
 	ts.Add(
 		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
-			name:            "project_creation_accomplished",
+			name:            "ProjectCreationAccomplished",
 			kCondition:      kubeProjectIsCreating,
 			aCondition:      cmpProjectExists,
 			kAction:         r.kubeSetActiveAndSetID,
@@ -416,7 +425,7 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 	// Project should be updated
 	ts.Add(
 		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
-			name:            "project_should_be_updated",
+			name:            "ProjectShouldBeUpdated",
 			kCondition:      kubeProjectShouldUpdate,
 			aCondition:      cmpProjectExists,
 			kAction:         r.kubeSetUpdating,
@@ -430,7 +439,7 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 	// Project updating is in progress
 	ts.Add(
 		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
-			name:            "project_updating_in_progress",
+			name:            "ProjectUpdatingInProgress",
 			kCondition:      kubeProjectIsUpdating,
 			aCondition:      cmpProjectExists,
 			kAction:         NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
@@ -444,7 +453,7 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 	// Project updating accomplished
 	ts.Add(
 		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
-			name:            "project_updating_accomplished",
+			name:            "ProjectUpdatingAccomplished",
 			kCondition:      kubeProjectHasUpdated,
 			aCondition:      cmpProjectExists,
 			kAction:         r.kubeSetActiveAndSetID,

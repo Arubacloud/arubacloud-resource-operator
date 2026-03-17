@@ -481,9 +481,9 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		defaultRequeueOnError:  DefaultRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	}
 
-	// 1. ResourceShouldBeDeleted
+	// 1. BlockStorageShouldBeDeleted
 	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
-		name:            "ResourceShouldBeDeleted",
+		name:            "BlockStorageShouldBeDeleted",
 		kCondition:      kubeBlockStorageShouldDelete,
 		aCondition:      cmpBlockStorageIsFinal,
 		kAction:         r.kubeSetDeleting,
@@ -493,9 +493,9 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		requeueOnError:  DefaultRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
-	// 2. ResourceDeletingInProgress
+	// 2. BlockStorageDeletingInProgress
 	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
-		name:            "ResourceDeletingInProgress",
+		name:            "BlockStorageDeletingInProgress",
 		kCondition:      kubeBlockStorageIsDeleting,
 		aCondition:      cmpBlockStorageIsDeleting,
 		kAction:         NoAction[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
@@ -505,9 +505,9 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		requeueOnError:  NoRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
-	// 3. ResourceDeletionAccomplishedInCMP
+	// 3. BlockStorageDeletionAccomplishedInCMP
 	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
-		name:            "ResourceDeletionAccomplishedInCMP",
+		name:            "BlockStorageDeletionAccomplishedInCMP",
 		kCondition:      kubeBlockStorageIsDeleting,
 		aCondition:      cmpBlockStorageNotExists,
 		kAction:         r.kubeSetDeleted,
@@ -517,9 +517,9 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		requeueOnError:  NoRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
-	// 3.bis ResourceDeletionAccomplished
+	// 3.bis BlockStorageDeletionAccomplished
 	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
-		name:            "ResourceDeletionAccomplished",
+		name:            "BlockStorageDeletionAccomplished",
 		kCondition:      kubeBlockStorageIsDeleted,
 		aCondition:      cmpBlockStorageNotExists,
 		kAction:         NoAction[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
@@ -529,9 +529,9 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		requeueOnError:  NoRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
-	// 4. ResourceDoesNotExistsInBoth
+	// 4. BlockStorageDoesNotExistsInBoth
 	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
-		name:            "ResourceDoesNotExistsInBoth",
+		name:            "BlockStorageDoesNotExistsInBoth",
 		kCondition:      kubeBlockStorageNotExists,
 		aCondition:      cmpBlockStorageNotExists,
 		kAction:         r.kubeSetCreating,
@@ -541,9 +541,9 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		requeueOnError:  DefaultRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
-	// 5. ResourceDoesNotExistsInCMP
+	// 5. BlockStorageDoesNotExistsInCMP
 	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
-		name:            "ResourceDoesNotExistsInCMP",
+		name:            "BlockStorageDoesNotExistsInCMP",
 		kCondition:      kubeBlockStorageIsCreating,
 		aCondition:      cmpBlockStorageNotExists,
 		kAction:         NoAction[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
@@ -553,9 +553,9 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		requeueOnError:  DefaultRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
-	// 6. ResourceWasRemovedFromCMP
+	// 6. BlockStorageWasRemovedFromCMP
 	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
-		name:            "ResourceWasRemovedFromCMP",
+		name:            "BlockStorageWasRemovedFromCMP",
 		kCondition:      kubeBlockStorageWasRemoved,
 		aCondition:      cmpBlockStorageNotExists,
 		kAction:         r.kubeSetCreatingAndUnsetID,
@@ -565,9 +565,9 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		requeueOnError:  DefaultRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
-	// 7. ResourceCreationInProgress
+	// 7. BlockStorageCreationInProgress
 	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
-		name:            "ResourceCreationInProgress",
+		name:            "BlockStorageCreationInProgress",
 		kCondition:      kubeBlockStorageIsCreatingInCMP,
 		aCondition:      cmpBlockStorageIsCreating,
 		kAction:         r.kubeSetCreatingAndSetID,
@@ -577,9 +577,9 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		requeueOnError:  DefaultRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
-	// 8. ResourceIsActive
+	// 8. BlockStorageIsActive
 	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
-		name:            "ResourceIsActive",
+		name:            "BlockStorageIsActive",
 		kCondition:      kubeBlockStorageIsActive,
 		aCondition:      cmpBlockStorageIsActive,
 		kAction:         r.kubeSetActiveAndSetID,
@@ -589,9 +589,9 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		requeueOnError:  DefaultRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
-	// 9. ResourceIsInError
+	// 9. BlockStorageIsInError
 	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
-		name:            "ResourceIsInError",
+		name:            "BlockStorageIsInError",
 		kCondition:      AlwaysTrue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 		aCondition:      cmpBlockStorageIsFailed,
 		kAction:         r.kubeSetFailed,
@@ -601,9 +601,9 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		requeueOnError:  NoRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
-	// 9b. ResourceHasDeniedChanges (intercept before ResourceShouldBeUpdated to surface the error)
+	// 9b. BlockStorageHasDeniedChanges (intercept before BlockStorageShouldBeUpdated to surface the error)
 	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
-		name:       "ResourceHasDeniedChanges",
+		name:       "BlockStorageHasDeniedChanges",
 		kCondition: kubeBlockStorageHasDeniedChanges,
 		aCondition: AlwaysTrue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 		kAction: func(ctx context.Context, kubeBS *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockStorageResponse) error {
@@ -615,9 +615,9 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		requeueOnError:  DefaultRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
-	// 10. ResourceShouldBeUpdated
+	// 10. BlockStorageShouldBeUpdated
 	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
-		name:            "ResourceShouldBeUpdated",
+		name:            "BlockStorageShouldBeUpdated",
 		kCondition:      kubeBlockStorageShouldUpdate,
 		aCondition:      cmpBlockStorageIsFinalForUpdate,
 		kAction:         r.kubeSetUpdating,
@@ -627,9 +627,9 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		requeueOnError:  DefaultRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
-	// 11. ResourceUpdatingInProgress
+	// 11. BlockStorageUpdatingInProgress
 	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
-		name:            "ResourceUpdatingInProgress",
+		name:            "BlockStorageUpdatingInProgress",
 		kCondition:      kubeBlockStorageIsUpdating,
 		aCondition:      cmpBlockStorageIsUpdating,
 		kAction:         NoAction[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
@@ -639,9 +639,9 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		requeueOnError:  DefaultRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
-	// 12. ResourceUpdated
+	// 12. BlockStorageUpdated
 	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
-		name:            "ResourceUpdated",
+		name:            "BlockStorageUpdated",
 		kCondition:      kubeBlockStorageHasUpdated,
 		aCondition:      cmpBlockStorageIsActive,
 		kAction:         r.kubeSetActive,

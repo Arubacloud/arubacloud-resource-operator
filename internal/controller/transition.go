@@ -30,8 +30,8 @@ func NoAction[K, A any](ctx context.Context, _ K, _ A) error { return nil }
 type ActionOnErrorFunc[K, A any] func(ctx context.Context, k K, a A, err error) error
 
 // NoActionOnError is an ActionOnErrorFunc that performs no operation
-// when an error occurs and returns nil.
-func NoActionOnError[K, A any](ctx context.Context, _ K, _ A, _ error) error { return nil }
+// when an error occurs and returns the original error.
+func NoActionOnError[K, A any](ctx context.Context, _ K, _ A, err error) error { return err }
 
 // RequeueFunc defines a function signature to determine the controller
 // requeue behavior after a successful transition.
@@ -198,7 +198,7 @@ func (s *TransitionSet[K, A]) DefaultAction(ctx context.Context, k K, a A) error
 			return fmt.Errorf("%w when reacting to error: %w", nestedErr, err)
 		}
 
-		return err
+		return nil
 	}
 
 	return nil
@@ -212,7 +212,7 @@ func (s *TransitionSet[K, A]) Run(ctx context.Context, k K, a A) (ctrl.Result, e
 		if t.Condition(k, a) {
 			if err := t.Action(ctx, k, a); err != nil {
 				log.Printf("transition error: name: '%s', err: '%v'", t.Name(), err) // TODO: better logging
-				return t.RequeueOnError(k, a, err), err
+				return t.RequeueOnError(k, a, err), nil
 			}
 
 			log.Printf("transition succeed: name: '%s'", t.Name()) // TODO: better logging
@@ -222,7 +222,7 @@ func (s *TransitionSet[K, A]) Run(ctx context.Context, k K, a A) (ctrl.Result, e
 
 	// For the case which no transition gives condition we run the default actions
 	if err := s.DefaultAction(ctx, k, a); err != nil {
-		return s.defaultRequeueOnError(k, a, err), err
+		return s.defaultRequeueOnError(k, a, err), nil
 	}
 
 	return s.defaultRequeue(k, a), nil

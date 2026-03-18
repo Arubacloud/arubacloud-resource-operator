@@ -23,7 +23,6 @@ import (
 	"net/http"
 	"slices"
 
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -164,7 +163,7 @@ func kubeProjectCreatedConfirmedOnCMP(kubeProj *v1alpha1.Project, _ *arubatypes.
 	return kubeProj.DeletionTimestamp.IsZero() &&
 		kubeProj.Status.Phase == v1alpha1.ResourcePhaseCreating &&
 		len(kubeProj.Status.Conditions) > 0 &&
-		kubeProj.Status.Conditions[len(kubeProj.Status.Conditions)-1].Type == v1alpha1.ConditionTypeShallSynchronize &&
+		kubeProj.Status.Conditions[len(kubeProj.Status.Conditions)-1].Type == v1alpha1.ConditionTypeSynchronizing &&
 		kubeProj.Status.ResourceID == ""
 }
 
@@ -278,6 +277,17 @@ func (r *ProjectReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeProj 
 		if kubeProjPatch.Status.ResourceID == "" && cmpProj != nil && cmpProj.Metadata.ID != nil {
 			kubeProjPatch.Status.ResourceID = *cmpProj.Metadata.ID
 		}
+
+		kubeProjPatch.Status.Conditions = append(
+			kubeProjPatch.Status.Conditions,
+			metav1.Condition{
+				Type:               v1alpha1.ConditionTypeSynchronized,
+				Status:             metav1.ConditionTrue,
+				Reason:             fmt.Sprintf("%s%s", string(v1alpha1.ResourcePhaseActive), v1alpha1.ConditionTypeSynchronized),
+				Message:            fmt.Sprintf("Phase: '%s', ConditionType: '%s'", string(v1alpha1.ResourcePhaseActive), v1alpha1.ConditionTypeSynchronized),
+				LastTransitionTime: metav1.Now(),
+			},
+		)
 
 		if err := r.Status().Patch(ctx, kubeProjPatch, client.MergeFrom(kubeProjCopy)); err != nil {
 			return fmt.Errorf(
@@ -477,33 +487,33 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 			aAction:           r.cmpCreate,
 			kActionOnASuccess: r.kubeMarkCreating,
 			kActionOnAError:   r.kubeMarkToCreateOnCreationError,
-			requeue:           LongRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeueOnError:    LongRequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeue:           ShortRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError:    ShortRequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
 	)
 
-	// Project existed but was removed in CMP
-	ts.Add(
-		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
-			name:            "ProjectExistedButWasRemovedFromCMP",
-			kCondition:      kubeProjectWasRemoved,
-			aCondition:      cmpProjectNotExists,
-			kAction:         r.kubeSetCreatingAndUnsetID,
-			aAction:         r.cmpCreate,
-			kActionOnAError: r.kubeMarkToCreateOnCreationError,
-			requeue:         LongRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeueOnError:  LongRequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
-		},
-	)
+	// // Project existed but was removed in CMP
+	// ts.Add(
+	// 	&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+	// 		name:            "ProjectExistedButWasRemovedFromCMP",
+	// 		kCondition:      kubeProjectWasRemoved,
+	// 		aCondition:      cmpProjectNotExists,
+	// 		kAction:         r.kubeSetCreatingAndUnsetID,
+	// 		aAction:         r.cmpCreate,
+	// 		kActionOnAError: r.kubeMarkToCreateOnCreationError,
+	// 		requeue:         LongRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+	// 		requeueOnError:  LongRequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+	// 	},
+	// )
 
 	// Project creation synchronization accomplished
 	ts.Add(
 		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
-			name:           "ProjectCreationSynchronizationAccomplished",
+			name:           "ProjectCreationConfirmedOnCMP",
 			kCondition:     kubeProjectCreatedConfirmedOnCMP,
 			aCondition:     cmpProjectExists,
 			kAction:        r.kubeMarkCreatingDone,
-			requeue:        NoRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeue:        ShortRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
 			requeueOnError: ShortRequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
 	)
@@ -520,47 +530,47 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 		},
 	)
 
-	// Project should be updated
-	ts.Add(
-		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
-			name:            "ProjectShouldBeUpdated",
-			kCondition:      kubeProjectShouldUpdate,
-			aCondition:      cmpProjectExists,
-			kAction:         r.kubeSetUpdating,
-			aAction:         r.cmpUpdate,
-			kActionOnAError: NoActionOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeue:         LongRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeueOnError:  LongRequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
-		},
-	)
+	// // Project should be updated
+	// ts.Add(
+	// 	&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+	// 		name:            "ProjectShouldBeUpdated",
+	// 		kCondition:      kubeProjectShouldUpdate,
+	// 		aCondition:      cmpProjectExists,
+	// 		kAction:         r.kubeSetUpdating,
+	// 		aAction:         r.cmpUpdate,
+	// 		kActionOnAError: NoActionOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+	// 		requeue:         LongRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+	// 		requeueOnError:  LongRequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+	// 	},
+	// )
 
-	// Project updating is in progress
-	ts.Add(
-		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
-			name:            "ProjectUpdatingInProgress",
-			kCondition:      kubeProjectIsUpdating,
-			aCondition:      cmpProjectExists,
-			kAction:         NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			aAction:         NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			kActionOnAError: NoActionOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeue:         LongRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeueOnError:  LongRequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
-		},
-	)
+	// // Project updating is in progress
+	// ts.Add(
+	// 	&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+	// 		name:            "ProjectUpdatingInProgress",
+	// 		kCondition:      kubeProjectIsUpdating,
+	// 		aCondition:      cmpProjectExists,
+	// 		kAction:         NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
+	// 		aAction:         NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
+	// 		kActionOnAError: NoActionOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+	// 		requeue:         LongRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+	// 		requeueOnError:  LongRequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+	// 	},
+	// )
 
-	// Project updating accomplished
-	ts.Add(
-		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
-			name:            "ProjectUpdatingAccomplished",
-			kCondition:      kubeProjectHasUpdated,
-			aCondition:      cmpProjectExists,
-			kAction:         r.kubeSetActiveAndSetID,
-			aAction:         NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			kActionOnAError: NoActionOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeue:         NoRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeueOnError:  LongRequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
-		},
-	)
+	// // Project updating accomplished
+	// ts.Add(
+	// 	&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+	// 		name:            "ProjectUpdatingAccomplished",
+	// 		kCondition:      kubeProjectHasUpdated,
+	// 		aCondition:      cmpProjectExists,
+	// 		kAction:         r.kubeSetActiveAndSetID,
+	// 		aAction:         NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
+	// 		kActionOnAError: NoActionOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+	// 		requeue:         NoRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+	// 		requeueOnError:  LongRequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+	// 	},
+	// )
 
 	return ts
 }
@@ -577,14 +587,16 @@ func (r *ProjectReconciler) kubeSetState(ctx context.Context, kubeProj *v1alpha1
 		kubeProjPatch := kubeProjCopy.DeepCopy()
 		kubeProjPatch.Status.Phase = state
 
-		meta.SetStatusCondition(
-			&kubeProjPatch.Status.Conditions,
+		kubeProjPatch.Status.Conditions = append(
+			kubeProjPatch.Status.Conditions,
 			metav1.Condition{
-				Type:    conditionType,
-				Status:  metav1.ConditionTrue,
-				Reason:  fmt.Sprintf("%s%s", string(state), conditionType),
-				Message: fmt.Sprintf("Phase: '%s', ConditionType: '%s'", string(state), conditionType),
-			})
+				Type:               conditionType,
+				Status:             metav1.ConditionTrue,
+				Reason:             fmt.Sprintf("%s%s", string(state), conditionType),
+				Message:            fmt.Sprintf("Phase: '%s', ConditionType: '%s'", string(state), conditionType),
+				LastTransitionTime: metav1.Now(),
+			},
+		)
 
 		if err := r.Status().Patch(ctx, kubeProjPatch, client.MergeFrom(kubeProjCopy)); err != nil {
 			return fmt.Errorf(

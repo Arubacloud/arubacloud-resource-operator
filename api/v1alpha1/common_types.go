@@ -42,7 +42,14 @@ const (
 
 // Condition types for resources
 const (
-	// ConditionTypeSynchronized indicates whether the resource is synchronized with the remote system
+	// ConditionTypeShallSynchronize indicates whether the resource needs to
+	// be synchronized with the CMP but the process is not started yet
+	ConditionTypeShallSynchronize = "ShallSynchronize"
+	// ConditionTypeShallSynchronize indicates whether the resource needs to
+	// be synchronized with the CMP and that the process is already started
+	ConditionTypeSynchronizing = "Synchronizing"
+	// ConditionTypeSynchronized indicates whether the resource is
+	// synchronized with the CMP
 	ConditionTypeSynchronized = "Synchronized"
 )
 
@@ -111,6 +118,7 @@ func (s *ResourceStatus) AssessPhaseNature() ResourcePhaseNature {
 	switch s.Phase {
 	case ResourcePhaseCreating,
 		ResourcePhaseProvisioning,
+		ResourcePhaseWaitingCondition,
 		ResourcePhaseUpdating,
 		ResourcePhaseDeleting:
 		return PhaseNatureTransitory

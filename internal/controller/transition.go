@@ -37,10 +37,16 @@ func NoActionOnError[K, A any](ctx context.Context, _ K, _ A, err error) error {
 // requeue behavior after a successful transition.
 type RequeueFunc[K, A any] func(k K, a A) ctrl.Result
 
-// DefaultRequeue is a RequeueFunc that returns a ctrl.Result
+// ShortRequeue is a RequeueFunc that returns a ctrl.Result
 // configured with the default requeue delay defined in the reconciler package.
-func DefaultRequeue[K, A any](_ K, _ A) ctrl.Result {
-	return ctrl.Result{RequeueAfter: reconciler.RequeueAfter}
+func ShortRequeue[K, A any](_ K, _ A) ctrl.Result {
+	return ctrl.Result{RequeueAfter: reconciler.ShortRequeueAfter}
+}
+
+// LongRequeue is a RequeueFunc that returns a ctrl.Result
+// configured with the default requeue delay defined in the reconciler package.
+func LongRequeue[K, A any](_ K, _ A) ctrl.Result {
+	return ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}
 }
 
 // NoRequeue is a RequeueFunc that returns an empty ctrl.Result,
@@ -51,10 +57,16 @@ func NoRequeue[K, A any](_ K, _ A) ctrl.Result { return ctrl.Result{} }
 // requeue behavior after an error occurs during a transition.
 type RequeueOnErrorFunc[K, A any] func(k K, a A, err error) (ctrl.Result, error)
 
-// RequeueAndIgnoreError is a RequeueOnErrorFunc that returns a ctrl.Result
+// ShortRequeueAndIgnoreError is a RequeueOnErrorFunc that returns a ctrl.Result
 // configured with the default requeue delay defined in the reconciler package.
-func RequeueAndIgnoreError[K, A any](_ K, _ A, _ error) (ctrl.Result, error) {
-	return ctrl.Result{RequeueAfter: reconciler.RequeueAfter}, nil
+func ShortRequeueAndIgnoreError[K, A any](_ K, _ A, _ error) (ctrl.Result, error) {
+	return ctrl.Result{RequeueAfter: reconciler.ShortRequeueAfter}, nil
+}
+
+// LongRequeueAndIgnoreError is a RequeueOnErrorFunc that returns a ctrl.Result
+// configured with the default requeue delay defined in the reconciler package.
+func LongRequeueAndIgnoreError[K, A any](_ K, _ A, _ error) (ctrl.Result, error) {
+	return ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
 }
 
 // NoRequeueButIgnoreError is a RequeueOnErrorFunc that returns an empty ctrl.Result,
@@ -80,6 +92,9 @@ type Transition[K, A any] interface {
 	KAction(ctx context.Context, k K, a A) error
 	// AAction executes the action intended for the Aruba CMP resource.
 	AAction(ctx context.Context, k K, a A) error
+	// KActionOnASuccess is executed when AAction is succeed,
+	// typically to update status on the Kubernetes resource.
+	KActionOnASuccess(ctx context.Context, k K, a A) error
 	// KActionOnAError is executed when AAction returns an error,
 	// typically to perform rollback or update status on the Kubernetes resource.
 	KActionOnAError(ctx context.Context, k K, a A, err error) error
@@ -97,9 +112,10 @@ type AbstractTransition[K, A any] struct {
 	kCondition ConditionFunc[K, A]
 	aCondition ConditionFunc[K, A]
 
-	kAction         ActionFunc[K, A]
-	aAction         ActionFunc[K, A]
-	kActionOnAError ActionOnErrorFunc[K, A]
+	kAction           ActionFunc[K, A]
+	aAction           ActionFunc[K, A]
+	kActionOnASuccess ActionFunc[K, A]
+	kActionOnAError   ActionOnErrorFunc[K, A]
 
 	requeue        RequeueFunc[K, A]
 	requeueOnError RequeueOnErrorFunc[K, A]
@@ -138,6 +154,11 @@ func (t *AbstractTransition[K, A]) AAction(ctx context.Context, k K, a A) error 
 	return t.aAction(ctx, k, a)
 }
 
+// KActionOnASuccess executes an action when the AAction is succeed.
+func (t *AbstractTransition[K, A]) KActionOnASuccess(ctx context.Context, k K, a A) error {
+	return t.kActionOnASuccess(ctx, k, a)
+}
+
 // KActionOnAError executes a fallback action when the AAction fails.
 func (t *AbstractTransition[K, A]) KActionOnAError(ctx context.Context, k K, a A, err error) error {
 	return t.kActionOnAError(ctx, k, a, err)
@@ -146,16 +167,33 @@ func (t *AbstractTransition[K, A]) KActionOnAError(ctx context.Context, k K, a A
 // Action sequentially performs KAction and AAction.
 // If AAction fails, it executes KActionOnAError to handle the failure.
 func (t *AbstractTransition[K, A]) Action(ctx context.Context, k K, a A) error {
-	if err := t.KAction(ctx, k, a); err != nil {
-		return err
-	}
-
-	if err := t.AAction(ctx, k, a); err != nil {
-		if nestedErr := t.kActionOnAError(ctx, k, a, err); nestedErr != nil {
-			return fmt.Errorf("%w when reacting to error: %w", nestedErr, err)
+	if t.kAction != nil {
+		// 1 - In case the transition has a KAction, only the KAction will be
+		// executed in order to avoid the "double-KAction" problem
+		if err := t.kAction(ctx, k, a); err != nil {
+			return err
 		}
 
-		return err
+	} else if t.aAction != nil {
+		// 2 - In case the transition does not have a KAction but has an
+		// AAction, that last one will be performed
+		if err := t.aAction(ctx, k, a); err != nil {
+			// 2.1 If some error occours and the transition has e
+			// KActionOnAError then that onne will be executed
+			if t.kActionOnAError != nil {
+				if nestedErr := t.kActionOnAError(ctx, k, a, err); nestedErr != nil {
+					return fmt.Errorf("%w when reacting to error: %w", nestedErr, err)
+				}
+			}
+
+			return err // TODO: review the logic about return this error here - maybe better to let the kActionOnAError manage that
+		}
+
+		// 2.2 - In case no error occours, if the transition has a
+		// KActionOnASuccess, than that one will be executed
+		if t.kActionOnASuccess != nil {
+			return t.kActionOnASuccess(ctx, k, a)
+		}
 	}
 
 	return nil
@@ -177,9 +215,10 @@ func (t *AbstractTransition[K, A]) RequeueOnError(k K, a A, err error) (ctrl.Res
 type TransitionSet[K, A any] struct {
 	transitions []*AbstractTransition[K, A]
 
-	defaultKAction         ActionFunc[K, A]
-	defaultAAction         ActionFunc[K, A]
-	defaultKActionOnAError ActionOnErrorFunc[K, A]
+	defaultKAction           ActionFunc[K, A]
+	defaultAAction           ActionFunc[K, A]
+	defaultKActionOnASuccess ActionFunc[K, A]
+	defaultKActionOnAError   ActionOnErrorFunc[K, A]
 
 	defaultRequeue        RequeueFunc[K, A]
 	defaultRequeueOnError RequeueOnErrorFunc[K, A]
@@ -195,16 +234,33 @@ func (s *TransitionSet[K, A]) Add(t *AbstractTransition[K, A]) {
 // It follows the same logic as AbstractTransition.Action, executing KAction, then AAction,
 // and handling AAction errors with KActionOnAError.
 func (s *TransitionSet[K, A]) DefaultAction(ctx context.Context, k K, a A) error {
-	if err := s.defaultKAction(ctx, k, a); err != nil {
-		return err
-	}
-
-	if err := s.defaultAAction(ctx, k, a); err != nil {
-		if nestedErr := s.defaultKActionOnAError(ctx, k, a, err); nestedErr != nil {
-			return fmt.Errorf("%w when reacting to error: %w", nestedErr, err)
+	if s.defaultKAction != nil {
+		// 1 - In case the transition has a KAction, only the KAction will be
+		// executed in order to avoid the "double-KAction" problem
+		if err := s.defaultKAction(ctx, k, a); err != nil {
+			return err
 		}
 
-		return err
+	} else if s.defaultAAction != nil {
+		// 2 - In case the transition does not have a KAction but has an
+		// AAction, that last one will be performed
+		if err := s.defaultAAction(ctx, k, a); err != nil {
+			// 2.1 If some error occours and the transition has e
+			// KActionOnAError then that onne will be executed
+			if s.defaultKActionOnAError != nil {
+				if nestedErr := s.defaultKActionOnAError(ctx, k, a, err); nestedErr != nil {
+					return fmt.Errorf("%w when reacting to error: %w", nestedErr, err)
+				}
+			}
+
+			return err // TODO: review the logic about return this error here - maybe better to let the kActionOnAError manage that
+		}
+
+		// 2.2 - In case no error occours, if the transition has a
+		// KActionOnASuccess, than that one will be executed
+		if s.defaultKActionOnASuccess != nil {
+			return s.defaultKActionOnASuccess(ctx, k, a)
+		}
 	}
 
 	return nil

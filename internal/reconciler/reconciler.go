@@ -19,7 +19,8 @@ import (
 )
 
 const (
-	RequeueAfter = 20 * time.Second
+	ShortRequeueAfter = 1 * time.Second
+	LongRequeueAfter  = 20 * time.Second
 	// MaxPhaseTimeout defines the maximum time a resource can remain in a non-final phase
 	MaxPhaseTimeout = 2 * time.Minute
 )

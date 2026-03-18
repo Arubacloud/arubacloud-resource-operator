@@ -160,6 +160,22 @@ func kubeProjectShouldBeCreatedOnCMP(kubeProj *v1alpha1.Project, _ *arubatypes.P
 		kubeProj.Status.ResourceID == ""
 }
 
+func kubeProjectCreatedConfirmedOnCMP(kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) bool {
+	return kubeProj.DeletionTimestamp.IsZero() &&
+		kubeProj.Status.Phase == v1alpha1.ResourcePhaseCreating &&
+		len(kubeProj.Status.Conditions) > 0 &&
+		kubeProj.Status.Conditions[len(kubeProj.Status.Conditions)-1].Type == v1alpha1.ConditionTypeShallSynchronize &&
+		kubeProj.Status.ResourceID == ""
+}
+
+func kubeProjectIsCreatedOnCMP(kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) bool {
+	return kubeProj.DeletionTimestamp.IsZero() &&
+		kubeProj.Status.Phase == v1alpha1.ResourcePhaseCreating &&
+		len(kubeProj.Status.Conditions) > 0 &&
+		kubeProj.Status.Conditions[len(kubeProj.Status.Conditions)-1].Type == v1alpha1.ConditionTypeSynchronized &&
+		kubeProj.Status.ResourceID == ""
+}
+
 func kubeProjectWasRemoved(kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) bool {
 	return kubeProj.DeletionTimestamp.IsZero() &&
 		kubeProj.Status.Phase != "" &&
@@ -480,17 +496,27 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 		},
 	)
 
+	// Project creation synchronization accomplished
+	ts.Add(
+		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+			name:           "ProjectCreationSynchronizationAccomplished",
+			kCondition:     kubeProjectCreatedConfirmedOnCMP,
+			aCondition:     cmpProjectExists,
+			kAction:        r.kubeMarkCreatingDone,
+			requeue:        NoRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError: ShortRequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+		},
+	)
+
 	// Project creation accomplished
 	ts.Add(
 		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
-			name:            "ProjectCreationAccomplished",
-			kCondition:      kubeProjectShouldBeCreatedOnCMP,
-			aCondition:      cmpProjectExists,
-			kAction:         r.kubeSetActiveAndSetID,
-			aAction:         NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			kActionOnAError: NoActionOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeue:         NoRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeueOnError:  LongRequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			name:           "ProjectCreationAccomplished",
+			kCondition:     kubeProjectIsCreatedOnCMP,
+			aCondition:     cmpProjectExists,
+			kAction:        r.kubeSetActiveAndSetID,
+			requeue:        NoRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
 	)
 

@@ -40,17 +40,17 @@ const (
 	ResourcePhaseFailed ResourcePhase = "Failed"
 )
 
-// Condition types for resources
+// Condition reasons for resources
 const (
-	// ConditionTypeShallSynchronize indicates whether the resource needs to
+	// ConditionReasonShallSynchronize indicates whether the resource needs to
 	// be synchronized with the CMP but the process is not started yet
-	ConditionTypeShallSynchronize = "ShallSynchronize"
+	ConditionReasonShallSynchronize = "ShallSynchronize"
 	// ConditionTypeShallSynchronize indicates whether the resource needs to
 	// be synchronized with the CMP and that the process is already started
-	ConditionTypeSynchronizing = "Synchronizing"
-	// ConditionTypeSynchronized indicates whether the resource is
+	ConditionReasonSynchronizing = "Synchronizing"
+	// ConditionReasonSynchronized indicates whether the resource is
 	// synchronized with the CMP
-	ConditionTypeSynchronized = "Synchronized"
+	ConditionReasonSynchronized = "Synchronized"
 )
 
 // Location specifies the location for resources

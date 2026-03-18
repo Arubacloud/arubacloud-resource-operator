@@ -21,8 +21,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"slices"
 
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -117,86 +117,85 @@ func (r *ProjectReconciler) HandleReconcile(ctx context.Context, obj reconciler.
 // Kubernetes Project Conditions
 
 func kubeProjectShouldDelete(kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) bool {
+	condition := meta.FindStatusCondition(kubeProj.Status.Conditions, string(kubeProj.Status.Phase))
+
 	return !kubeProj.DeletionTimestamp.IsZero() &&
-		len(kubeProj.Status.Conditions) > 0 &&
-		kubeProj.Status.Conditions[len(kubeProj.Status.Conditions)-1].Type == v1alpha1.ConditionTypeSynchronized &&
 		kubeProj.Status.AssessPhaseNature() == v1alpha1.PhaseNatureFinal &&
-		kubeProj.Status.Phase != v1alpha1.ResourcePhaseDeleted
+		kubeProj.Status.Phase != v1alpha1.ResourcePhaseDeleted &&
+		condition != nil &&
+		condition.Status == metav1.ConditionTrue &&
+		condition.Reason == v1alpha1.ConditionReasonSynchronized
 }
 
 func kubeProjectShouldBeDeletedOnCMP(kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) bool {
+	condition := meta.FindStatusCondition(kubeProj.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
+
 	return !kubeProj.DeletionTimestamp.IsZero() &&
 		kubeProj.Status.Phase == v1alpha1.ResourcePhaseDeleting &&
-		len(kubeProj.Status.Conditions) > 0 &&
-		kubeProj.Status.Conditions[len(kubeProj.Status.Conditions)-1].Type == v1alpha1.ConditionTypeShallSynchronize
+		condition != nil &&
+		condition.Status == metav1.ConditionTrue &&
+		condition.Reason == v1alpha1.ConditionReasonShallSynchronize
 }
 
 func kubeProjectWaitingDeletionOnCMP(kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) bool {
+	condition := meta.FindStatusCondition(kubeProj.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
+
 	return !kubeProj.DeletionTimestamp.IsZero() &&
 		kubeProj.Status.Phase == v1alpha1.ResourcePhaseDeleting &&
-		len(kubeProj.Status.Conditions) > 0 &&
-		kubeProj.Status.Conditions[len(kubeProj.Status.Conditions)-1].Type == v1alpha1.ConditionTypeSynchronizing
+		condition != nil &&
+		condition.Status == metav1.ConditionTrue &&
+		condition.Reason == v1alpha1.ConditionReasonSynchronizing
 }
 
 func kubeProjectDeletionAcomplished(kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) bool {
+	condition := meta.FindStatusCondition(kubeProj.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
+
 	return !kubeProj.DeletionTimestamp.IsZero() &&
 		kubeProj.Status.Phase == v1alpha1.ResourcePhaseDeleting &&
-		len(kubeProj.Status.Conditions) > 0 &&
-		kubeProj.Status.Conditions[len(kubeProj.Status.Conditions)-1].Type == v1alpha1.ConditionTypeSynchronized
+		condition != nil &&
+		condition.Status == metav1.ConditionTrue &&
+		condition.Reason == v1alpha1.ConditionReasonSynchronized
 }
 
 func kubeProjectIsFirstReconciliation(kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) bool {
 	return kubeProj.DeletionTimestamp.IsZero() &&
+		kubeProj.Status.ResourceID == "" &&
 		kubeProj.Status.Phase == "" &&
-		kubeProj.Status.ResourceID == ""
+		len(kubeProj.Status.Conditions) == 0
+
 }
 
 func kubeProjectShouldBeCreatedOnCMP(kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) bool {
+	condition := meta.FindStatusCondition(kubeProj.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
+
 	return kubeProj.DeletionTimestamp.IsZero() &&
+		kubeProj.Status.ResourceID == "" &&
 		kubeProj.Status.Phase == v1alpha1.ResourcePhaseCreating &&
-		len(kubeProj.Status.Conditions) > 0 &&
-		kubeProj.Status.Conditions[len(kubeProj.Status.Conditions)-1].Type == v1alpha1.ConditionTypeShallSynchronize &&
-		kubeProj.Status.ResourceID == ""
+		condition != nil &&
+		condition.Status == metav1.ConditionTrue &&
+		condition.Reason == v1alpha1.ConditionReasonShallSynchronize
 }
 
-func kubeProjectCreatedConfirmedOnCMP(kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) bool {
+func kubeProjectWaitingCreationInCMP(kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) bool {
+	condition := meta.FindStatusCondition(kubeProj.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
+
 	return kubeProj.DeletionTimestamp.IsZero() &&
+		kubeProj.Status.ResourceID == "" &&
 		kubeProj.Status.Phase == v1alpha1.ResourcePhaseCreating &&
-		len(kubeProj.Status.Conditions) > 0 &&
-		kubeProj.Status.Conditions[len(kubeProj.Status.Conditions)-1].Type == v1alpha1.ConditionTypeSynchronizing &&
-		kubeProj.Status.ResourceID == ""
+		condition != nil &&
+		condition.Status == metav1.ConditionTrue &&
+		condition.Reason == v1alpha1.ConditionReasonSynchronizing
 }
 
 func kubeProjectIsCreatedOnCMP(kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) bool {
+	condition := meta.FindStatusCondition(kubeProj.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
+
 	return kubeProj.DeletionTimestamp.IsZero() &&
+		kubeProj.Status.ResourceID == "" &&
 		kubeProj.Status.Phase == v1alpha1.ResourcePhaseCreating &&
-		len(kubeProj.Status.Conditions) > 0 &&
-		kubeProj.Status.Conditions[len(kubeProj.Status.Conditions)-1].Type == v1alpha1.ConditionTypeSynchronized &&
-		kubeProj.Status.ResourceID == ""
-}
-
-func kubeProjectWasRemoved(kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) bool {
-	return kubeProj.DeletionTimestamp.IsZero() &&
-		kubeProj.Status.Phase != "" &&
-		kubeProj.Status.ResourceID != ""
-}
-
-func kubeProjectShouldUpdate(kubeProj *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) bool {
-	return kubeProj.DeletionTimestamp.IsZero() &&
-		kubeProj.Status.Phase != v1alpha1.ResourcePhaseUpdating &&
-		kubeProjectNeedsUpdate(kubeProj, cmpProj)
-}
-
-func kubeProjectIsUpdating(kubeProj *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) bool {
-	return kubeProj.DeletionTimestamp.IsZero() &&
-		kubeProj.Status.Phase == v1alpha1.ResourcePhaseUpdating &&
-		kubeProjectNeedsUpdate(kubeProj, cmpProj)
-}
-
-func kubeProjectHasUpdated(kubeProj *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) bool {
-	return kubeProj.DeletionTimestamp.IsZero() &&
-		kubeProj.Status.Phase == v1alpha1.ResourcePhaseUpdating &&
-		!kubeProjectNeedsUpdate(kubeProj, cmpProj)
+		condition != nil &&
+		condition.Status == metav1.ConditionTrue &&
+		condition.Reason == v1alpha1.ConditionReasonSynchronized
 }
 
 // Aruba CMP Project Conditions
@@ -212,57 +211,31 @@ func cmpProjectNotExists(_ *v1alpha1.Project, cmpProj *arubatypes.ProjectRespons
 // Kubernetes Project Actions
 
 func (r *ProjectReconciler) kubeMarkToDelete(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
-	return r.kubeSetState(ctx, kubeProj, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionTypeShallSynchronize)
+	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize)
 }
 
 func (r *ProjectReconciler) kubeMarkDeleting(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
-	return r.kubeSetState(ctx, kubeProj, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionTypeSynchronizing)
+	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronizing)
 }
 
 func (r *ProjectReconciler) kubeMarkDeletingDone(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
-	return r.kubeSetState(ctx, kubeProj, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionTypeSynchronized)
+	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronized)
 }
 
 func (r *ProjectReconciler) kubeMarkDeleted(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
-	return r.kubeSetState(ctx, kubeProj, v1alpha1.ResourcePhaseDeleted, v1alpha1.ConditionTypeSynchronized)
+	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseDeleted, v1alpha1.ConditionReasonSynchronized)
 }
 
 func (r *ProjectReconciler) kubeMarkToCreate(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
-	return r.kubeSetState(ctx, kubeProj, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionTypeShallSynchronize)
+	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize)
 }
 
 func (r *ProjectReconciler) kubeMarkCreating(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
-	return r.kubeSetState(ctx, kubeProj, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionTypeSynchronizing)
+	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing)
 }
 
 func (r *ProjectReconciler) kubeMarkCreatingDone(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
-	return r.kubeSetState(ctx, kubeProj, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionTypeSynchronized)
-}
-
-func (r *ProjectReconciler) kubeSetUpdating(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
-	return r.kubeSetState(ctx, kubeProj, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionTypeShallSynchronize)
-}
-
-func (r *ProjectReconciler) kubeSetCreatingAndUnsetID(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		kubeProjCopy := kubeProj.DeepCopy()
-		if err := r.Get(ctx, client.ObjectKeyFromObject(kubeProj), kubeProjCopy); err != nil {
-			return err
-		}
-
-		kubeProjPatch := kubeProjCopy.DeepCopy()
-		kubeProjPatch.Status.Phase = v1alpha1.ResourcePhaseCreating
-		kubeProjPatch.Status.ResourceID = ""
-
-		if err := r.Status().Patch(ctx, kubeProjPatch, client.MergeFrom(kubeProjCopy)); err != nil {
-			return fmt.Errorf(
-				"failed to update project '%s/%s' state to '%v': %w",
-				kubeProjPatch.Namespace, kubeProjPatch.Name, v1alpha1.ResourcePhaseCreating, err,
-			)
-		}
-
-		return nil
-	})
+	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronized)
 }
 
 func (r *ProjectReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeProj *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) error {
@@ -278,13 +251,17 @@ func (r *ProjectReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeProj 
 			kubeProjPatch.Status.ResourceID = *cmpProj.Metadata.ID
 		}
 
-		kubeProjPatch.Status.Conditions = append(
-			kubeProjPatch.Status.Conditions,
+		for i := range kubeProjPatch.Status.Conditions {
+			kubeProjPatch.Status.Conditions[i].Status = metav1.ConditionFalse
+		}
+
+		meta.SetStatusCondition(
+			&kubeProjPatch.Status.Conditions,
 			metav1.Condition{
-				Type:               v1alpha1.ConditionTypeSynchronized,
+				Type:               string(v1alpha1.ResourcePhaseActive),
 				Status:             metav1.ConditionTrue,
-				Reason:             fmt.Sprintf("%s%s", string(v1alpha1.ResourcePhaseActive), v1alpha1.ConditionTypeSynchronized),
-				Message:            fmt.Sprintf("Phase: '%s', ConditionType: '%s'", string(v1alpha1.ResourcePhaseActive), v1alpha1.ConditionTypeSynchronized),
+				Reason:             v1alpha1.ConditionReasonSynchronized,
+				Message:            fmt.Sprintf("%s %s", string(v1alpha1.ResourcePhaseActive), v1alpha1.ConditionReasonSynchronized),
 				LastTransitionTime: metav1.Now(),
 			},
 		)
@@ -298,16 +275,6 @@ func (r *ProjectReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeProj 
 
 		return nil
 	})
-}
-
-// Kubernetes Action On Errors
-
-func (r *ProjectReconciler) kubeMarkToDeleteOnDeletingError(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse, err error) error {
-	return r.kubeSetState(ctx, kubeProj, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionTypeShallSynchronize)
-}
-
-func (r *ProjectReconciler) kubeMarkToCreateOnCreationError(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse, err error) error {
-	return r.kubeSetState(ctx, kubeProj, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionTypeShallSynchronize)
 }
 
 // Aruba CMP Project Actions
@@ -364,37 +331,6 @@ func (r *ProjectReconciler) cmpCreate(ctx context.Context, kubeProj *v1alpha1.Pr
 	return nil
 }
 
-func (r *ProjectReconciler) cmpUpdate(ctx context.Context, kubeProj *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) error {
-	request := cmpProjectRequestFromResponse(cmpProj)
-
-	request.Metadata.Tags = kubeProj.Spec.Tags
-	request.Properties.Description = &kubeProj.Spec.Description
-
-	cmpProjList, err := r.ArubaClient.FromProject().Update(ctx, *cmpProj.Metadata.ID, *request, nil)
-	if err != nil {
-		return fmt.Errorf("failed to update project '%s' in Aruba CMP: error: '%w'", kubeProj.Name, err)
-	}
-
-	switch cmpProjList.StatusCode {
-	case http.StatusOK, http.StatusCreated:
-		// Do nothing, we can consider the update request as successful
-
-	case http.StatusBadRequest:
-		return fmt.Errorf(
-			"failed to update project '%s' in Aruba CMP: status_code: %d, error: 'semantic or precondition error'",
-			kubeProj.Name, cmpProjList.StatusCode,
-		)
-
-	default:
-		return fmt.Errorf(
-			"failed to update project '%s' in Aruba CMP: status_code: %d, error: 'internal error'",
-			kubeProj.Name, cmpProjList.StatusCode,
-		)
-	}
-
-	return nil
-}
-
 // Transition Set Builder
 
 func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project, *arubatypes.ProjectResponse] {
@@ -411,7 +347,7 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 			aCondition:     cmpProjectExists,
 			kAction:        r.kubeMarkToDelete, // Mark as "Deleting + ShallSynchronize"
 			requeue:        ShortRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeueOnError: LongRequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
 	)
 
@@ -422,8 +358,7 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 			kCondition:        kubeProjectShouldBeDeletedOnCMP,
 			aCondition:        cmpProjectExists,
 			aAction:           r.cmpDelete,
-			kActionOnASuccess: r.kubeMarkDeleting,                // Mark as "Deleting + Synchronizing"
-			kActionOnAError:   r.kubeMarkToDeleteOnDeletingError, // Mark as "Deleting + ShallSynchronize"
+			kActionOnASuccess: r.kubeMarkDeleting,
 			requeue:           ShortRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
 			requeueOnError:    LongRequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
@@ -466,10 +401,10 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 		},
 	)
 
-	// Project does not exists in both
+	// Project should be created
 	ts.Add(
 		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
-			name:           "ProjectDoesNotExistInBoth",
+			name:           "ProjectShouldBeCreated",
 			kCondition:     kubeProjectIsFirstReconciliation,
 			aCondition:     cmpProjectNotExists,
 			kAction:        r.kubeMarkToCreate,
@@ -478,43 +413,39 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 		},
 	)
 
-	// Project does not exists in CMP
+	// Project should be created in CMP
 	ts.Add(
 		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
-			name:              "ProjectDoesNotExistInCMP",
+			name:              "ProjectShouldBeCreatedInCMP",
 			kCondition:        kubeProjectShouldBeCreatedOnCMP,
 			aCondition:        cmpProjectNotExists,
 			aAction:           r.cmpCreate,
 			kActionOnASuccess: r.kubeMarkCreating,
-			kActionOnAError:   r.kubeMarkToCreateOnCreationError,
 			requeue:           ShortRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeueOnError:    ShortRequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError:    LongRequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
 	)
 
-	// // Project existed but was removed in CMP
-	// ts.Add(
-	// 	&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
-	// 		name:            "ProjectExistedButWasRemovedFromCMP",
-	// 		kCondition:      kubeProjectWasRemoved,
-	// 		aCondition:      cmpProjectNotExists,
-	// 		kAction:         r.kubeSetCreatingAndUnsetID,
-	// 		aAction:         r.cmpCreate,
-	// 		kActionOnAError: r.kubeMarkToCreateOnCreationError,
-	// 		requeue:         LongRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-	// 		requeueOnError:  LongRequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
-	// 	},
-	// )
+	// Project waiting creation in CMP
+	ts.Add(
+		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+			name:           "ProjectWaitingCreationInCMP",
+			kCondition:     kubeProjectWaitingCreationInCMP,
+			aCondition:     cmpProjectNotExists,
+			requeue:        LongRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+		},
+	)
 
 	// Project creation synchronization accomplished
 	ts.Add(
 		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
 			name:           "ProjectCreationConfirmedOnCMP",
-			kCondition:     kubeProjectCreatedConfirmedOnCMP,
+			kCondition:     kubeProjectWaitingCreationInCMP,
 			aCondition:     cmpProjectExists,
 			kAction:        r.kubeMarkCreatingDone,
 			requeue:        ShortRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeueOnError: ShortRequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
 	)
 
@@ -530,54 +461,12 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 		},
 	)
 
-	// // Project should be updated
-	// ts.Add(
-	// 	&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
-	// 		name:            "ProjectShouldBeUpdated",
-	// 		kCondition:      kubeProjectShouldUpdate,
-	// 		aCondition:      cmpProjectExists,
-	// 		kAction:         r.kubeSetUpdating,
-	// 		aAction:         r.cmpUpdate,
-	// 		kActionOnAError: NoActionOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
-	// 		requeue:         LongRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-	// 		requeueOnError:  LongRequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
-	// 	},
-	// )
-
-	// // Project updating is in progress
-	// ts.Add(
-	// 	&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
-	// 		name:            "ProjectUpdatingInProgress",
-	// 		kCondition:      kubeProjectIsUpdating,
-	// 		aCondition:      cmpProjectExists,
-	// 		kAction:         NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
-	// 		aAction:         NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
-	// 		kActionOnAError: NoActionOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
-	// 		requeue:         LongRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-	// 		requeueOnError:  LongRequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
-	// 	},
-	// )
-
-	// // Project updating accomplished
-	// ts.Add(
-	// 	&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
-	// 		name:            "ProjectUpdatingAccomplished",
-	// 		kCondition:      kubeProjectHasUpdated,
-	// 		aCondition:      cmpProjectExists,
-	// 		kAction:         r.kubeSetActiveAndSetID,
-	// 		aAction:         NoAction[*v1alpha1.Project, *arubatypes.ProjectResponse],
-	// 		kActionOnAError: NoActionOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
-	// 		requeue:         NoRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-	// 		requeueOnError:  LongRequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
-	// 	},
-	// )
-
 	return ts
 }
 
 // Helper Functions
 
-func (r *ProjectReconciler) kubeSetState(ctx context.Context, kubeProj *v1alpha1.Project, state v1alpha1.ResourcePhase, conditionType string) error {
+func (r *ProjectReconciler) kubeSetPhaseAndCondition(ctx context.Context, kubeProj *v1alpha1.Project, phase v1alpha1.ResourcePhase, reason string) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		kubeProjCopy := kubeProj.DeepCopy()
 		if err := r.Get(ctx, client.ObjectKeyFromObject(kubeProj), kubeProjCopy); err != nil {
@@ -585,15 +474,19 @@ func (r *ProjectReconciler) kubeSetState(ctx context.Context, kubeProj *v1alpha1
 		}
 
 		kubeProjPatch := kubeProjCopy.DeepCopy()
-		kubeProjPatch.Status.Phase = state
+		kubeProjPatch.Status.Phase = phase
 
-		kubeProjPatch.Status.Conditions = append(
-			kubeProjPatch.Status.Conditions,
+		for i := range kubeProjPatch.Status.Conditions {
+			kubeProjPatch.Status.Conditions[i].Status = metav1.ConditionFalse
+		}
+
+		meta.SetStatusCondition(
+			&kubeProjPatch.Status.Conditions,
 			metav1.Condition{
-				Type:               conditionType,
+				Type:               string(phase),
 				Status:             metav1.ConditionTrue,
-				Reason:             fmt.Sprintf("%s%s", string(state), conditionType),
-				Message:            fmt.Sprintf("Phase: '%s', ConditionType: '%s'", string(state), conditionType),
+				Reason:             reason,
+				Message:            fmt.Sprintf("%s %s", string(phase), reason),
 				LastTransitionTime: metav1.Now(),
 			},
 		)
@@ -601,7 +494,7 @@ func (r *ProjectReconciler) kubeSetState(ctx context.Context, kubeProj *v1alpha1
 		if err := r.Status().Patch(ctx, kubeProjPatch, client.MergeFrom(kubeProjCopy)); err != nil {
 			return fmt.Errorf(
 				"failed to update project '%s/%s' state to '%v': %w",
-				kubeProjPatch.Namespace, kubeProjPatch.Name, state, err,
+				kubeProjPatch.Namespace, kubeProjPatch.Name, phase, err,
 			)
 		}
 
@@ -619,51 +512,6 @@ func cmpProjectRequestFromKube(kubeProj *v1alpha1.Project) *arubatypes.ProjectRe
 		Properties: arubatypes.ProjectPropertiesRequest{
 			Description: &kubeProj.Spec.Description,
 			Default:     kubeProj.Spec.Default,
-		},
-	}
-}
-
-func kubeProjectTagsAreEqual(kubeProj *v1alpha1.Project, tags []string) bool {
-	// TODO: generalize this function
-	if len(kubeProj.Spec.Tags) != len(tags) {
-		return false
-	}
-
-	slices.Sort(kubeProj.Spec.Tags)
-	slices.Sort(tags)
-
-	for i, tag := range kubeProj.Spec.Tags {
-		if tag != tags[i] {
-			return false
-		}
-	}
-
-	return true
-}
-
-func kubeProjectNeedsUpdate(kubeProj *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) bool {
-	return !kubeProjectTagsAreEqual(kubeProj, cmpProj.Metadata.Tags) ||
-		kubeProj.Spec.Description != *cmpProj.Properties.Description
-}
-
-func cmpProjectRequestFromResponse(response *arubatypes.ProjectResponse) *arubatypes.ProjectRequest {
-	if response == nil {
-		return nil
-	}
-	name := ""
-	if response.Metadata.Name != nil {
-		name = *response.Metadata.Name
-	}
-	tags := make([]string, len(response.Metadata.Tags))
-	copy(tags, response.Metadata.Tags)
-	return &arubatypes.ProjectRequest{
-		Metadata: arubatypes.ResourceMetadataRequest{
-			Name: name,
-			Tags: tags,
-		},
-		Properties: arubatypes.ProjectPropertiesRequest{
-			Description: response.Properties.Description,
-			Default:     response.Properties.Default,
 		},
 	}
 }

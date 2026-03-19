@@ -75,6 +75,8 @@ func NoRequeueButIgnoreError[K, A any](_ K, _ A, _ error) (ctrl.Result, error) {
 	return ctrl.Result{}, nil
 }
 
+// NoRequeueAndPropagateError is a RequeueOnErrorFunc that returns an empty ctrl.Result
+// but propagates the encountered error.
 func NoRequeueAndPropagateError[K, A any](_ K, _ A, err error) (ctrl.Result, error) {
 	return ctrl.Result{}, err
 }
@@ -92,7 +94,7 @@ type Transition[K, A any] interface {
 	KAction(ctx context.Context, k K, a A) error
 	// AAction executes the action intended for the Aruba CMP resource.
 	AAction(ctx context.Context, k K, a A) error
-	// KActionOnASuccess is executed when AAction is succeed,
+	// KActionOnASuccess is executed when AAction succeeds,
 	// typically to update status on the Kubernetes resource.
 	KActionOnASuccess(ctx context.Context, k K, a A) error
 	// KActionOnAError is executed when AAction returns an error,
@@ -154,7 +156,7 @@ func (t *AbstractTransition[K, A]) AAction(ctx context.Context, k K, a A) error 
 	return t.aAction(ctx, k, a)
 }
 
-// KActionOnASuccess executes an action when the AAction is succeed.
+// KActionOnASuccess executes an action when the AAction succeeds.
 func (t *AbstractTransition[K, A]) KActionOnASuccess(ctx context.Context, k K, a A) error {
 	return t.kActionOnASuccess(ctx, k, a)
 }
@@ -164,7 +166,9 @@ func (t *AbstractTransition[K, A]) KActionOnAError(ctx context.Context, k K, a A
 	return t.kActionOnAError(ctx, k, a, err)
 }
 
-// Action sequentially performs KAction and AAction.
+// Action executes the defined actions for the transition.
+// It prioritizes KAction. If no KAction is defined, it executes AAction.
+// If AAction succeeds, it executes KActionOnASuccess.
 // If AAction fails, it executes KActionOnAError to handle the failure.
 func (t *AbstractTransition[K, A]) Action(ctx context.Context, k K, a A) error {
 	if t.kAction != nil {
@@ -178,8 +182,8 @@ func (t *AbstractTransition[K, A]) Action(ctx context.Context, k K, a A) error {
 		// 2 - In case the transition does not have a KAction but has an
 		// AAction, that last one will be performed
 		if err := t.aAction(ctx, k, a); err != nil {
-			// 2.1 If some error occours and the transition has e
-			// KActionOnAError then that onne will be executed
+			// 2.1 If some error occurs and the transition has a
+			// KActionOnAError then that one will be executed
 			if t.kActionOnAError != nil {
 				if nestedErr := t.kActionOnAError(ctx, k, a, err); nestedErr != nil {
 					return fmt.Errorf("%w when reacting to error: %w", nestedErr, err)
@@ -189,8 +193,8 @@ func (t *AbstractTransition[K, A]) Action(ctx context.Context, k K, a A) error {
 			return err // TODO: review the logic about return this error here - maybe better to let the kActionOnAError manage that
 		}
 
-		// 2.2 - In case no error occours, if the transition has a
-		// KActionOnASuccess, than that one will be executed
+		// 2.2 - In case no error occurs, if the transition has a
+		// KActionOnASuccess, then that one will be executed
 		if t.kActionOnASuccess != nil {
 			return t.kActionOnASuccess(ctx, k, a)
 		}
@@ -231,8 +235,8 @@ func (s *TransitionSet[K, A]) Add(t *AbstractTransition[K, A]) {
 }
 
 // DefaultAction performs the default actions defined for the TransitionSet.
-// It follows the same logic as AbstractTransition.Action, executing KAction, then AAction,
-// and handling AAction errors with KActionOnAError.
+// It follows the same logic as AbstractTransition.Action, prioritizing KAction,
+// falling back to AAction, and handling AAction successes and errors accordingly.
 func (s *TransitionSet[K, A]) DefaultAction(ctx context.Context, k K, a A) error {
 	if s.defaultKAction != nil {
 		// 1 - In case the transition has a KAction, only the KAction will be
@@ -245,8 +249,8 @@ func (s *TransitionSet[K, A]) DefaultAction(ctx context.Context, k K, a A) error
 		// 2 - In case the transition does not have a KAction but has an
 		// AAction, that last one will be performed
 		if err := s.defaultAAction(ctx, k, a); err != nil {
-			// 2.1 If some error occours and the transition has e
-			// KActionOnAError then that onne will be executed
+			// 2.1 If some error occurs and the transition has a
+			// KActionOnAError then that one will be executed
 			if s.defaultKActionOnAError != nil {
 				if nestedErr := s.defaultKActionOnAError(ctx, k, a, err); nestedErr != nil {
 					return fmt.Errorf("%w when reacting to error: %w", nestedErr, err)
@@ -256,8 +260,8 @@ func (s *TransitionSet[K, A]) DefaultAction(ctx context.Context, k K, a A) error
 			return err // TODO: review the logic about return this error here - maybe better to let the kActionOnAError manage that
 		}
 
-		// 2.2 - In case no error occours, if the transition has a
-		// KActionOnASuccess, than that one will be executed
+		// 2.2 - In case no error occurs, if the transition has a
+		// KActionOnASuccess, then that one will be executed
 		if s.defaultKActionOnASuccess != nil {
 			return s.defaultKActionOnASuccess(ctx, k, a)
 		}

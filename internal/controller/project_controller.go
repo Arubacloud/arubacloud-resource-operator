@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -198,6 +199,76 @@ func kubeProjectIsCreatedOnCMP(kubeProj *v1alpha1.Project, _ *arubatypes.Project
 		condition.Reason == v1alpha1.ConditionReasonSynchronized
 }
 
+// kubeProjectSpecInSyncWithCMP is a fast-path guard: generation changed but the spec is
+// semantically identical to the CMP state, so we only need to stamp ObservedGeneration.
+func kubeProjectSpecInSyncWithCMP(kubeProj *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) bool {
+	condition := meta.FindStatusCondition(kubeProj.Status.Conditions, string(v1alpha1.ResourcePhaseActive))
+
+	return kubeProj.DeletionTimestamp.IsZero() &&
+		kubeProj.Status.Phase == v1alpha1.ResourcePhaseActive &&
+		kubeProj.Status.ResourceID != "" &&
+		kubeProj.Status.ObservedGeneration != kubeProj.Generation &&
+		!kubeProjectNeedsUpdate(kubeProj, cmpProj) &&
+		condition != nil &&
+		condition.Status == metav1.ConditionTrue &&
+		condition.Reason == v1alpha1.ConditionReasonSynchronized
+}
+
+func kubeProjectShouldUpdate(kubeProj *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) bool {
+	condition := meta.FindStatusCondition(kubeProj.Status.Conditions, string(v1alpha1.ResourcePhaseActive))
+
+	return kubeProj.DeletionTimestamp.IsZero() &&
+		kubeProj.Status.Phase == v1alpha1.ResourcePhaseActive &&
+		kubeProj.Status.ResourceID != "" &&
+		kubeProj.Status.ObservedGeneration != kubeProj.Generation &&
+		kubeProjectNeedsUpdate(kubeProj, cmpProj) &&
+		condition != nil &&
+		condition.Status == metav1.ConditionTrue &&
+		condition.Reason == v1alpha1.ConditionReasonSynchronized
+}
+
+func kubeProjectShouldBeUpdatedOnCMP(kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) bool {
+	condition := meta.FindStatusCondition(kubeProj.Status.Conditions, string(v1alpha1.ResourcePhaseUpdating))
+
+	return kubeProj.DeletionTimestamp.IsZero() &&
+		kubeProj.Status.Phase == v1alpha1.ResourcePhaseUpdating &&
+		condition != nil &&
+		condition.Status == metav1.ConditionTrue &&
+		condition.Reason == v1alpha1.ConditionReasonShallSynchronize
+}
+
+func kubeProjectWaitingUpdateOnCMP(kubeProj *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) bool {
+	condition := meta.FindStatusCondition(kubeProj.Status.Conditions, string(v1alpha1.ResourcePhaseUpdating))
+
+	return kubeProj.DeletionTimestamp.IsZero() &&
+		kubeProj.Status.Phase == v1alpha1.ResourcePhaseUpdating &&
+		kubeProjectNeedsUpdate(kubeProj, cmpProj) &&
+		condition != nil &&
+		condition.Status == metav1.ConditionTrue &&
+		condition.Reason == v1alpha1.ConditionReasonSynchronizing
+}
+
+func kubeProjectUpdateConfirmedOnCMP(kubeProj *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) bool {
+	condition := meta.FindStatusCondition(kubeProj.Status.Conditions, string(v1alpha1.ResourcePhaseUpdating))
+
+	return kubeProj.DeletionTimestamp.IsZero() &&
+		kubeProj.Status.Phase == v1alpha1.ResourcePhaseUpdating &&
+		!kubeProjectNeedsUpdate(kubeProj, cmpProj) &&
+		condition != nil &&
+		condition.Status == metav1.ConditionTrue &&
+		condition.Reason == v1alpha1.ConditionReasonSynchronizing
+}
+
+func kubeProjectUpdateAccomplished(kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) bool {
+	condition := meta.FindStatusCondition(kubeProj.Status.Conditions, string(v1alpha1.ResourcePhaseUpdating))
+
+	return kubeProj.DeletionTimestamp.IsZero() &&
+		kubeProj.Status.Phase == v1alpha1.ResourcePhaseUpdating &&
+		condition != nil &&
+		condition.Status == metav1.ConditionTrue &&
+		condition.Reason == v1alpha1.ConditionReasonSynchronized
+}
+
 // Aruba CMP Project Conditions
 
 func cmpProjectExists(_ *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) bool {
@@ -238,6 +309,18 @@ func (r *ProjectReconciler) kubeMarkCreatingDone(ctx context.Context, kubeProj *
 	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronized)
 }
 
+func (r *ProjectReconciler) kubeMarkToUpdate(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
+	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize)
+}
+
+func (r *ProjectReconciler) kubeMarkUpdating(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
+	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonSynchronizing)
+}
+
+func (r *ProjectReconciler) kubeMarkUpdatingDone(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
+	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonSynchronized)
+}
+
 func (r *ProjectReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeProj *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		kubeProjCopy := kubeProj.DeepCopy()
@@ -250,6 +333,7 @@ func (r *ProjectReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeProj 
 		if kubeProjPatch.Status.ResourceID == "" && cmpProj != nil && cmpProj.Metadata.ID != nil {
 			kubeProjPatch.Status.ResourceID = *cmpProj.Metadata.ID
 		}
+		kubeProjPatch.Status.ObservedGeneration = kubeProjCopy.Generation
 
 		for i := range kubeProjPatch.Status.Conditions {
 			kubeProjPatch.Status.Conditions[i].Status = metav1.ConditionFalse
@@ -299,6 +383,39 @@ func (r *ProjectReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.Project, 
 		return fmt.Errorf(
 			"failed to delete project '%s' in Aruba CMP: status_code: %d, error: 'internal error'",
 			*cmpProj.Metadata.Name, cmpProjList.StatusCode,
+		)
+	}
+
+	return nil
+}
+
+func (r *ProjectReconciler) cmpUpdate(ctx context.Context, kubeProj *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) error {
+	// Seed the request from the current CMP state to preserve any CMP-managed fields,
+	// then overwrite only the mutable spec fields.
+	request := cmpProjectRequestFromCMP(cmpProj)
+	request.Metadata.Tags = kubeProj.Spec.Tags
+	request.Properties.Description = &kubeProj.Spec.Description
+	request.Properties.Default = kubeProj.Spec.Default
+
+	cmpProjResp, err := r.ArubaClient.FromProject().Update(ctx, kubeProj.Status.ResourceID, *request, nil)
+	if err != nil {
+		return fmt.Errorf("failed to update project '%s' in Aruba CMP: error: '%w'", kubeProj.Name, err)
+	}
+
+	switch cmpProjResp.StatusCode {
+	case http.StatusOK, http.StatusAccepted, http.StatusNoContent:
+		// Do nothing, we can consider the update request as successful
+
+	case http.StatusBadRequest:
+		return fmt.Errorf(
+			"failed to update project '%s' in Aruba CMP: status_code: %d, error: 'semantic or precondition error'",
+			kubeProj.Name, cmpProjResp.StatusCode,
+		)
+
+	default:
+		return fmt.Errorf(
+			"failed to update project '%s' in Aruba CMP: status_code: %d, error: 'internal error'",
+			kubeProj.Name, cmpProjResp.StatusCode,
 		)
 	}
 
@@ -397,6 +514,80 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 			aCondition:     cmpProjectNotExists,
 			kAction:        r.kubeMarkDeleted,
 			requeue:        ShortRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+		},
+	)
+
+	// Generation changed but spec is semantically identical to CMP — just re-stamp ObservedGeneration.
+	ts.Add(
+		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+			name:           "ProjectSpecAlreadyInSyncWithCMP",
+			kCondition:     kubeProjectSpecInSyncWithCMP,
+			aCondition:     cmpProjectExists,
+			kAction:        r.kubeSetActiveAndSetID, // re-stamps ObservedGeneration, keeps Active+Synchronized
+			requeue:        NoRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+		},
+	)
+
+	// Project spec has changed and needs to be updated on CMP (currently Active + Synchronized)
+	ts.Add(
+		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+			name:           "ProjectShouldBeUpdated",
+			kCondition:     kubeProjectShouldUpdate,
+			aCondition:     cmpProjectExists,
+			kAction:        r.kubeMarkToUpdate, // Mark as "Updating + ShallSynchronize"
+			requeue:        ShortRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+		},
+	)
+
+	// Project should be updated on CMP (marked as "Updating + ShallSynchronize")
+	ts.Add(
+		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+			name:              "ProjectShouldBeUpdatedOnCMP",
+			kCondition:        kubeProjectShouldBeUpdatedOnCMP,
+			aCondition:        cmpProjectExists,
+			aAction:           r.cmpUpdate,
+			kActionOnASuccess: r.kubeMarkUpdating, // Mark as "Updating + Synchronizing"
+			requeue:           ShortRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError:    LongRequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+		},
+	)
+
+	// Project waiting for update on CMP (marked as "Updating + Synchronizing")
+	// CMP still diverges from kube spec — keep polling
+	ts.Add(
+		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+			name:           "ProjectWaitingUpdateOnCMP",
+			kCondition:     kubeProjectWaitingUpdateOnCMP,
+			aCondition:     cmpProjectExists,
+			requeue:        LongRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+		},
+	)
+
+	// Project update confirmed on CMP (marked as "Updating + Synchronizing")
+	// CMP now matches kube spec — advance to Synchronized
+	ts.Add(
+		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+			name:           "ProjectUpdateConfirmedOnCMP",
+			kCondition:     kubeProjectUpdateConfirmedOnCMP,
+			aCondition:     cmpProjectExists,
+			kAction:        r.kubeMarkUpdatingDone,
+			requeue:        ShortRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+		},
+	)
+
+	// Project update accomplished (marked as "Updating + Synchronized")
+	ts.Add(
+		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+			name:           "ProjectUpdateAccomplished",
+			kCondition:     kubeProjectUpdateAccomplished,
+			aCondition:     cmpProjectExists,
+			kAction:        r.kubeSetActiveAndSetID,
+			requeue:        NoRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
 			requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
 	)
@@ -514,6 +705,63 @@ func cmpProjectRequestFromKube(kubeProj *v1alpha1.Project) *arubatypes.ProjectRe
 			Default:     kubeProj.Spec.Default,
 		},
 	}
+}
+
+// cmpProjectRequestFromCMP creates an update request seeded from the current CMP state,
+// preserving CMP-managed fields that the operator does not own.
+func cmpProjectRequestFromCMP(cmpProj *arubatypes.ProjectResponse) *arubatypes.ProjectRequest {
+	if cmpProj == nil {
+		return &arubatypes.ProjectRequest{}
+	}
+	name := ""
+	if cmpProj.Metadata.Name != nil {
+		name = *cmpProj.Metadata.Name
+	}
+	tags := make([]string, len(cmpProj.Metadata.Tags))
+	copy(tags, cmpProj.Metadata.Tags)
+	return &arubatypes.ProjectRequest{
+		Metadata: arubatypes.ResourceMetadataRequest{
+			Name: name,
+			Tags: tags,
+		},
+		Properties: arubatypes.ProjectPropertiesRequest{
+			Description: cmpProj.Properties.Description,
+			Default:     cmpProj.Properties.Default,
+		},
+	}
+}
+
+// kubeProjectTagsAreEqual returns true when the kube spec tags and the CMP tags
+// contain the same elements regardless of order.
+func kubeProjectTagsAreEqual(kubeProj *v1alpha1.Project, cmpTags []string) bool {
+	if len(kubeProj.Spec.Tags) != len(cmpTags) {
+		return false
+	}
+	kubeTags := make([]string, len(kubeProj.Spec.Tags))
+	copy(kubeTags, kubeProj.Spec.Tags)
+	cmpTagsCopy := make([]string, len(cmpTags))
+	copy(cmpTagsCopy, cmpTags)
+	slices.Sort(kubeTags)
+	slices.Sort(cmpTagsCopy)
+	for i, tag := range kubeTags {
+		if tag != cmpTagsCopy[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// kubeProjectNeedsUpdate returns true when at least one mutable spec field differs
+// from the current CMP state.
+func kubeProjectNeedsUpdate(kubeProj *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) bool {
+	if cmpProj == nil {
+		return false
+	}
+	descriptionDiffers := cmpProj.Properties.Description == nil ||
+		kubeProj.Spec.Description != *cmpProj.Properties.Description
+	return descriptionDiffers ||
+		kubeProj.Spec.Default != cmpProj.Properties.Default ||
+		!kubeProjectTagsAreEqual(kubeProj, cmpProj.Metadata.Tags)
 }
 
 // SetupWithManager sets up the controller with the Manager.

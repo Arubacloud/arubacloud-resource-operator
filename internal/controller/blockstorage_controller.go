@@ -21,13 +21,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"slices"
 
-	"k8s.io/apimachinery/pkg/api/meta"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
 
@@ -37,10 +32,6 @@ import (
 
 const (
 	blockStorageFinalizerName = "blockstorage.arubacloud.com/finalizer"
-)
-
-var (
-	errBlockStorageNotFound = errors.New("blockstorage not found")
 )
 
 type contextKey string
@@ -174,95 +165,203 @@ func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconc
 	return r.ts.Run(ctx, kubeBlockStorage, cmpBlockStorage)
 }
 
-//
-// Transition Set Functions
-//
+// Transition Set Builder
 
-// Kubernetes BlockStorage Conditions
+func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse] {
+	ts := &TransitionSet[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		defaultRequeue:        NoRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		defaultRequeueOnError: NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	}
 
-func kubeBlockStorageShouldDelete(kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) bool {
-	condition := meta.FindStatusCondition(kubeBS.Status.Conditions, string(kubeBS.Status.Phase))
+	// 1. ShouldBeDeleted
+	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		name:           "ShouldBeDeleted",
+		kCondition:     kubeShouldDelete[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		aCondition:     cmpBlockStorageIsFinal,
+		kAction:        r.kubeMarkToDelete,
+		requeue:        ShortRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
 
-	return !kubeBS.DeletionTimestamp.IsZero() &&
-		kubeBS.Status.AssessPhaseNature() == v1alpha1.PhaseNatureFinal &&
-		kubeBS.Status.Phase != v1alpha1.ResourcePhaseDeleted &&
-		condition != nil &&
-		condition.Status == metav1.ConditionTrue &&
-		condition.Reason == v1alpha1.ConditionReasonSynchronized
+	// 2. ShouldBeDeletedOnCMP
+	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		name:              "ShouldBeDeletedOnCMP",
+		kCondition:        kubeShouldBeDeletedOnCMP[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		aCondition:        cmpBlockStorageIsFinal,
+		aAction:           r.cmpDelete,
+		kActionOnASuccess: r.kubeMarkDeleting,
+		requeue:           ShortRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError:    LongRequeueAndIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
+
+	// 3. WaitingDeletionOnCMP
+	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		name:           "WaitingDeletionOnCMP",
+		kCondition:     kubeWaitingDeletionOnCMP[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		aCondition:     cmpBlockStorageIsTransitory,
+		requeue:        LongRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
+
+	// 4. DeletionConfirmedOnCMP
+	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		name:           "DeletionConfirmedOnCMP",
+		kCondition:     kubeWaitingDeletionOnCMP[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		aCondition:     cmpBlockStorageNotExists,
+		kAction:        r.kubeMarkDeletingDone,
+		requeue:        ShortRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
+
+	// 5. DeletionAccomplished
+	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		name:           "DeletionAccomplished",
+		kCondition:     kubeDeletionAccomplished[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		aCondition:     cmpBlockStorageNotExists,
+		kAction:        r.kubeMarkDeleted,
+		requeue:        ShortRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
+
+	// 6a. HasDeniedChanges — surface immutable field violations before attempting update
+	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		name:       "HasDeniedChanges",
+		kCondition: kubeBlockStorageHasDeniedChanges,
+		aCondition: cmpBlockStorageIsFinal,
+		kAction: func(ctx context.Context, kubeBS *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockStorageResponse) error {
+			return fmt.Errorf("blockstorage update rejected: %w", checkBlockStorageDeniedChanges(kubeBS, cmpBS))
+		},
+		requeue:        NoRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError: LongRequeueAndIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
+
+	// 6b. SpecAlreadyInSyncWithCMP — generation changed but spec identical to CMP; just re-stamp ObservedGeneration
+	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		name:           "SpecAlreadyInSyncWithCMP",
+		kCondition:     kubeBlockStorageSpecInSyncWithCMP,
+		aCondition:     cmpBlockStorageIsActive,
+		kAction:        r.kubeSetActiveAndSetID,
+		requeue:        NoRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
+
+	// 6c. ShouldBeUpdated — spec changed and CMP is ready
+	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		name:           "ShouldBeUpdated",
+		kCondition:     kubeBlockStorageShouldUpdate,
+		aCondition:     cmpBlockStorageIsFinal,
+		kAction:        r.kubeMarkToUpdate,
+		requeue:        ShortRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
+
+	// 6d. ShouldBeUpdatedOnCMP — send update to CMP
+	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		name:              "ShouldBeUpdatedOnCMP",
+		kCondition:        kubeShouldBeUpdatedOnCMP[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		aCondition:        cmpBlockStorageIsFinal,
+		aAction:           r.cmpUpdate,
+		kActionOnASuccess: r.kubeMarkUpdating,
+		requeue:           ShortRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError:    LongRequeueAndIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
+
+	// 6e. WaitingUpdateOnCMP — CMP is still processing the update
+	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		name:           "WaitingUpdateOnCMP",
+		kCondition:     kubeWaitingUpdateOnCMP[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		aCondition:     cmpBlockStorageIsTransitory,
+		requeue:        LongRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
+
+	// 6f. UpdateConfirmedOnCMP — CMP has settled; advance to Synchronized
+	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		name:           "UpdateConfirmedOnCMP",
+		kCondition:     kubeWaitingUpdateOnCMP[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		aCondition:     cmpBlockStorageIsFinal,
+		kAction:        r.kubeMarkUpdatingDone,
+		requeue:        ShortRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
+
+	// 6g. UpdateAccomplished — transition back to Active and stamp generation
+	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		name:           "UpdateAccomplished",
+		kCondition:     kubeUpdateAccomplished[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		aCondition:     cmpBlockStorageIsActive,
+		kAction:        r.kubeSetActiveAndSetID,
+		requeue:        NoRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
+
+	// 7. ShouldBeCreated
+	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		name:           "ShouldBeCreated",
+		kCondition:     kubeIsFirstReconciliation[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		aCondition:     cmpBlockStorageNotExists,
+		kAction:        r.kubeMarkToCreate,
+		requeue:        ShortRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
+
+	// 8. ShouldBeCreatedInCMP
+	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		name:              "ShouldBeCreatedInCMP",
+		kCondition:        kubeShouldBeCreatedOnCMP[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		aCondition:        cmpBlockStorageNotExists,
+		aAction:           r.cmpCreate,
+		kActionOnASuccess: r.kubeMarkCreating,
+		requeue:           ShortRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError:    LongRequeueAndIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
+
+	// 9. WaitingCreationInCMP
+	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		name:           "WaitingCreationInCMP",
+		kCondition:     kubeWaitingCreationInCMP[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		aCondition:     cmpBlockStorageNotExistsOrTransitory,
+		requeue:        LongRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
+
+	// 10. CreationConfirmedOnCMP
+	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		name:           "CreationConfirmedOnCMP",
+		kCondition:     kubeWaitingCreationInCMP[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		aCondition:     cmpBlockStorageIsActive,
+		kAction:        r.kubeMarkCreatingDone,
+		requeue:        ShortRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
+
+	// 11. CreationAccomplished
+	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		name:           "CreationAccomplished",
+		kCondition:     kubeIsCreatedOnCMP[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		aCondition:     cmpBlockStorageIsActive,
+		kAction:        r.kubeSetActiveAndSetID,
+		requeue:        NoRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
+
+	// 12. IsInError
+	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		name:           "IsInError",
+		kCondition:     AlwaysTrue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		aCondition:     cmpBlockStorageIsFailed,
+		kAction:        r.kubeSetFailed,
+		requeue:        NoRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
+
+	return ts
 }
 
-func kubeBlockStorageShouldBeDeletedOnCMP(kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) bool {
-	condition := meta.FindStatusCondition(kubeBS.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
-
-	return !kubeBS.DeletionTimestamp.IsZero() &&
-		kubeBS.Status.Phase == v1alpha1.ResourcePhaseDeleting &&
-		condition != nil &&
-		condition.Status == metav1.ConditionTrue &&
-		condition.Reason == v1alpha1.ConditionReasonShallSynchronize
-}
-
-func kubeBlockStorageWaitingDeletionOnCMP(kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) bool {
-	condition := meta.FindStatusCondition(kubeBS.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
-
-	return !kubeBS.DeletionTimestamp.IsZero() &&
-		kubeBS.Status.Phase == v1alpha1.ResourcePhaseDeleting &&
-		condition != nil &&
-		condition.Status == metav1.ConditionTrue &&
-		condition.Reason == v1alpha1.ConditionReasonSynchronizing
-}
-
-func kubeBlockStorageDeletionAcomplished(kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) bool {
-	condition := meta.FindStatusCondition(kubeBS.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
-
-	return !kubeBS.DeletionTimestamp.IsZero() &&
-		kubeBS.Status.Phase == v1alpha1.ResourcePhaseDeleting &&
-		condition != nil &&
-		condition.Status == metav1.ConditionTrue &&
-		condition.Reason == v1alpha1.ConditionReasonSynchronized
-}
-
-func kubeBlockStorageIsFirstReconciliation(kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) bool {
-	return kubeBS.DeletionTimestamp.IsZero() &&
-		kubeBS.Status.ResourceID == "" &&
-		kubeBS.Status.Phase == "" &&
-		len(kubeBS.Status.Conditions) == 0
-}
-
-func kubeBlockStorageShouldBeCreatedOnCMP(kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) bool {
-	condition := meta.FindStatusCondition(kubeBS.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
-
-	return kubeBS.DeletionTimestamp.IsZero() &&
-		kubeBS.Status.ResourceID == "" &&
-		kubeBS.Status.Phase == v1alpha1.ResourcePhaseCreating &&
-		condition != nil &&
-		condition.Status == metav1.ConditionTrue &&
-		condition.Reason == v1alpha1.ConditionReasonShallSynchronize
-}
-
-func kubeBlockStorageWaitingCreationInCMP(kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) bool {
-	condition := meta.FindStatusCondition(kubeBS.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
-
-	return kubeBS.DeletionTimestamp.IsZero() &&
-		kubeBS.Status.ResourceID == "" &&
-		kubeBS.Status.Phase == v1alpha1.ResourcePhaseCreating &&
-		condition != nil &&
-		condition.Status == metav1.ConditionTrue &&
-		condition.Reason == v1alpha1.ConditionReasonSynchronizing
-}
-
-func kubeBlockStorageIsCreatedOnCMP(kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) bool {
-	condition := meta.FindStatusCondition(kubeBS.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
-
-	return kubeBS.DeletionTimestamp.IsZero() &&
-		kubeBS.Status.ResourceID == "" &&
-		kubeBS.Status.Phase == v1alpha1.ResourcePhaseCreating &&
-		condition != nil &&
-		condition.Status == metav1.ConditionTrue &&
-		condition.Reason == v1alpha1.ConditionReasonSynchronized
-}
+// Resource-specific condition functions
 
 func kubeBlockStorageHasDeniedChanges(kubeBS *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockStorageResponse) bool {
-	if kubeBS.DeletionTimestamp.IsZero() == false {
+	if !kubeBS.DeletionTimestamp.IsZero() {
 		return false
 	}
 	if cmpBS == nil {
@@ -271,67 +370,17 @@ func kubeBlockStorageHasDeniedChanges(kubeBS *v1alpha1.BlockStorage, cmpBS *arub
 	return checkBlockStorageDeniedChanges(kubeBS, cmpBS) != nil
 }
 
-// kubeBlockStorageSpecInSyncWithCMP is a fast-path guard: generation changed but
-// the spec is semantically identical to the CMP state (and no denied changes).
 func kubeBlockStorageSpecInSyncWithCMP(kubeBS *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockStorageResponse) bool {
-	condition := meta.FindStatusCondition(kubeBS.Status.Conditions, string(v1alpha1.ResourcePhaseActive))
-
-	return kubeBS.DeletionTimestamp.IsZero() &&
-		kubeBS.Status.Phase == v1alpha1.ResourcePhaseActive &&
-		kubeBS.Status.ResourceID != "" &&
-		kubeBS.Status.ObservedGeneration != kubeBS.Generation &&
+	return kubeActiveAndGenerationChanged(kubeBS, cmpBS) &&
 		checkBlockStorageDeniedChanges(kubeBS, cmpBS) == nil &&
-		!kubeBlockStorageNeedsUpdate(kubeBS, cmpBS) &&
-		condition != nil &&
-		condition.Status == metav1.ConditionTrue &&
-		condition.Reason == v1alpha1.ConditionReasonSynchronized
+		!kubeBlockStorageNeedsUpdate(kubeBS, cmpBS)
 }
 
 func kubeBlockStorageShouldUpdate(kubeBS *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockStorageResponse) bool {
-	condition := meta.FindStatusCondition(kubeBS.Status.Conditions, string(v1alpha1.ResourcePhaseActive))
-
-	return kubeBS.DeletionTimestamp.IsZero() &&
-		kubeBS.Status.Phase == v1alpha1.ResourcePhaseActive &&
-		kubeBS.Status.ResourceID != "" &&
-		kubeBS.Status.ObservedGeneration != kubeBS.Generation &&
+	return kubeActiveAndGenerationChanged(kubeBS, cmpBS) &&
 		checkBlockStorageDeniedChanges(kubeBS, cmpBS) == nil &&
-		kubeBlockStorageNeedsUpdate(kubeBS, cmpBS) &&
-		condition != nil &&
-		condition.Status == metav1.ConditionTrue &&
-		condition.Reason == v1alpha1.ConditionReasonSynchronized
+		kubeBlockStorageNeedsUpdate(kubeBS, cmpBS)
 }
-
-func kubeBlockStorageShouldBeUpdatedOnCMP(kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) bool {
-	condition := meta.FindStatusCondition(kubeBS.Status.Conditions, string(v1alpha1.ResourcePhaseUpdating))
-
-	return kubeBS.DeletionTimestamp.IsZero() &&
-		kubeBS.Status.Phase == v1alpha1.ResourcePhaseUpdating &&
-		condition != nil &&
-		condition.Status == metav1.ConditionTrue &&
-		condition.Reason == v1alpha1.ConditionReasonShallSynchronize
-}
-
-func kubeBlockStorageWaitingUpdateOnCMP(kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) bool {
-	condition := meta.FindStatusCondition(kubeBS.Status.Conditions, string(v1alpha1.ResourcePhaseUpdating))
-
-	return kubeBS.DeletionTimestamp.IsZero() &&
-		kubeBS.Status.Phase == v1alpha1.ResourcePhaseUpdating &&
-		condition != nil &&
-		condition.Status == metav1.ConditionTrue &&
-		condition.Reason == v1alpha1.ConditionReasonSynchronizing
-}
-
-func kubeBlockStorageUpdateAccomplished(kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) bool {
-	condition := meta.FindStatusCondition(kubeBS.Status.Conditions, string(v1alpha1.ResourcePhaseUpdating))
-
-	return kubeBS.DeletionTimestamp.IsZero() &&
-		kubeBS.Status.Phase == v1alpha1.ResourcePhaseUpdating &&
-		condition != nil &&
-		condition.Status == metav1.ConditionTrue &&
-		condition.Reason == v1alpha1.ConditionReasonSynchronized
-}
-
-// Aruba CMP BlockStorage Conditions
 
 func cmpBlockStorageNotExists(_ *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockStorageResponse) bool {
 	return cmpBS == nil
@@ -373,45 +422,13 @@ func cmpBlockStorageIsFailed(_ *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockSt
 	return cmpBS != nil && cmpBS.Status.State != nil && *cmpBS.Status.State == CSPResourceStateFailed
 }
 
-// Kubernetes Actions
+// Kube action methods
 
 func (r *BlockStorageReconciler) kubeSetPhaseAndCondition(ctx context.Context, kubeBS *v1alpha1.BlockStorage, phase v1alpha1.ResourcePhase, reason string) error {
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		kubeBSCopy := kubeBS.DeepCopy()
-		if err := r.Get(ctx, client.ObjectKeyFromObject(kubeBS), kubeBSCopy); err != nil {
-			return err
+	return setPhaseAndCondition(r.Client, ctx, kubeBS, phase, reason, func(bs *v1alpha1.BlockStorage) {
+		if prjID, ok := ctx.Value(projectIDKey).(string); ok && bs.Status.ProjectID == "" {
+			bs.Status.ProjectID = prjID
 		}
-
-		kubeBSPatch := kubeBSCopy.DeepCopy()
-		kubeBSPatch.Status.Phase = phase
-
-		if prjID, ok := ctx.Value(projectIDKey).(string); ok && kubeBSPatch.Status.ProjectID == "" {
-			kubeBSPatch.Status.ProjectID = prjID
-		}
-
-		for i := range kubeBSPatch.Status.Conditions {
-			kubeBSPatch.Status.Conditions[i].Status = metav1.ConditionFalse
-		}
-
-		meta.SetStatusCondition(
-			&kubeBSPatch.Status.Conditions,
-			metav1.Condition{
-				Type:               string(phase),
-				Status:             metav1.ConditionTrue,
-				Reason:             reason,
-				Message:            fmt.Sprintf("%s %s", string(phase), reason),
-				LastTransitionTime: metav1.Now(),
-			},
-		)
-
-		if err := r.Status().Patch(ctx, kubeBSPatch, client.MergeFrom(kubeBSCopy)); err != nil {
-			return fmt.Errorf(
-				"failed to update blockstorage '%s/%s' state to '%v': %w",
-				kubeBSPatch.Namespace, kubeBSPatch.Name, phase, err,
-			)
-		}
-
-		return nil
 	})
 }
 
@@ -431,18 +448,6 @@ func (r *BlockStorageReconciler) kubeMarkDeleted(ctx context.Context, kubeBS *v1
 	return r.kubeSetPhaseAndCondition(ctx, kubeBS, v1alpha1.ResourcePhaseDeleted, v1alpha1.ConditionReasonSynchronized)
 }
 
-func (r *BlockStorageReconciler) kubeMarkToCreate(ctx context.Context, kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {
-	return r.kubeSetPhaseAndCondition(ctx, kubeBS, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize)
-}
-
-func (r *BlockStorageReconciler) kubeMarkCreating(ctx context.Context, kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {
-	return r.kubeSetPhaseAndCondition(ctx, kubeBS, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing)
-}
-
-func (r *BlockStorageReconciler) kubeMarkCreatingDone(ctx context.Context, kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {
-	return r.kubeSetPhaseAndCondition(ctx, kubeBS, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronized)
-}
-
 func (r *BlockStorageReconciler) kubeMarkToUpdate(ctx context.Context, kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeBS, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize)
 }
@@ -455,47 +460,27 @@ func (r *BlockStorageReconciler) kubeMarkUpdatingDone(ctx context.Context, kubeB
 	return r.kubeSetPhaseAndCondition(ctx, kubeBS, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonSynchronized)
 }
 
+func (r *BlockStorageReconciler) kubeMarkToCreate(ctx context.Context, kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {
+	return r.kubeSetPhaseAndCondition(ctx, kubeBS, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize)
+}
+
+func (r *BlockStorageReconciler) kubeMarkCreating(ctx context.Context, kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {
+	return r.kubeSetPhaseAndCondition(ctx, kubeBS, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing)
+}
+
+func (r *BlockStorageReconciler) kubeMarkCreatingDone(ctx context.Context, kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {
+	return r.kubeSetPhaseAndCondition(ctx, kubeBS, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronized)
+}
+
 func (r *BlockStorageReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeBS *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockStorageResponse) error {
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		kubeBSCopy := kubeBS.DeepCopy()
-		if err := r.Get(ctx, client.ObjectKeyFromObject(kubeBS), kubeBSCopy); err != nil {
-			return err
+	cmpID := ""
+	if cmpBS != nil && cmpBS.Metadata.ID != nil {
+		cmpID = *cmpBS.Metadata.ID
+	}
+	return setActiveAndSetID(r.Client, ctx, kubeBS, cmpID, func(bs *v1alpha1.BlockStorage) {
+		if prjID, ok := ctx.Value(projectIDKey).(string); ok && bs.Status.ProjectID != "" {
+			bs.Status.ProjectID = prjID
 		}
-
-		kubeBSPatch := kubeBSCopy.DeepCopy()
-		kubeBSPatch.Status.Phase = v1alpha1.ResourcePhaseActive
-		if kubeBSPatch.Status.ResourceID == "" && cmpBS != nil && cmpBS.Metadata.ID != nil {
-			kubeBSPatch.Status.ResourceID = *cmpBS.Metadata.ID
-		}
-		kubeBSPatch.Status.ObservedGeneration = kubeBSCopy.Generation
-
-		if prjID, ok := ctx.Value(projectIDKey).(string); ok && kubeBSPatch.Status.ProjectID != "" {
-			kubeBSPatch.Status.ProjectID = prjID
-		}
-
-		for i := range kubeBSPatch.Status.Conditions {
-			kubeBSPatch.Status.Conditions[i].Status = metav1.ConditionFalse
-		}
-
-		meta.SetStatusCondition(
-			&kubeBSPatch.Status.Conditions,
-			metav1.Condition{
-				Type:               string(v1alpha1.ResourcePhaseActive),
-				Status:             metav1.ConditionTrue,
-				Reason:             v1alpha1.ConditionReasonSynchronized,
-				Message:            fmt.Sprintf("%s %s", string(v1alpha1.ResourcePhaseActive), v1alpha1.ConditionReasonSynchronized),
-				LastTransitionTime: metav1.Now(),
-			},
-		)
-
-		if err := r.Status().Patch(ctx, kubeBSPatch, client.MergeFrom(kubeBSCopy)); err != nil {
-			return fmt.Errorf(
-				"failed to update blockstorage '%s/%s' state to '%v': %w",
-				kubeBSPatch.Namespace, kubeBSPatch.Name, v1alpha1.ResourcePhaseActive, err,
-			)
-		}
-
-		return nil
 	})
 }
 
@@ -503,7 +488,7 @@ func (r *BlockStorageReconciler) kubeSetFailed(ctx context.Context, kubeBS *v1al
 	return r.kubeSetPhaseAndCondition(ctx, kubeBS, v1alpha1.ResourcePhaseFailed, v1alpha1.ConditionReasonSynchronized)
 }
 
-// Aruba CMP Actions
+// CMP action methods
 
 func (r *BlockStorageReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockStorageResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
@@ -523,28 +508,10 @@ func (r *BlockStorageReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.Bloc
 	return nil
 }
 
-func (r *BlockStorageReconciler) cmpCreate(ctx context.Context, kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {
-	prjID := ctx.Value(projectIDKey).(string)
-	bsCreateResp, err := r.ArubaClient.FromStorage().Volumes().Create(ctx, prjID, *cmpBlockStorageRequestFromKube(kubeBS), nil)
-	if err != nil {
-		return fmt.Errorf("failed to create blockstorage '%s' in Aruba CMP: error: '%w'", kubeBS.Name, err)
-	}
-
-	switch bsCreateResp.StatusCode {
-	case http.StatusOK, http.StatusCreated, http.StatusAccepted:
-		// Success
-	case http.StatusBadRequest:
-		return fmt.Errorf("status_code: 400, failed to create blockstorage '%s' in Aruba CMP: semantic or precondition error", kubeBS.Name)
-	default:
-		return fmt.Errorf("status_code: %d, failed to create blockstorage '%s' in Aruba CMP: internal error", bsCreateResp.StatusCode, kubeBS.Name)
-	}
-	return nil
-}
-
 func (r *BlockStorageReconciler) cmpUpdate(ctx context.Context, kubeBS *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockStorageResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
 
-	// Guard: should have been caught by BlockStorageHasDeniedChanges, but double-check.
+	// Guard: should have been caught by HasDeniedChanges, but double-check.
 	if err := checkBlockStorageDeniedChanges(kubeBS, cmpBS); err != nil {
 		return err
 	}
@@ -573,201 +540,26 @@ func (r *BlockStorageReconciler) cmpUpdate(ctx context.Context, kubeBS *v1alpha1
 	return nil
 }
 
-// Transition Set Builder
-
-func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse] {
-	ts := &TransitionSet[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
-		defaultRequeue:        NoRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		defaultRequeueOnError: NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+func (r *BlockStorageReconciler) cmpCreate(ctx context.Context, kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {
+	prjID := ctx.Value(projectIDKey).(string)
+	bsCreateResp, err := r.ArubaClient.FromStorage().Volumes().Create(ctx, prjID, *cmpBlockStorageRequestFromKube(kubeBS), nil)
+	if err != nil {
+		return fmt.Errorf("failed to create blockstorage '%s' in Aruba CMP: error: '%w'", kubeBS.Name, err)
 	}
 
-	// 1. BlockStorageShouldBeDeleted
-	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
-		name:           "BlockStorageShouldBeDeleted",
-		kCondition:     kubeBlockStorageShouldDelete,
-		aCondition:     cmpBlockStorageIsFinal,
-		kAction:        r.kubeMarkToDelete,
-		requeue:        ShortRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-	})
-
-	// 2. BlockStorageShouldBeDeletedOnCMP
-	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
-		name:              "BlockStorageShouldBeDeletedOnCMP",
-		kCondition:        kubeBlockStorageShouldBeDeletedOnCMP,
-		aCondition:        cmpBlockStorageIsFinal,
-		aAction:           r.cmpDelete,
-		kActionOnASuccess: r.kubeMarkDeleting,
-		requeue:           ShortRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		requeueOnError:    LongRequeueAndIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-	})
-
-	// 3. BlockStorageWaitingDeletionOnCMP
-	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
-		name:           "BlockStorageWaitingDeletionOnCMP",
-		kCondition:     kubeBlockStorageWaitingDeletionOnCMP,
-		aCondition:     cmpBlockStorageIsTransitory,
-		requeue:        LongRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-	})
-
-	// 4. BlockStorageDeletionConfirmedOnCMP
-	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
-		name:           "BlockStorageDeletionConfirmedOnCMP",
-		kCondition:     kubeBlockStorageWaitingDeletionOnCMP,
-		aCondition:     cmpBlockStorageNotExists,
-		kAction:        r.kubeMarkDeletingDone,
-		requeue:        ShortRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-	})
-
-	// 5. BlockStorageDeletionAccomplished
-	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
-		name:           "BlockStorageDeletionAccomplished",
-		kCondition:     kubeBlockStorageDeletionAcomplished,
-		aCondition:     cmpBlockStorageNotExists,
-		kAction:        r.kubeMarkDeleted,
-		requeue:        ShortRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-	})
-
-	// 6a. BlockStorageHasDeniedChanges — surface immutable field violations before attempting update
-	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
-		name:       "BlockStorageHasDeniedChanges",
-		kCondition: kubeBlockStorageHasDeniedChanges,
-		aCondition: cmpBlockStorageIsFinal,
-		kAction: func(ctx context.Context, kubeBS *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockStorageResponse) error {
-			return fmt.Errorf("blockstorage update rejected: %w", checkBlockStorageDeniedChanges(kubeBS, cmpBS))
-		},
-		requeue:        NoRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		requeueOnError: LongRequeueAndIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-	})
-
-	// 6b. BlockStorageSpecAlreadyInSyncWithCMP — generation changed but spec identical to CMP; just re-stamp ObservedGeneration
-	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
-		name:           "BlockStorageSpecAlreadyInSyncWithCMP",
-		kCondition:     kubeBlockStorageSpecInSyncWithCMP,
-		aCondition:     cmpBlockStorageIsActive,
-		kAction:        r.kubeSetActiveAndSetID,
-		requeue:        NoRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-	})
-
-	// 6c. BlockStorageShouldBeUpdated — spec changed and CMP is ready
-	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
-		name:           "BlockStorageShouldBeUpdated",
-		kCondition:     kubeBlockStorageShouldUpdate,
-		aCondition:     cmpBlockStorageIsFinal,
-		kAction:        r.kubeMarkToUpdate,
-		requeue:        ShortRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-	})
-
-	// 6d. BlockStorageShouldBeUpdatedOnCMP — send update to CMP
-	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
-		name:              "BlockStorageShouldBeUpdatedOnCMP",
-		kCondition:        kubeBlockStorageShouldBeUpdatedOnCMP,
-		aCondition:        cmpBlockStorageIsFinal,
-		aAction:           r.cmpUpdate,
-		kActionOnASuccess: r.kubeMarkUpdating,
-		requeue:           ShortRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		requeueOnError:    LongRequeueAndIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-	})
-
-	// 6e. BlockStorageWaitingUpdateOnCMP — CMP is still processing the update
-	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
-		name:           "BlockStorageWaitingUpdateOnCMP",
-		kCondition:     kubeBlockStorageWaitingUpdateOnCMP,
-		aCondition:     cmpBlockStorageIsTransitory,
-		requeue:        LongRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-	})
-
-	// 6f. BlockStorageUpdateConfirmedOnCMP — CMP has settled; advance to Synchronized
-	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
-		name:           "BlockStorageUpdateConfirmedOnCMP",
-		kCondition:     kubeBlockStorageWaitingUpdateOnCMP,
-		aCondition:     cmpBlockStorageIsFinal,
-		kAction:        r.kubeMarkUpdatingDone,
-		requeue:        ShortRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-	})
-
-	// 6g. BlockStorageUpdateAccomplished — transition back to Active and stamp generation
-	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
-		name:           "BlockStorageUpdateAccomplished",
-		kCondition:     kubeBlockStorageUpdateAccomplished,
-		aCondition:     cmpBlockStorageIsActive,
-		kAction:        r.kubeSetActiveAndSetID,
-		requeue:        NoRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-	})
-
-	// 6. BlockStorageShouldBeCreated
-	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
-		name:           "BlockStorageShouldBeCreated",
-		kCondition:     kubeBlockStorageIsFirstReconciliation,
-		aCondition:     cmpBlockStorageNotExists,
-		kAction:        r.kubeMarkToCreate,
-		requeue:        ShortRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-	})
-
-	// 7. BlockStorageShouldBeCreatedInCMP
-	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
-		name:              "BlockStorageShouldBeCreatedInCMP",
-		kCondition:        kubeBlockStorageShouldBeCreatedOnCMP,
-		aCondition:        cmpBlockStorageNotExists,
-		aAction:           r.cmpCreate,
-		kActionOnASuccess: r.kubeMarkCreating,
-		requeue:           ShortRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		requeueOnError:    LongRequeueAndIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-	})
-
-	// 8. BlockStorageWaitingCreationInCMP
-	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
-		name:           "BlockStorageWaitingCreationInCMP",
-		kCondition:     kubeBlockStorageWaitingCreationInCMP,
-		aCondition:     cmpBlockStorageNotExistsOrTransitory,
-		requeue:        LongRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-	})
-
-	// 9. BlockStorageCreationConfirmedOnCMP
-	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
-		name:           "BlockStorageCreationConfirmedOnCMP",
-		kCondition:     kubeBlockStorageWaitingCreationInCMP,
-		aCondition:     cmpBlockStorageIsActive,
-		kAction:        r.kubeMarkCreatingDone,
-		requeue:        ShortRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-	})
-
-	// 10. BlockStorageCreationAccomplished
-	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
-		name:           "BlockStorageCreationAccomplished",
-		kCondition:     kubeBlockStorageIsCreatedOnCMP,
-		aCondition:     cmpBlockStorageIsActive,
-		kAction:        r.kubeSetActiveAndSetID,
-		requeue:        NoRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-	})
-
-	// 11. BlockStorageIsInError
-	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
-		name:           "BlockStorageIsInError",
-		kCondition:     AlwaysTrue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		aCondition:     cmpBlockStorageIsFailed,
-		kAction:        r.kubeSetFailed,
-		requeue:        NoRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-	})
-
-	return ts
+	switch bsCreateResp.StatusCode {
+	case http.StatusOK, http.StatusCreated, http.StatusAccepted:
+		// Success
+	case http.StatusBadRequest:
+		return fmt.Errorf("status_code: 400, failed to create blockstorage '%s' in Aruba CMP: semantic or precondition error", kubeBS.Name)
+	default:
+		return fmt.Errorf("status_code: %d, failed to create blockstorage '%s' in Aruba CMP: internal error", bsCreateResp.StatusCode, kubeBS.Name)
+	}
+	return nil
 }
 
-// checkBlockStorageDeniedChanges returns a non-nil error if any immutable spec field
-// differs from the current CMP state. These fields cannot be changed after creation.
+// Helper functions
+
 func checkBlockStorageDeniedChanges(kubeBS *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockStorageResponse) error {
 	if cmpBS == nil {
 		return nil
@@ -801,8 +593,6 @@ func checkBlockStorageDeniedChanges(kubeBS *v1alpha1.BlockStorage, cmpBS *arubat
 	return nil
 }
 
-// kubeBlockStorageNeedsUpdate returns true when at least one mutable spec field differs
-// from the current CMP state.
 func kubeBlockStorageNeedsUpdate(kubeBS *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockStorageResponse) bool {
 	if cmpBS == nil {
 		return false
@@ -810,31 +600,24 @@ func kubeBlockStorageNeedsUpdate(kubeBS *v1alpha1.BlockStorage, cmpBS *arubatype
 	return kubeBS.Spec.BillingPeriod != cmpBS.Properties.BillingPeriod ||
 		kubeBS.Spec.DataCenter != cmpBS.Properties.Zone ||
 		kubeBS.Spec.SizeGb != int32(cmpBS.Properties.SizeGB) ||
-		!kubeBlockStorageTagsAreEqual(kubeBS, cmpBS.Metadata.Tags)
+		!tagsAreEqual(kubeBS.Spec.Tags, cmpBS.Metadata.Tags)
 }
 
-// kubeBlockStorageTagsAreEqual returns true when spec tags and CMP tags contain
-// the same elements regardless of order.
-func kubeBlockStorageTagsAreEqual(kubeBS *v1alpha1.BlockStorage, cmpTags []string) bool {
-	if len(kubeBS.Spec.Tags) != len(cmpTags) {
-		return false
+func buildBlockStorageUpdateRequest(kubeBS *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockStorageResponse) *arubatypes.BlockStorageRequest {
+	request := cmpBlockStorageRequestFromCMP(cmpBS)
+	if request == nil {
+		return nil
 	}
-	kubeTags := make([]string, len(kubeBS.Spec.Tags))
-	copy(kubeTags, kubeBS.Spec.Tags)
-	cmpTagsCopy := make([]string, len(cmpTags))
-	copy(cmpTagsCopy, cmpTags)
-	slices.Sort(kubeTags)
-	slices.Sort(cmpTagsCopy)
-	for i, tag := range kubeTags {
-		if tag != cmpTagsCopy[i] {
-			return false
-		}
-	}
-	return true
+	request.Properties.BillingPeriod = kubeBS.Spec.BillingPeriod
+	zone := kubeBS.Spec.DataCenter
+	request.Properties.Zone = &zone
+	request.Properties.SizeGB = int(kubeBS.Spec.SizeGb)
+	tags := make([]string, len(kubeBS.Spec.Tags))
+	copy(tags, kubeBS.Spec.Tags)
+	request.Metadata.Tags = tags
+	return request
 }
 
-// cmpBlockStorageRequestFromCMP seeds an update request from the current CMP state,
-// preserving CMP-managed fields that the operator does not own.
 func cmpBlockStorageRequestFromCMP(cmpBS *arubatypes.BlockStorageResponse) *arubatypes.BlockStorageRequest {
 	if cmpBS == nil {
 		return nil
@@ -867,22 +650,6 @@ func cmpBlockStorageRequestFromCMP(cmpBS *arubatypes.BlockStorageResponse) *arub
 			Image:         cmpBS.Properties.Image,
 		},
 	}
-}
-
-// buildBlockStorageUpdateRequest seeds from CMP state then overwrites the mutable spec fields.
-func buildBlockStorageUpdateRequest(kubeBS *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockStorageResponse) *arubatypes.BlockStorageRequest {
-	request := cmpBlockStorageRequestFromCMP(cmpBS)
-	if request == nil {
-		return nil
-	}
-	request.Properties.BillingPeriod = kubeBS.Spec.BillingPeriod
-	zone := kubeBS.Spec.DataCenter
-	request.Properties.Zone = &zone
-	request.Properties.SizeGB = int(kubeBS.Spec.SizeGb)
-	tags := make([]string, len(kubeBS.Spec.Tags))
-	copy(tags, kubeBS.Spec.Tags)
-	request.Metadata.Tags = tags
-	return request
 }
 
 func cmpBlockStorageRequestFromKube(kubeBS *v1alpha1.BlockStorage) *arubatypes.BlockStorageRequest {

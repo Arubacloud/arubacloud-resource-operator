@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"reflect"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 
@@ -12,78 +13,78 @@ import (
 
 // ConditionFunc defines a function signature for checking conditions
 // based on a Kubernetes resource (K) and an Aruba CMP resource (A).
-type ConditionFunc[K, A any] func(k K, a A) bool
+type ConditionFunc[K reconciler.ResourceObject, A any] func(k K, a A) bool
 
 // AlwaysTrue is a ConditionFunc that always evaluates to true,
 // regardless of the provided Kubernetes or Aruba resources.
-func AlwaysTrue[K, A any](k K, a A) bool { return true }
+func AlwaysTrue[K reconciler.ResourceObject, A any](k K, a A) bool { return true }
 
 // ActionFunc defines a function signature for performing an action
 // against a Kubernetes resource (K) or an Aruba CMP resource (A).
-type ActionFunc[K, A any] func(ctx context.Context, k K, a A) error
+type ActionFunc[K reconciler.ResourceObject, A any] func(ctx context.Context, k K, a A) error
 
 // NoAction is an ActionFunc that performs no operation and returns nil.
-func NoAction[K, A any](ctx context.Context, _ K, _ A) error { return nil }
+func NoAction[K reconciler.ResourceObject, A any](ctx context.Context, _ K, _ A) error { return nil }
 
 // ActionOnErrorFunc defines a function signature for performing an action
 // when another action encounters an error. It receives the original error.
-type ActionOnErrorFunc[K, A any] func(ctx context.Context, k K, a A, err error) error
+type ActionOnErrorFunc[K reconciler.ResourceObject, A any] func(ctx context.Context, k K, a A, err error) error
 
 // NoActionOnError is an ActionOnErrorFunc that performs no operation
 // when an error occurs and returns the original error.
-func NoActionOnError[K, A any](ctx context.Context, _ K, _ A, err error) error { return err }
+func NoActionOnError[K reconciler.ResourceObject, A any](ctx context.Context, _ K, _ A, err error) error { return err }
 
 // RequeueFunc defines a function signature to determine the controller
 // requeue behavior after a successful transition.
-type RequeueFunc[K, A any] func(k K, a A) ctrl.Result
+type RequeueFunc[K reconciler.ResourceObject, A any] func(k K, a A) ctrl.Result
 
 // ShortRequeue is a RequeueFunc that returns a ctrl.Result
 // configured with the default requeue delay defined in the reconciler package.
-func ShortRequeue[K, A any](_ K, _ A) ctrl.Result {
+func ShortRequeue[K reconciler.ResourceObject, A any](_ K, _ A) ctrl.Result {
 	return ctrl.Result{RequeueAfter: reconciler.ShortRequeueAfter}
 }
 
 // LongRequeue is a RequeueFunc that returns a ctrl.Result
 // configured with the default requeue delay defined in the reconciler package.
-func LongRequeue[K, A any](_ K, _ A) ctrl.Result {
+func LongRequeue[K reconciler.ResourceObject, A any](_ K, _ A) ctrl.Result {
 	return ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}
 }
 
 // NoRequeue is a RequeueFunc that returns an empty ctrl.Result,
 // indicating that the request should not be requeued.
-func NoRequeue[K, A any](_ K, _ A) ctrl.Result { return ctrl.Result{} }
+func NoRequeue[K reconciler.ResourceObject, A any](_ K, _ A) ctrl.Result { return ctrl.Result{} }
 
 // RequeueOnErrorFunc defines a function signature to determine the controller
 // requeue behavior after an error occurs during a transition.
-type RequeueOnErrorFunc[K, A any] func(k K, a A, err error) (ctrl.Result, error)
+type RequeueOnErrorFunc[K reconciler.ResourceObject, A any] func(k K, a A, err error) (ctrl.Result, error)
 
 // ShortRequeueAndIgnoreError is a RequeueOnErrorFunc that returns a ctrl.Result
 // configured with the default requeue delay defined in the reconciler package.
-func ShortRequeueAndIgnoreError[K, A any](_ K, _ A, _ error) (ctrl.Result, error) {
+func ShortRequeueAndIgnoreError[K reconciler.ResourceObject, A any](_ K, _ A, _ error) (ctrl.Result, error) {
 	return ctrl.Result{RequeueAfter: reconciler.ShortRequeueAfter}, nil
 }
 
 // LongRequeueAndIgnoreError is a RequeueOnErrorFunc that returns a ctrl.Result
 // configured with the default requeue delay defined in the reconciler package.
-func LongRequeueAndIgnoreError[K, A any](_ K, _ A, _ error) (ctrl.Result, error) {
+func LongRequeueAndIgnoreError[K reconciler.ResourceObject, A any](_ K, _ A, _ error) (ctrl.Result, error) {
 	return ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
 }
 
 // NoRequeueButIgnoreError is a RequeueOnErrorFunc that returns an empty ctrl.Result,
 // indicating that the request should not be requeued despite the error.
-func NoRequeueButIgnoreError[K, A any](_ K, _ A, _ error) (ctrl.Result, error) {
+func NoRequeueButIgnoreError[K reconciler.ResourceObject, A any](_ K, _ A, _ error) (ctrl.Result, error) {
 	return ctrl.Result{}, nil
 }
 
 // NoRequeueAndPropagateError is a RequeueOnErrorFunc that returns an empty ctrl.Result
 // but propagates the encountered error.
-func NoRequeueAndPropagateError[K, A any](_ K, _ A, err error) (ctrl.Result, error) {
+func NoRequeueAndPropagateError[K reconciler.ResourceObject, A any](_ K, _ A, err error) (ctrl.Result, error) {
 	return ctrl.Result{}, err
 }
 
 // Transition defines the interface for a state transition step in the reconciliation loop.
 // It dictates when the transition should occur and what actions should be performed.
-type Transition[K, A any] interface {
+type Transition[K reconciler.ResourceObject, A any] interface {
 	// Name returns the descriptive name of the transition.
 	Name() string
 	// KCondition evaluates a condition against the Kubernetes resource.
@@ -108,7 +109,7 @@ type Transition[K, A any] interface {
 
 // AbstractTransition is a concrete implementation of the Transition interface.
 // It allows constructing a transition using function pointers for its logic.
-type AbstractTransition[K, A any] struct {
+type AbstractTransition[K reconciler.ResourceObject, A any] struct {
 	name string
 
 	kCondition ConditionFunc[K, A]
@@ -123,7 +124,7 @@ type AbstractTransition[K, A any] struct {
 	requeueOnError RequeueOnErrorFunc[K, A]
 }
 
-var _ Transition[any, any] = (*AbstractTransition[any, any])(nil)
+var _ Transition[reconciler.ResourceObject, any] = (*AbstractTransition[reconciler.ResourceObject, any])(nil)
 
 // Name returns the descriptive name of the transition.
 func (t *AbstractTransition[K, A]) Name() string {
@@ -216,7 +217,7 @@ func (t *AbstractTransition[K, A]) RequeueOnError(k K, a A, err error) (ctrl.Res
 // TransitionSet manages a collection of transitions and executes the first one
 // whose conditions are met. It also provides default actions and requeue logic
 // if no specific transition applies.
-type TransitionSet[K, A any] struct {
+type TransitionSet[K reconciler.ResourceObject, A any] struct {
 	transitions []*AbstractTransition[K, A]
 
 	defaultKAction           ActionFunc[K, A]
@@ -274,15 +275,26 @@ func (s *TransitionSet[K, A]) DefaultAction(ctx context.Context, k K, a A) error
 // whose Condition returns true. If no transition's conditions are met, it executes the DefaultAction.
 // It returns the appropriate ctrl.Result and any error encountered.
 func (s *TransitionSet[K, A]) Run(ctx context.Context, k K, a A) (ctrl.Result, error) {
+	kind := reflect.TypeOf(k).Elem().Name()
+	rs := k.GetResourceStatus()
+	resID := ""
+	if rs != nil {
+		resID = rs.ResourceID
+	}
+	nsName := fmt.Sprintf("%s/%s", k.GetNamespace(), k.GetName())
+
 	for _, t := range s.transitions {
 		if t.Condition(k, a) {
-			log.Printf("transition met condition: name: '%s'", t.Name()) // TODO: better logging
+			log.Printf("transition met: kind: '%s', resource: '%s', resourceID: '%s', transition: '%s'",
+				kind, nsName, resID, t.Name())
 			if err := t.Action(ctx, k, a); err != nil {
-				log.Printf("transition error: name: '%s', err: '%v'", t.Name(), err) // TODO: better logging
+				log.Printf("transition error: kind: '%s', resource: '%s', resourceID: '%s', transition: '%s', err: '%v'",
+					kind, nsName, resID, t.Name(), err)
 				return t.RequeueOnError(k, a, err)
 			}
 
-			log.Printf("transition succeed: name: '%s'", t.Name()) // TODO: better logging
+			log.Printf("transition succeed: kind: '%s', resource: '%s', resourceID: '%s', transition: '%s'",
+				kind, nsName, resID, t.Name())
 			return t.Requeue(k, a), nil
 		}
 	}

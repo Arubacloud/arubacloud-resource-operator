@@ -347,48 +347,48 @@ func cmpProjectNotExists(_ *v1alpha1.Project, cmpProj *arubatypes.ProjectRespons
 
 // Kube action methods
 
-func (r *ProjectReconciler) kubeSetPhaseAndCondition(ctx context.Context, kubeProj *v1alpha1.Project, phase v1alpha1.ResourcePhase, reason string) error {
-	return setPhaseAndCondition(r.Client, ctx, kubeProj, phase, reason)
+func (r *ProjectReconciler) kubeSetPhaseAndCondition(ctx context.Context, kubeProj *v1alpha1.Project, phase v1alpha1.ResourcePhase, reason string, actionErr error) error {
+	return setPhaseAndCondition(r.Client, ctx, kubeProj, phase, reason, actionErr)
 }
 
 func (r *ProjectReconciler) kubeMarkToDelete(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
-	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize)
+	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize, nil)
 }
 
 func (r *ProjectReconciler) kubeMarkDeleting(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
-	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronizing)
+	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronizing, nil)
 }
 
 func (r *ProjectReconciler) kubeMarkDeletingDone(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
-	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronized)
+	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronized, nil)
 }
 
 func (r *ProjectReconciler) kubeMarkDeleted(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
-	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseDeleted, v1alpha1.ConditionReasonSynchronized)
+	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseDeleted, v1alpha1.ConditionReasonSynchronized, nil)
 }
 
 func (r *ProjectReconciler) kubeMarkToUpdate(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
-	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize)
+	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, nil)
 }
 
 func (r *ProjectReconciler) kubeMarkUpdating(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
-	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonSynchronizing)
+	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonSynchronizing, nil)
 }
 
 func (r *ProjectReconciler) kubeMarkUpdatingDone(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
-	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonSynchronized)
+	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonSynchronized, nil)
 }
 
 func (r *ProjectReconciler) kubeMarkToCreate(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
-	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize)
+	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, nil)
 }
 
 func (r *ProjectReconciler) kubeMarkCreating(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
-	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing)
+	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, nil)
 }
 
 func (r *ProjectReconciler) kubeMarkCreatingDone(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
-	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronized)
+	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronized, nil)
 }
 
 func (r *ProjectReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeProj *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) error {
@@ -396,7 +396,7 @@ func (r *ProjectReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeProj 
 	if cmpProj != nil && cmpProj.Metadata.ID != nil {
 		cmpID = *cmpProj.Metadata.ID
 	}
-	return setActiveAndSetID(r.Client, ctx, kubeProj, cmpID)
+	return setActiveAndSetID(r.Client, ctx, kubeProj, cmpID, nil)
 }
 
 // CMP action methods
@@ -413,14 +413,14 @@ func (r *ProjectReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.Project, 
 
 	case http.StatusBadRequest:
 		return fmt.Errorf(
-			"failed to delete project '%s' in Aruba CMP: status_code: %d, error: 'semantic or precondition error'",
-			*cmpProj.Metadata.Name, cmpProjList.StatusCode,
+			"failed to delete project '%s' in Aruba CMP: status_code: %d, error_nature: 'semantic or precondition error', error: '%s'",
+			*cmpProj.Metadata.Name, cmpProjList.StatusCode, cmpErrorDetails(cmpProjList.Error),
 		)
 
 	default:
 		return fmt.Errorf(
-			"failed to delete project '%s' in Aruba CMP: status_code: %d, error: 'internal error'",
-			*cmpProj.Metadata.Name, cmpProjList.StatusCode,
+			"failed to delete project '%s' in Aruba CMP: status_code: %d, error_nature: 'internal error', error: '%s'",
+			*cmpProj.Metadata.Name, cmpProjList.StatusCode, cmpErrorDetails(cmpProjList.Error),
 		)
 	}
 
@@ -446,14 +446,14 @@ func (r *ProjectReconciler) cmpUpdate(ctx context.Context, kubeProj *v1alpha1.Pr
 
 	case http.StatusBadRequest:
 		return fmt.Errorf(
-			"failed to update project '%s' in Aruba CMP: status_code: %d, error: 'semantic or precondition error'",
-			kubeProj.Name, cmpProjResp.StatusCode,
+			"failed to update project '%s' in Aruba CMP: status_code: %d, error_nature: 'semantic or precondition error', error: '%s'",
+			*cmpProj.Metadata.Name, cmpProjResp.StatusCode, cmpErrorDetails(cmpProjResp.Error),
 		)
 
 	default:
 		return fmt.Errorf(
-			"failed to update project '%s' in Aruba CMP: status_code: %d, error: 'internal error'",
-			kubeProj.Name, cmpProjResp.StatusCode,
+			"failed to update project '%s' in Aruba CMP: status_code: %d, error_nature: 'internal error', error: '%s'",
+			*cmpProj.Metadata.Name, cmpProjResp.StatusCode, cmpErrorDetails(cmpProjResp.Error),
 		)
 	}
 
@@ -461,25 +461,25 @@ func (r *ProjectReconciler) cmpUpdate(ctx context.Context, kubeProj *v1alpha1.Pr
 }
 
 func (r *ProjectReconciler) cmpCreate(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
-	cmpProjList, err := r.ArubaClient.FromProject().Create(ctx, *cmpProjectRequestFromKube(kubeProj), nil)
+	cmpProjResp, err := r.ArubaClient.FromProject().Create(ctx, *cmpProjectRequestFromKube(kubeProj), nil)
 	if err != nil {
 		return fmt.Errorf("failed to create project '%s' in Aruba CMP: error: '%w'", kubeProj.Name, err)
 	}
 
-	switch cmpProjList.StatusCode {
+	switch cmpProjResp.StatusCode {
 	case http.StatusOK, http.StatusCreated:
 		// Do nothing, we can consider the create request as successful
 
 	case http.StatusBadRequest:
 		return fmt.Errorf(
-			"failed to create project '%s' in Aruba CMP: status_code: %d, error: 'semantic or precondition error'",
-			kubeProj.Name, cmpProjList.StatusCode,
+			"failed to create project '%s' in Aruba CMP: status_code: %d, error_nature: 'semantic or precondition error', error: '%s'",
+			kubeProj.Name, cmpProjResp.StatusCode, cmpErrorDetails(cmpProjResp.Error),
 		)
 
 	default:
 		return fmt.Errorf(
-			"failed to create project '%s' in Aruba CMP: status_code: %d, error: 'internal error'",
-			kubeProj.Name, cmpProjList.StatusCode,
+			"failed to create project '%s' in Aruba CMP: status_code: %d, error_nature: 'internal error', error: '%s'",
+			kubeProj.Name, cmpProjResp.StatusCode, cmpErrorDetails(cmpProjResp.Error),
 		)
 	}
 

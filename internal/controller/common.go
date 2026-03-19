@@ -2,6 +2,7 @@ package controller
 
 import (
 	"errors"
+	"fmt"
 
 	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
 )
@@ -39,6 +40,24 @@ const (
 	CSPResourceStateNatureFinal
 	CSPResourceStateNatureUndetermined
 )
+
+// cmpErrorDetails safely extracts Title, Detail, and Instance from an ErrorResponse,
+// returning a formatted string. Missing fields are represented as "na".
+func cmpErrorDetails(err *arubatypes.ErrorResponse) string {
+	title, detail, instance := "na", "na", "na"
+	if err != nil {
+		if err.Title != nil {
+			title = *err.Title
+		}
+		if err.Detail != nil {
+			detail = *err.Detail
+		}
+		if err.Instance != nil {
+			instance = *err.Instance
+		}
+	}
+	return fmt.Sprintf("title=%s,detail=%s,instance=%s", title, detail, instance)
+}
 
 func AssesCSPResourceStateNature(status *arubatypes.ResourceStatus) CSPResourceStateNature {
 	if status == nil {

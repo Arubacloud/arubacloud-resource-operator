@@ -21,11 +21,13 @@ type DeepCopyableObject[K any] interface {
 }
 
 // setPhaseAndCondition performs a retry-on-conflict status patch that sets the
-// given phase and condition reason. Optional prePatch callbacks are applied to the
-// patched copy before the status write.
+// given phase and condition reason. actionErr carries the AAction outcome:
+// nil means the action succeeded (" - OK"), non-nil appends the error message.
+// Optional prePatch callbacks are applied to the patched copy before the status write.
 func setPhaseAndCondition[K DeepCopyableObject[K]](
 	c client.Client, ctx context.Context, obj K,
 	phase v1alpha1.ResourcePhase, reason string,
+	actionErr error,
 	prePatch ...func(K),
 ) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -46,13 +48,18 @@ func setPhaseAndCondition[K DeepCopyableObject[K]](
 			rs.Conditions[i].Status = metav1.ConditionFalse
 		}
 
+		msgSuffix := " - OK"
+		if actionErr != nil {
+			msgSuffix = fmt.Sprintf(" - ERROR: %s", actionErr.Error())
+		}
+
 		meta.SetStatusCondition(
 			&rs.Conditions,
 			metav1.Condition{
 				Type:               string(phase),
 				Status:             metav1.ConditionTrue,
 				Reason:             reason,
-				Message:            fmt.Sprintf("%s %s", string(phase), reason),
+				Message:            fmt.Sprintf("%s %s%s", string(phase), reason, msgSuffix),
 				LastTransitionTime: metav1.Now(),
 			},
 		)
@@ -70,11 +77,13 @@ func setPhaseAndCondition[K DeepCopyableObject[K]](
 
 // setActiveAndSetID performs a retry-on-conflict status patch that sets the
 // resource to Active phase, stamps ObservedGeneration, and optionally sets the
-// ResourceID from the CMP response. Optional prePatch callbacks are applied to the
+// ResourceID from the CMP response. actionErr carries the AAction outcome
+// for the condition message. Optional prePatch callbacks are applied to the
 // patched copy before the status write.
 func setActiveAndSetID[K DeepCopyableObject[K]](
 	c client.Client, ctx context.Context, obj K,
 	cmpResourceID string,
+	actionErr error,
 	prePatch ...func(K),
 ) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -99,13 +108,17 @@ func setActiveAndSetID[K DeepCopyableObject[K]](
 			rs.Conditions[i].Status = metav1.ConditionFalse
 		}
 
+		msgSuffix := " - OK"
+		if actionErr != nil {
+			msgSuffix = fmt.Sprintf(" - ERROR: %s", actionErr.Error())
+		}
 		meta.SetStatusCondition(
 			&rs.Conditions,
 			metav1.Condition{
 				Type:               string(v1alpha1.ResourcePhaseActive),
 				Status:             metav1.ConditionTrue,
 				Reason:             v1alpha1.ConditionReasonSynchronized,
-				Message:            fmt.Sprintf("%s %s", string(v1alpha1.ResourcePhaseActive), v1alpha1.ConditionReasonSynchronized),
+				Message:            fmt.Sprintf("%s %s%s", string(v1alpha1.ResourcePhaseActive), v1alpha1.ConditionReasonSynchronized, msgSuffix),
 				LastTransitionTime: metav1.Now(),
 			},
 		)

@@ -32,7 +32,9 @@ type ActionOnErrorFunc[K reconciler.ResourceObject, A any] func(ctx context.Cont
 
 // NoActionOnError is an ActionOnErrorFunc that performs no operation
 // when an error occurs and returns the original error.
-func NoActionOnError[K reconciler.ResourceObject, A any](ctx context.Context, _ K, _ A, err error) error { return err }
+func NoActionOnError[K reconciler.ResourceObject, A any](ctx context.Context, _ K, _ A, err error) error {
+	return err
+}
 
 // RequeueFunc defines a function signature to determine the controller
 // requeue behavior after a successful transition.

@@ -424,8 +424,8 @@ func cmpBlockStorageIsFailed(_ *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockSt
 
 // Kube action methods
 
-func (r *BlockStorageReconciler) kubeSetPhaseAndCondition(ctx context.Context, kubeBS *v1alpha1.BlockStorage, phase v1alpha1.ResourcePhase, reason string) error {
-	return setPhaseAndCondition(r.Client, ctx, kubeBS, phase, reason, func(bs *v1alpha1.BlockStorage) {
+func (r *BlockStorageReconciler) kubeSetPhaseAndCondition(ctx context.Context, kubeBS *v1alpha1.BlockStorage, phase v1alpha1.ResourcePhase, reason string, actionErr error) error {
+	return setPhaseAndCondition(r.Client, ctx, kubeBS, phase, reason, actionErr, func(bs *v1alpha1.BlockStorage) {
 		if prjID, ok := ctx.Value(projectIDKey).(string); ok && bs.Status.ProjectID == "" {
 			bs.Status.ProjectID = prjID
 		}
@@ -433,43 +433,43 @@ func (r *BlockStorageReconciler) kubeSetPhaseAndCondition(ctx context.Context, k
 }
 
 func (r *BlockStorageReconciler) kubeMarkToDelete(ctx context.Context, kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {
-	return r.kubeSetPhaseAndCondition(ctx, kubeBS, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize)
+	return r.kubeSetPhaseAndCondition(ctx, kubeBS, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize, nil)
 }
 
 func (r *BlockStorageReconciler) kubeMarkDeleting(ctx context.Context, kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {
-	return r.kubeSetPhaseAndCondition(ctx, kubeBS, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronizing)
+	return r.kubeSetPhaseAndCondition(ctx, kubeBS, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronizing, nil)
 }
 
 func (r *BlockStorageReconciler) kubeMarkDeletingDone(ctx context.Context, kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {
-	return r.kubeSetPhaseAndCondition(ctx, kubeBS, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronized)
+	return r.kubeSetPhaseAndCondition(ctx, kubeBS, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronized, nil)
 }
 
 func (r *BlockStorageReconciler) kubeMarkDeleted(ctx context.Context, kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {
-	return r.kubeSetPhaseAndCondition(ctx, kubeBS, v1alpha1.ResourcePhaseDeleted, v1alpha1.ConditionReasonSynchronized)
+	return r.kubeSetPhaseAndCondition(ctx, kubeBS, v1alpha1.ResourcePhaseDeleted, v1alpha1.ConditionReasonSynchronized, nil)
 }
 
 func (r *BlockStorageReconciler) kubeMarkToUpdate(ctx context.Context, kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {
-	return r.kubeSetPhaseAndCondition(ctx, kubeBS, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize)
+	return r.kubeSetPhaseAndCondition(ctx, kubeBS, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, nil)
 }
 
 func (r *BlockStorageReconciler) kubeMarkUpdating(ctx context.Context, kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {
-	return r.kubeSetPhaseAndCondition(ctx, kubeBS, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonSynchronizing)
+	return r.kubeSetPhaseAndCondition(ctx, kubeBS, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonSynchronizing, nil)
 }
 
 func (r *BlockStorageReconciler) kubeMarkUpdatingDone(ctx context.Context, kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {
-	return r.kubeSetPhaseAndCondition(ctx, kubeBS, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonSynchronized)
+	return r.kubeSetPhaseAndCondition(ctx, kubeBS, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonSynchronized, nil)
 }
 
 func (r *BlockStorageReconciler) kubeMarkToCreate(ctx context.Context, kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {
-	return r.kubeSetPhaseAndCondition(ctx, kubeBS, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize)
+	return r.kubeSetPhaseAndCondition(ctx, kubeBS, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, nil)
 }
 
 func (r *BlockStorageReconciler) kubeMarkCreating(ctx context.Context, kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {
-	return r.kubeSetPhaseAndCondition(ctx, kubeBS, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing)
+	return r.kubeSetPhaseAndCondition(ctx, kubeBS, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, nil)
 }
 
 func (r *BlockStorageReconciler) kubeMarkCreatingDone(ctx context.Context, kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {
-	return r.kubeSetPhaseAndCondition(ctx, kubeBS, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronized)
+	return r.kubeSetPhaseAndCondition(ctx, kubeBS, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronized, nil)
 }
 
 func (r *BlockStorageReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeBS *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockStorageResponse) error {
@@ -477,7 +477,7 @@ func (r *BlockStorageReconciler) kubeSetActiveAndSetID(ctx context.Context, kube
 	if cmpBS != nil && cmpBS.Metadata.ID != nil {
 		cmpID = *cmpBS.Metadata.ID
 	}
-	return setActiveAndSetID(r.Client, ctx, kubeBS, cmpID, func(bs *v1alpha1.BlockStorage) {
+	return setActiveAndSetID(r.Client, ctx, kubeBS, cmpID, nil, func(bs *v1alpha1.BlockStorage) {
 		if prjID, ok := ctx.Value(projectIDKey).(string); ok && bs.Status.ProjectID != "" {
 			bs.Status.ProjectID = prjID
 		}
@@ -485,25 +485,33 @@ func (r *BlockStorageReconciler) kubeSetActiveAndSetID(ctx context.Context, kube
 }
 
 func (r *BlockStorageReconciler) kubeSetFailed(ctx context.Context, kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {
-	return r.kubeSetPhaseAndCondition(ctx, kubeBS, v1alpha1.ResourcePhaseFailed, v1alpha1.ConditionReasonSynchronized)
+	return r.kubeSetPhaseAndCondition(ctx, kubeBS, v1alpha1.ResourcePhaseFailed, v1alpha1.ConditionReasonSynchronized, nil)
 }
 
 // CMP action methods
 
 func (r *BlockStorageReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockStorageResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
-	bsResp, err := r.ArubaClient.FromStorage().Volumes().Delete(ctx, prjID, *cmpBS.Metadata.ID, nil)
+	cmpBSResp, err := r.ArubaClient.FromStorage().Volumes().Delete(ctx, prjID, *cmpBS.Metadata.ID, nil)
 	if err != nil {
 		return fmt.Errorf("failed to delete blockstorage '%s' in Aruba CMP: error: '%w'", *cmpBS.Metadata.Name, err)
 	}
 
-	switch bsResp.StatusCode {
+	switch cmpBSResp.StatusCode {
 	case http.StatusOK, http.StatusAccepted, http.StatusNoContent, http.StatusNotFound:
 		// Do nothing, we can consider the delete request as successful
+
 	case http.StatusBadRequest:
-		return fmt.Errorf("failed to delete blockstorage '%s' in Aruba CMP: status_code: %d, error: 'semantic or precondition error'", *cmpBS.Metadata.Name, bsResp.StatusCode)
+		return fmt.Errorf(
+			"failed to delete blockstorage '%s' in Aruba CMP: status_code: %d, error_nature: 'semantic or precondition error', error: '%s'",
+			*cmpBS.Metadata.Name, cmpBSResp.StatusCode, cmpErrorDetails(cmpBSResp.Error),
+		)
+
 	default:
-		return fmt.Errorf("failed to delete blockstorage '%s' in Aruba CMP: status_code: %d, error: 'internal error'", *cmpBS.Metadata.Name, bsResp.StatusCode)
+		return fmt.Errorf(
+			"failed to delete blockstorage '%s' in Aruba CMP: status_code: %d, error_nature: 'internal error', error: '%s'",
+			*cmpBS.Metadata.Name, cmpBSResp.StatusCode, cmpErrorDetails(cmpBSResp.Error),
+		)
 	}
 	return nil
 }
@@ -518,23 +526,25 @@ func (r *BlockStorageReconciler) cmpUpdate(ctx context.Context, kubeBS *v1alpha1
 
 	request := buildBlockStorageUpdateRequest(kubeBS, cmpBS)
 
-	updateResp, err := r.ArubaClient.FromStorage().Volumes().Update(ctx, prjID, *cmpBS.Metadata.ID, *request, nil)
+	cmpBSResp, err := r.ArubaClient.FromStorage().Volumes().Update(ctx, prjID, *cmpBS.Metadata.ID, *request, nil)
 	if err != nil {
-		return fmt.Errorf("failed to update blockstorage '%s' in Aruba CMP: %w", kubeBS.Name, err)
+		return fmt.Errorf("failed to update blockstorage '%s' in Aruba CMP: error: '%w'", kubeBS.Name, err)
 	}
 
-	switch updateResp.StatusCode {
+	switch cmpBSResp.StatusCode {
 	case http.StatusOK, http.StatusAccepted, http.StatusNoContent:
-		// Success
+		// Do nothing, we can consider the update request as successful
+
 	case http.StatusBadRequest:
 		return fmt.Errorf(
-			"failed to update blockstorage '%s' in Aruba CMP: status_code: %d, error: 'semantic or precondition error'",
-			kubeBS.Name, updateResp.StatusCode,
+			"failed to update blockstorage '%s' in Aruba CMP: status_code: %d, error_nature: 'semantic or precondition error', error: '%s'",
+			*cmpBS.Metadata.Name, cmpBSResp.StatusCode, cmpErrorDetails(cmpBSResp.Error),
 		)
+
 	default:
 		return fmt.Errorf(
-			"failed to update blockstorage '%s' in Aruba CMP: status_code: %d, error: 'internal error'",
-			kubeBS.Name, updateResp.StatusCode,
+			"failed to update blockstorage '%s' in Aruba CMP: status_code: %d, error_nature: 'internal error', error: '%s'",
+			*cmpBS.Metadata.Name, cmpBSResp.StatusCode, cmpErrorDetails(cmpBSResp.Error),
 		)
 	}
 	return nil
@@ -542,18 +552,26 @@ func (r *BlockStorageReconciler) cmpUpdate(ctx context.Context, kubeBS *v1alpha1
 
 func (r *BlockStorageReconciler) cmpCreate(ctx context.Context, kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
-	bsCreateResp, err := r.ArubaClient.FromStorage().Volumes().Create(ctx, prjID, *cmpBlockStorageRequestFromKube(kubeBS), nil)
+	cmpBSResp, err := r.ArubaClient.FromStorage().Volumes().Create(ctx, prjID, *cmpBlockStorageRequestFromKube(kubeBS), nil)
 	if err != nil {
 		return fmt.Errorf("failed to create blockstorage '%s' in Aruba CMP: error: '%w'", kubeBS.Name, err)
 	}
 
-	switch bsCreateResp.StatusCode {
+	switch cmpBSResp.StatusCode {
 	case http.StatusOK, http.StatusCreated, http.StatusAccepted:
-		// Success
+		// Do nothing, we can consider the create request as successful
+
 	case http.StatusBadRequest:
-		return fmt.Errorf("status_code: 400, failed to create blockstorage '%s' in Aruba CMP: semantic or precondition error", kubeBS.Name)
+		return fmt.Errorf(
+			"failed to create blockstorage '%s' in Aruba CMP: status_code: %d, error_nature: 'semantic or precondition error', error: '%s'",
+			kubeBS.Name, cmpBSResp.StatusCode, cmpErrorDetails(cmpBSResp.Error),
+		)
+
 	default:
-		return fmt.Errorf("status_code: %d, failed to create blockstorage '%s' in Aruba CMP: internal error", bsCreateResp.StatusCode, kubeBS.Name)
+		return fmt.Errorf(
+			"failed to create blockstorage '%s' in Aruba CMP: status_code: %d, error_nature: 'internal error', error: '%s'",
+			kubeBS.Name, cmpBSResp.StatusCode, cmpErrorDetails(cmpBSResp.Error),
+		)
 	}
 	return nil
 }

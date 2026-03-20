@@ -18,3 +18,5 @@ packages:
       ProjectClient:
       StorageClient:
       VolumesClient:
+      NetworkClient:
+      VPCsClient:

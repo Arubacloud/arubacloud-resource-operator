@@ -17,6 +17,7 @@ rules:
   - arubacloud.com
   resources:
   - blockstorages
+  - vpcs
   verbs:
   - create
   - delete
@@ -29,12 +30,14 @@ rules:
   - arubacloud.com
   resources:
   - blockstorages/finalizers
+  - vpcs/finalizers
   verbs:
   - update
 - apiGroups:
   - arubacloud.com
   resources:
   - blockstorages/status
+  - vpcs/status
   verbs:
   - get
   - patch

@@ -308,12 +308,12 @@ func main() {
 	// 	os.Exit(1)
 	// }
 
-	// // Setup Vpc controller
-	// vpcReconciler := controller.NewVpcReconciler(baseReconciler)
-	// if err = vpcReconciler.SetupWithManager(mgr); err != nil {
-	// 	setupLog.Error(err, "unable to create controller", "controller", "Vpc")
-	// 	os.Exit(1)
-	// }
+	// Setup Vpc controller
+	vpcReconciler := controller.NewVpcReconciler(baseReconciler)
+	if err = vpcReconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Vpc")
+		os.Exit(1)
+	}
 
 	if metricsCertWatcher != nil {
 		setupLog.Info("Adding metrics certificate watcher to manager")

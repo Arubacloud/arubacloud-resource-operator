@@ -19,50 +19,93 @@ import (
 )
 
 const (
+	// ShortRequeueAfter is the requeue delay used after transient operations such as
+	// setting finalizers, where a quick re-check is expected.
 	ShortRequeueAfter = 1 * time.Second
-	LongRequeueAfter  = 20 * time.Second
+	// LongRequeueAfter is the requeue delay used when polling for slow cloud-side
+	// operations (e.g. waiting for a resource to become active).
+	LongRequeueAfter = 20 * time.Second
 	// MaxPhaseTimeout defines the maximum time a resource can remain in a non-final phase
-	MaxPhaseTimeout = 2 * time.Minute
+	MaxPhaseTimeout = 10 * time.Minute
 )
 
-// ResourceReconciler is an interface that must be implemented by all resource reconcilers
+// ResourceReconciler is an interface that must be implemented by all resource reconcilers.
+// Each concrete controller embeds or delegates to a Reconciler and provides resource-specific
+// behaviour through this interface.
 type ResourceReconciler interface {
+	// Object returns a zero-value instance of the managed resource type used as a
+	// target for API-server GET calls.
 	Object() ResourceObject
+	// Finalizer returns the finalizer string registered on the managed resource to
+	// prevent premature garbage collection before cloud-side cleanup is complete.
 	Finalizer() string
+	// HandleReconcile contains the resource-specific reconciliation logic, including
+	// phase transitions and cloud API interactions. It is called after finalizer
+	// registration and before finalizer removal.
 	HandleReconcile(ctx context.Context, obj ResourceObject) (ctrl.Result, error)
 }
 
-// Reconciler provides base functionality for all resource controllers
+// Reconciler provides base functionality for all resource controllers. It holds the
+// Kubernetes client, the runtime scheme, and the Aruba cloud API client shared across
+// all concrete controllers.
 type Reconciler struct {
+	// Client is the controller-runtime client used to read and write Kubernetes objects.
 	client.Client
+	// Scheme is the runtime scheme used for object type registration.
 	*runtime.Scheme
+	// ArubaClient is the authenticated Aruba cloud API client.
 	ArubaClient aruba.Client
 }
 
+// ResourceObject is the constraint that every managed custom resource must satisfy.
+// It extends the standard controller-runtime client.Object with Aruba-specific accessors.
 type ResourceObject interface {
 	client.Object
+	// GetResourceStatus returns a pointer to the embedded ResourceStatus, which tracks
+	// the current phase and conditions of the cloud resource.
 	GetResourceStatus() *v1alpha1.ResourceStatus
+	// GetTenant returns the tenant identifier associated with this resource, used to
+	// scope Aruba API calls to the correct account.
 	GetTenant() string
 }
 
-// ReconcilerConfig holds configuration for setting up Reconciler
+// ReconcilerConfig holds configuration for setting up a Reconciler. Values are
+// typically populated from environment variables or a ConfigMap at operator startup.
 type ReconcilerConfig struct {
-	APIGateway     string
+	// APIGateway is the base URL of the Aruba cloud API endpoint.
+	APIGateway string
+	// VaultIsEnabled controls whether credentials are fetched from HashiCorp Vault
+	// instead of being supplied directly as ClientID/ClientSecret.
 	VaultIsEnabled bool
-	VaultAddress   string
-	KeycloakURL    string
-	RealmAPI       string
-	Namespace      string
-	RolePath       string
-	ClientID       string
-	ClientSecret   string //nolint:gosec // G117: ClientSecret is intentionally storing OAuth secret
-	RoleID         string
-	RoleSecret     string
-	KVMount        string
-	HTTPClient     *http.Client
+	// VaultAddress is the address of the HashiCorp Vault server (used when VaultIsEnabled is true).
+	VaultAddress string
+	// KeycloakURL is the base URL of the Keycloak instance used for token issuance.
+	KeycloakURL string
+	// RealmAPI is the Keycloak realm used for authentication.
+	RealmAPI string
+	// Namespace is the Kubernetes namespace the operator runs in, used for Vault path scoping.
+	Namespace string
+	// RolePath is the Vault AppRole mount path used to retrieve credentials.
+	RolePath string
+	// ClientID is the OAuth2 client ID used when VaultIsEnabled is false.
+	ClientID string
+	// ClientSecret is the OAuth2 client secret used when VaultIsEnabled is false.
+	ClientSecret string //nolint:gosec // G117: ClientSecret is intentionally storing OAuth secret
+	// RoleID is the Vault AppRole role ID used when VaultIsEnabled is true.
+	RoleID string
+	// RoleSecret is the Vault AppRole secret ID used when VaultIsEnabled is true.
+	RoleSecret string
+	// KVMount is the Vault KV secrets engine mount path where credentials are stored.
+	KVMount string
+	// HTTPClient is an optional custom HTTP client injected for testing or proxy support.
+	HTTPClient *http.Client
 }
 
-// NewReconciler creates a new base reconciler
+// NewReconciler creates a new base Reconciler wired to the given controller-runtime
+// Manager and configured via cfg. It initialises the Aruba cloud client, selecting
+// either Vault-based or direct client-credential authentication depending on
+// cfg.VaultIsEnabled. The process is terminated with log.Fatalf if the Aruba client
+// cannot be created, since the operator cannot function without a valid API client.
 func NewReconciler(mgr ctrl.Manager, cfg ReconcilerConfig) *Reconciler {
 	options := aruba.NewOptions().WithBaseURL(cfg.APIGateway).WithDefaultTokenIssuerURL()
 
@@ -86,7 +129,19 @@ func NewReconciler(mgr ctrl.Manager, cfg ReconcilerConfig) *Reconciler {
 	}
 }
 
-// Reconcile handles the common reconciliation logic for all resources
+// Reconcile implements the shared three-step reconciliation loop used by all resource
+// controllers:
+//
+//  1. Finalizer registration — adds the resource-specific finalizer when the object is
+//     not being deleted, then requeues so the next iteration starts with the finalizer
+//     already present.
+//  2. Resource-specific reconciliation — delegates to resourceReconciler.HandleReconcile
+//     which drives phase transitions and interacts with the Aruba cloud API.
+//  3. Finalizer removal — once HandleReconcile reports the resource has reached the
+//     Deleted phase, the finalizer is stripped so Kubernetes can garbage-collect the object.
+//
+// Both finalizer operations are wrapped in retry.RetryOnConflict to handle optimistic
+// concurrency conflicts from concurrent writes.
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request, resourceReconciler ResourceReconciler) (ctrl.Result, error) {
 	var result ctrl.Result
 
@@ -163,6 +218,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request, resourceRe
 	return ctrl.Result{}, nil
 }
 
+// getResource fetches the resource identified by req into obj. It returns (nil, nil)
+// when the object is not found (i.e. it has already been deleted from the API server),
+// allowing callers to treat a missing object as a no-op rather than an error.
 func (r *Reconciler) getResource(ctx context.Context, req ctrl.Request, obj ResourceObject) (ResourceObject, error) {
 	if err := r.Get(ctx, req.NamespacedName, obj); err != nil {
 		return nil, client.IgnoreNotFound(err)

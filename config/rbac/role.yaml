@@ -17,14 +17,6 @@ rules:
   - arubacloud.com
   resources:
   - blockstorages
-  - cloudservers
-  - elasticips
-  - keypairs
-  - projects
-  - securitygroups
-  - securityrules
-  - subnets
-  - vpcs
   verbs:
   - create
   - delete
@@ -37,29 +29,21 @@ rules:
   - arubacloud.com
   resources:
   - blockstorages/finalizers
-  - cloudservers/finalizers
-  - elasticips/finalizers
-  - keypairs/finalizers
-  - projects/finalizers
-  - securitygroups/finalizers
-  - securityrules/finalizers
-  - subnets/finalizers
-  - vpcs/finalizers
   verbs:
   - update
 - apiGroups:
   - arubacloud.com
   resources:
   - blockstorages/status
-  - cloudservers/status
-  - elasticips/status
-  - keypairs/status
-  - projects/status
-  - securitygroups/status
-  - securityrules/status
-  - subnets/status
-  - vpcs/status
   verbs:
   - get
   - patch
   - update
+- apiGroups:
+  - arubacloud.com
+  resources:
+  - projects
+  verbs:
+  - get
+  - list
+  - watch

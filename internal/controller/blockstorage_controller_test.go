@@ -1,446 +1,545 @@
-// /*
-// Copyright 2025.
-
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-
-//     http://www.apache.org/licenses/LICENSE-2.0
-
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-// */
-
 package controller
 
-// import (
-// 	"context"
-// 	"fmt"
-// 	"io"
-// 	"net/http"
-// 	"strings"
+import (
+	"context"
+	"net/http"
+	"time"
 
-// 	"github.com/Arubacloud/arubacloud-resource-operator/internal/client"
-// 	"github.com/Arubacloud/arubacloud-resource-operator/internal/mocks"
-// 	. "github.com/onsi/ginkgo/v2"
-// 	. "github.com/onsi/gomega"
-// 	"github.com/stretchr/testify/mock"
-// 	"k8s.io/apimachinery/pkg/api/errors"
-// 	"k8s.io/apimachinery/pkg/types"
-// 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	"github.com/stretchr/testify/mock"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
-// 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
+	arubamocks "github.com/Arubacloud/arubacloud-resource-operator/internal/mocks/aruba"
+	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
+	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
+)
 
-// 	v1alpha1 "github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
-// 	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
-// )
+// --- Builder helpers ---
 
-// var _ = Describe("BlockStorage Controller", func() {
-// 	Context("When reconciling a resource", func() {
-// 		const resourceName = "test-block-storage"
+func buildBlockStorageResponse(id, name, state string) *arubatypes.BlockStorageResponse {
+	location := &arubatypes.LocationResponse{Value: "ITBG-Bergamo"}
+	return &arubatypes.BlockStorageResponse{
+		Metadata: arubatypes.ResourceMetadataResponse{
+			ID:               &id,
+			Name:             &name,
+			LocationResponse: location,
+		},
+		Properties: arubatypes.BlockStoragePropertiesResponse{
+			SizeGB:        10,
+			BillingPeriod: "Hour",
+			Zone:          "zone1",
+			Type:          arubatypes.BlockStorageTypeStandard,
+		},
+		Status: arubatypes.ResourceStatus{
+			State: &state,
+		},
+	}
+}
 
-// 		ctx := context.Background()
+func buildBlockStorageList(responses ...*arubatypes.BlockStorageResponse) *arubatypes.Response[arubatypes.BlockStorageList] {
+	list := &arubatypes.BlockStorageList{}
+	for _, r := range responses {
+		list.Values = append(list.Values, *r)
+		list.Total++
+	}
+	return &arubatypes.Response[arubatypes.BlockStorageList]{
+		Data:       list,
+		StatusCode: http.StatusOK,
+	}
+}
 
-// 		typeNamespacedName := types.NamespacedName{
-// 			Name:      resourceName,
-// 			Namespace: "default",
-// 		}
-// 		arubaBlockStorage := &v1alpha1.BlockStorage{}
+func buildBSCRUDResponse(statusCode int) *arubatypes.Response[arubatypes.BlockStorageResponse] {
+	return &arubatypes.Response[arubatypes.BlockStorageResponse]{
+		StatusCode: statusCode,
+	}
+}
 
-// 		BeforeEach(func() {
-// 			By("creating the custom resource for the Kind BlockStorage")
-// 			err := k8sClient.Get(ctx, typeNamespacedName, arubaBlockStorage)
-// 			if err != nil && errors.IsNotFound(err) {
-// 				resource := &v1alpha1.BlockStorage{
-// 					ObjectMeta: metav1.ObjectMeta{
-// 						Name:      resourceName,
-// 						Namespace: "default",
-// 					},
-// 					Spec: v1alpha1.BlockStorageSpec{
-// 						Tenant: "test-tenant",
-// 						Tags:   []string{"test", "basic"},
-// 						Location: v1alpha1.Location{
-// 							Value: "ITBG-Bergamo",
-// 						},
-// 						SizeGb:        10,
-// 						BillingPeriod: "Hour",
-// 						DataCenter:    "ITBG-1",
-// 						ProjectReference: v1alpha1.ResourceReference{
-// 							Name:      "test-project",
-// 							Namespace: "default",
-// 						},
-// 					},
-// 				}
-// 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
-// 			}
-// 		})
+func buildProjectListForBS(projectID, projectName string) *arubatypes.Response[arubatypes.ProjectList] {
+	id := projectID
+	name := projectName
+	proj := arubatypes.ProjectResponse{
+		Metadata: arubatypes.ResourceMetadataResponse{
+			ID:   &id,
+			Name: &name,
+		},
+	}
+	list := &arubatypes.ProjectList{}
+	list.Values = append(list.Values, proj)
+	list.Total = 1
+	return &arubatypes.Response[arubatypes.ProjectList]{
+		Data:       list,
+		StatusCode: http.StatusOK,
+	}
+}
 
-// 		AfterEach(func() {
-// 			resource := &v1alpha1.BlockStorage{}
-// 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
-// 			Expect(err).NotTo(HaveOccurred())
+// --- Test fixture helpers ---
 
-// 			By("Cleanup the specific resource instance BlockStorage")
-// 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
-// 		})
-// 	})
-// })
+func defaultBSSpec(projectName string) v1alpha1.BlockStorageSpec {
+	return v1alpha1.BlockStorageSpec{
+		Tenant:        "test-tenant",
+		Location:      v1alpha1.Location{Value: "ITBG-Bergamo"},
+		SizeGb:        10,
+		BillingPeriod: "Hour",
+		DataCenter:    "zone1",
+		Type:          "Standard",
+		Tags:          []string{"tag1"},
+		ProjectReference: v1alpha1.ResourceReference{
+			Name:      projectName,
+			Namespace: "default",
+		},
+	}
+}
 
-// var _ = Describe("BlockStorage Controller Reconcile Method", func() {
-// 	Context("When testing reconcile phases", func() {
-// 		var (
-// 			ctx                context.Context
-// 			resourceReconciler *BlockStorageReconciler
-// 			arubaBlockStorage  *v1alpha1.BlockStorage
-// 			typeNamespacedName types.NamespacedName
-// 		)
+func createTestBlockStorage(ctx context.Context, name string, spec v1alpha1.BlockStorageSpec) *v1alpha1.BlockStorage {
+	bs := &v1alpha1.BlockStorage{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "default",
+		},
+		Spec: spec,
+	}
+	ExpectWithOffset(1, k8sClient.Create(ctx, bs)).To(Succeed())
+	return bs
+}
 
-// 		BeforeEach(func() {
-// 			ctx = context.Background()
-// 			auth := new(mocks.MockITokenManager)
-// 			auth.On("GetActiveToken", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return("token 123", nil)
-// 			auth.On("SetClientIdAndSecret", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-// 			auth.On("SetClientIdAndSecret", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+func setBSStatus(ctx context.Context, bs *v1alpha1.BlockStorage, phase v1alpha1.ResourcePhase, reason string, resourceID string, projectID string, observedGen int64, conditionTime time.Time) {
+	b := bs.DeepCopy()
+	Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), b)).To(Succeed())
+	b.Status.Phase = phase
+	b.Status.ResourceID = resourceID
+	b.Status.ProjectID = projectID
+	b.Status.ObservedGeneration = observedGen
+	if phase != "" {
+		b.Status.Conditions = []metav1.Condition{
+			{
+				Type:               string(phase),
+				Status:             metav1.ConditionTrue,
+				Reason:             reason,
+				LastTransitionTime: metav1.NewTime(conditionTime),
+				Message:            string(phase) + " " + reason + " - OK",
+			},
+		}
+	}
+	ExpectWithOffset(1, k8sClient.Status().Update(ctx, b)).To(Succeed())
+	ExpectWithOffset(1, k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bs)).To(Succeed())
+}
 
-// 			// Create mock HTTP client that returns 200 for all requests
-// 			mockHTTPClient := new(mocks.MockHTTPClient)
-// 			mockHTTPClient.On("Do", mock.AnythingOfType("*http.Request")).Return(
-// 				&http.Response{
-// 					StatusCode: 200,
-// 					Body:       io.NopCloser(strings.NewReader(`{"success": true}`)),
-// 					Header:     make(http.Header),
-// 				}, nil)
+type bsMocks struct {
+	r           *BlockStorageReconciler
+	mockAruba   *arubamocks.MockClient
+	mockProject *arubamocks.MockProjectClient
+	mockStorage *arubamocks.MockStorageClient
+	mockVolumes *arubamocks.MockVolumesClient
+}
 
-// 			// Create HelperClient with mocked HTTP client
-// 			helperClient := client.NewHelperClient(k8sClient, mockHTTPClient, "https://api.example.com")
+func newBSReconcilerWithMocks(t GinkgoTInterface) *bsMocks {
+	mockAruba := arubamocks.NewMockClient(t)
+	mockProject := arubamocks.NewMockProjectClient(t)
+	mockStorage := arubamocks.NewMockStorageClient(t)
+	mockVolumes := arubamocks.NewMockVolumesClient(t)
 
-// 			// Create base reconciler with mock client
-// 			baseResourceReconciler := &reconciler.Reconciler{
-// 				Client:       k8sClient,
-// 				Scheme:       k8sClient.Scheme(),
-// 				HelperClient: helperClient,
-// 				TokenManager: auth,
-// 			}
+	r := NewBlockStorageReconciler(&reconciler.Reconciler{
+		Client:      k8sClient,
+		Scheme:      k8sClient.Scheme(),
+		ArubaClient: mockAruba,
+	})
 
-// 			resourceReconciler = &BlockStorageReconciler{
-// 				Reconciler: baseResourceReconciler,
-// 			}
+	return &bsMocks{
+		r:           r,
+		mockAruba:   mockAruba,
+		mockProject: mockProject,
+		mockStorage: mockStorage,
+		mockVolumes: mockVolumes,
+	}
+}
 
-// 			typeNamespacedName = types.NamespacedName{
-// 				Name:      "test-reconcile-block-storage",
-// 				Namespace: "default",
-// 			}
-// 		})
+func (m *bsMocks) expectProjectList(projectID, projectName string) {
+	m.mockAruba.EXPECT().FromProject().Return(m.mockProject)
+	m.mockProject.EXPECT().List(mock.Anything, mock.Anything).Return(buildProjectListForBS(projectID, projectName), nil)
+}
 
-// 		It("should handle object not found gracefully", func() {
-// 			By("Reconciling a non-existent resource")
-// 			result, err := resourceReconciler.Reconcile(ctx, reconcile.Request{
-// 				NamespacedName: types.NamespacedName{
-// 					Name:      "non-existent",
-// 					Namespace: "default",
-// 				},
-// 			})
-// 			Expect(err).NotTo(HaveOccurred())
-// 			Expect(result).To(Equal(reconcile.Result{}))
-// 		})
+func (m *bsMocks) expectBSList(projectID string, responses ...*arubatypes.BlockStorageResponse) {
+	m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
+	m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
+	m.mockVolumes.EXPECT().List(mock.Anything, projectID, mock.Anything).Return(buildBlockStorageList(responses...), nil)
+}
 
-// 		It("should initialize phase when empty", func() {
-// 			By("Creating resource with empty phase")
-// 			arubaBlockStorage = &v1alpha1.BlockStorage{
-// 				ObjectMeta: metav1.ObjectMeta{
-// 					Name:      typeNamespacedName.Name,
-// 					Namespace: typeNamespacedName.Namespace,
-// 				},
-// 				Spec: v1alpha1.BlockStorageSpec{
-// 					Tenant: "test-tenant",
-// 					Tags:   []string{"test", "reconciliation"},
-// 					Location: v1alpha1.Location{
-// 						Value: "ITBG-Bergamo",
-// 					},
-// 					SizeGb:        10,
-// 					BillingPeriod: "Hour",
-// 					DataCenter:    "ITBG-1",
-// 					ProjectReference: v1alpha1.ResourceReference{
-// 						Name:      "test-project",
-// 						Namespace: "default",
-// 					},
-// 				},
-// 				Status: v1alpha1.BlockStorageStatus{
-// 					ResourceStatus: v1alpha1.ResourceStatus{Phase: ""},
-// 					ProjectID:      "",
-// 				},
-// 			}
-// 			Expect(k8sClient.Create(ctx, arubaBlockStorage)).To(Succeed())
+// --- Tests ---
 
-// 			By("Skipping reconcile due to authentication requirements")
-// 			// In unit tests, the reconciler would need proper vault and auth setup
-// 			// which is beyond the scope of unit testing
+var _ = Describe("BlockStorageReconciler", func() {
+	const (
+		bsProjectName = "test-project-ref"
+		bsProjectID   = "proj-id-1"
+	)
 
-// 			By("Cleanup")
-// 			Expect(k8sClient.Delete(ctx, arubaBlockStorage)).To(Succeed())
-// 		})
+	var (
+		ctx context.Context
+		bs  *v1alpha1.BlockStorage
+	)
 
-// 		It("should trigger delete phase when DeletionTimestamp is set", func() {
-// 			By("Creating resource in Created phase")
-// 			testName := fmt.Sprintf("test-delete-phase-bs-%d", GinkgoRandomSeed())
-// 			arubaBlockStorage = &v1alpha1.BlockStorage{
-// 				ObjectMeta: metav1.ObjectMeta{
-// 					Name:      testName,
-// 					Namespace: "default",
-// 				},
-// 				Spec: v1alpha1.BlockStorageSpec{
-// 					Tenant: "test-tenant",
-// 					Tags:   []string{"test", "phases"},
-// 					Location: v1alpha1.Location{
-// 						Value: "ITBG-Bergamo",
-// 					},
-// 					SizeGb:        10,
-// 					BillingPeriod: "Hour",
-// 					DataCenter:    "ITBG-1",
-// 					ProjectReference: v1alpha1.ResourceReference{
-// 						Name:      "test-project",
-// 						Namespace: "default",
-// 					},
-// 				},
-// 				Status: v1alpha1.BlockStorageStatus{
-// 					ResourceStatus: v1alpha1.ResourceStatus{Phase: v1alpha1.ResourcePhaseActive},
-// 				},
-// 			}
-// 			Expect(k8sClient.Create(ctx, arubaBlockStorage)).To(Succeed())
+	BeforeEach(func() {
+		ctx = context.Background()
+	})
 
-// 			By("Setting deletion timestamp by deleting the resource")
-// 			Expect(k8sClient.Delete(ctx, arubaBlockStorage)).To(Succeed())
+	AfterEach(func() {
+		if bs != nil {
+			b := &v1alpha1.BlockStorage{}
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), b); err == nil {
+				b.Finalizers = nil
+				_ = k8sClient.Update(ctx, b)
+				_ = k8sClient.Delete(ctx, b)
+			}
+			bs = nil
+		}
+	})
 
-// 			By("Reconciling the resource")
-// 			result, err := resourceReconciler.Reconcile(ctx, reconcile.Request{
-// 				NamespacedName: types.NamespacedName{
-// 					Name:      testName,
-// 					Namespace: "default",
-// 				},
-// 			})
+	Describe("First reconciliation", func() {
+		It("transitions to Creating+ShallSynchronize when CMP has no BS", func() {
+			m := newBSReconcilerWithMocks(GinkgoT())
+			bs = createTestBlockStorage(ctx, "test-bs-first", defaultBSSpec(bsProjectName))
 
-// 			Expect(err).NotTo(HaveOccurred())
-// 			Expect(result).To(Equal(reconcile.Result{}))
+			m.expectProjectList(bsProjectID, bsProjectName)
+			m.expectBSList(bsProjectID)
 
-// 			By("Verifying phase changed to Delete")
-// 			updatedBlockStorage := &v1alpha1.BlockStorage{}
-// 			err = k8sClient.Get(ctx, types.NamespacedName{
-// 				Name:      testName,
-// 				Namespace: "default",
-// 			}, updatedBlockStorage)
-// 			if err == nil {
-// 				Expect(updatedBlockStorage.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleting))
-// 			}
-// 		})
+			_, err := m.r.HandleReconcile(ctx, bs)
+			Expect(err).To(Succeed())
 
-// 		It("should not trigger delete phase when already in delete phases", func() {
-// 			deletePhases := []v1alpha1.ResourcePhase{
-// 				v1alpha1.ResourcePhaseDeleting,
-// 			}
+			updated := &v1alpha1.BlockStorage{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
+		})
+	})
 
-// 			for i, phase := range deletePhases {
-// 				By(fmt.Sprintf("Testing phase %s", phase))
-// 				resourceName := fmt.Sprintf("test-delete-bs-%d", i)
-// 				namespacedName := types.NamespacedName{
-// 					Name:      resourceName,
-// 					Namespace: "default",
-// 				}
+	Describe("Create on CMP", func() {
+		It("transitions to Creating+Synchronizing after successful CMP create", func() {
+			m := newBSReconcilerWithMocks(GinkgoT())
+			bs = createTestBlockStorage(ctx, "test-bs-create-cmp", defaultBSSpec(bsProjectName))
+			setBSStatus(ctx, bs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, "", "", 0, time.Now())
 
-// 				arubaBlockStorage = &v1alpha1.BlockStorage{
-// 					ObjectMeta: metav1.ObjectMeta{
-// 						Name:      resourceName,
-// 						Namespace: "default",
-// 					},
-// 					Spec: v1alpha1.BlockStorageSpec{
-// 						Tenant: "test-tenant",
-// 						Tags:   []string{"test", "deletion"},
-// 						Location: v1alpha1.Location{
-// 							Value: "ITBG-Bergamo",
-// 						},
-// 						SizeGb:        10,
-// 						BillingPeriod: "Hour",
-// 						DataCenter:    "ITBG-1",
-// 						ProjectReference: v1alpha1.ResourceReference{
-// 							Name:      "test-project",
-// 							Namespace: "default",
-// 						},
-// 					},
-// 					Status: v1alpha1.BlockStorageStatus{
-// 						ResourceStatus: v1alpha1.ResourceStatus{
-// 							Phase: phase,
-// 						},
-// 					},
-// 				}
-// 				Expect(k8sClient.Create(ctx, arubaBlockStorage)).To(Succeed())
+			m.expectProjectList(bsProjectID, bsProjectName)
+			m.expectBSList(bsProjectID)
+			m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
+			m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
+			m.mockVolumes.EXPECT().Create(mock.Anything, bsProjectID, mock.Anything, mock.Anything).Return(buildBSCRUDResponse(http.StatusCreated), nil)
 
-// 				By("Setting deletion timestamp")
-// 				Expect(k8sClient.Delete(ctx, arubaBlockStorage)).To(Succeed())
+			_, err := m.r.HandleReconcile(ctx, bs)
+			Expect(err).To(Succeed())
 
-// 				By("Reconciling should handle the specific delete phase")
-// 				_, err := resourceReconciler.Reconcile(ctx, reconcile.Request{
-// 					NamespacedName: namespacedName,
-// 				})
-// 				Expect(err).NotTo(HaveOccurred())
-// 			}
-// 		})
+			updated := &v1alpha1.BlockStorage{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronizing))
+		})
+	})
 
-// 		It("should handle different phases correctly", func() {
-// 			phases := []v1alpha1.ResourcePhase{
-// 				v1alpha1.ResourcePhaseCreating,
-// 				v1alpha1.ResourcePhaseProvisioning,
-// 				v1alpha1.ResourcePhaseUpdating,
-// 				v1alpha1.ResourcePhaseActive,
-// 			}
+	Describe("Waiting creation (BS not yet in CMP)", func() {
+		It("returns LongRequeue", func() {
+			m := newBSReconcilerWithMocks(GinkgoT())
+			bs = createTestBlockStorage(ctx, "test-bs-wait-create", defaultBSSpec(bsProjectName))
+			setBSStatus(ctx, bs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "", "", 0, time.Now())
 
-// 			for i, phase := range phases {
-// 				By(fmt.Sprintf("Testing phase %s", phase))
-// 				resourceName := fmt.Sprintf("test-phase-bs-%d", i)
-// 				namespacedName := types.NamespacedName{
-// 					Name:      resourceName,
-// 					Namespace: "default",
-// 				}
+			m.expectProjectList(bsProjectID, bsProjectName)
+			m.expectBSList(bsProjectID)
 
-// 				arubaBlockStorage = &v1alpha1.BlockStorage{
-// 					ObjectMeta: metav1.ObjectMeta{
-// 						Name:      resourceName,
-// 						Namespace: "default",
-// 					},
-// 					Spec: v1alpha1.BlockStorageSpec{
-// 						Tenant: "test-tenant",
-// 						Tags:   []string{"test", "phases"},
-// 						Location: v1alpha1.Location{
-// 							Value: "ITBG-Bergamo",
-// 						},
-// 						SizeGb:        10,
-// 						BillingPeriod: "Hour",
-// 						DataCenter:    "ITBG-1",
-// 						ProjectReference: v1alpha1.ResourceReference{
-// 							Name:      "test-project",
-// 							Namespace: "default",
-// 						},
-// 					},
-// 					Status: v1alpha1.BlockStorageStatus{
-// 						ResourceStatus: v1alpha1.ResourceStatus{
-// 							Phase: phase,
-// 						},
-// 					},
-// 				}
-// 				Expect(k8sClient.Create(ctx, arubaBlockStorage)).To(Succeed())
+			result, err := m.r.HandleReconcile(ctx, bs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
+		})
+	})
 
-// 				By("Reconciling the resource")
-// 				// Should handle phases correctly with the implementation, even with nil ArubaClient
-// 				_, err := resourceReconciler.Reconcile(ctx, reconcile.Request{
-// 					NamespacedName: namespacedName,
-// 				})
-// 				// Note: Some phases may return errors due to nil ArubaClient, which is expected in tests
-// 				if phase == v1alpha1.ResourcePhaseActive {
-// 					Expect(err).NotTo(HaveOccurred())
-// 				}
-// 				// For other phases that require ArubaClient, we expect errors but test should not panic
+	Describe("Waiting creation (BS in transitory CMP state)", func() {
+		It("returns LongRequeue when CMP state is Creating", func() {
+			m := newBSReconcilerWithMocks(GinkgoT())
+			bs = createTestBlockStorage(ctx, "test-bs-wait-create-transitory", defaultBSSpec(bsProjectName))
+			setBSStatus(ctx, bs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "", "", 0, time.Now())
 
-// 				By("Cleanup")
-// 				Expect(k8sClient.Delete(ctx, arubaBlockStorage)).To(Succeed())
-// 			}
-// 		})
+			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-wait-create-transitory", CSPResourceStateCreating)
+			m.expectProjectList(bsProjectID, bsProjectName)
+			m.expectBSList(bsProjectID, cmpBS)
 
-// 		It("should test Next method", func() {
-// 			By("Creating resource")
-// 			testName := fmt.Sprintf("test-next-method-bs-%d", GinkgoRandomSeed())
-// 			arubaBlockStorage = &v1alpha1.BlockStorage{
-// 				ObjectMeta: metav1.ObjectMeta{
-// 					Name:      testName,
-// 					Namespace: "default",
-// 				},
-// 				Spec: v1alpha1.BlockStorageSpec{
-// 					Tenant: "test-tenant",
-// 					Tags:   []string{"test", "next-method"},
-// 					Location: v1alpha1.Location{
-// 						Value: "ITBG-Bergamo",
-// 					},
-// 					SizeGb:        10,
-// 					BillingPeriod: "Hour",
-// 					DataCenter:    "ITBG-1",
-// 					ProjectReference: v1alpha1.ResourceReference{
-// 						Name:      "test-project",
-// 						Namespace: "default",
-// 					},
-// 				},
-// 				Status: v1alpha1.BlockStorageStatus{
-// 					ResourceStatus: v1alpha1.ResourceStatus{
-// 						Phase: v1alpha1.ResourcePhaseActive,
-// 					},
-// 				},
-// 			}
-// 			Expect(k8sClient.Create(ctx, arubaBlockStorage)).To(Succeed())
+			result, err := m.r.HandleReconcile(ctx, bs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
+		})
+	})
 
-// 			By("Cleanup")
-// 			Expect(k8sClient.Delete(ctx, arubaBlockStorage)).To(Succeed())
-// 		})
+	Describe("Creation confirmed on CMP", func() {
+		It("transitions to Creating+Synchronized when CMP BS is active", func() {
+			m := newBSReconcilerWithMocks(GinkgoT())
+			bs = createTestBlockStorage(ctx, "test-bs-creation-confirmed", defaultBSSpec(bsProjectName))
+			setBSStatus(ctx, bs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "", "", 0, time.Now())
 
-// 		It("should test getProjectID method with valid project reference", func() {
-// 			By("Creating a test Project first")
-// 			projectName := fmt.Sprintf("test-ref-project-%d-%d", GinkgoRandomSeed(), GinkgoParallelProcess())
-// 			testProject := &v1alpha1.Project{
-// 				ObjectMeta: metav1.ObjectMeta{
-// 					Name:      projectName,
-// 					Namespace: "default",
-// 				},
-// 				Spec: v1alpha1.ProjectSpec{},
-// 			}
+			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-creation-confirmed", CSPResourceStateActive)
+			m.expectProjectList(bsProjectID, bsProjectName)
+			m.expectBSList(bsProjectID, cmpBS)
 
-// 			// Check if project already exists, delete it first
-// 			existingProject := &v1alpha1.Project{}
-// 			err := k8sClient.Get(ctx, types.NamespacedName{Name: projectName, Namespace: "default"}, existingProject)
-// 			if err == nil {
-// 				Expect(k8sClient.Delete(ctx, existingProject)).To(Succeed())
-// 				// Wait for deletion
-// 				Eventually(func() bool {
-// 					err := k8sClient.Get(ctx, types.NamespacedName{Name: projectName, Namespace: "default"}, existingProject)
-// 					return errors.IsNotFound(err)
-// 				}).Should(BeTrue())
-// 			}
+			_, err := m.r.HandleReconcile(ctx, bs)
+			Expect(err).To(Succeed())
 
-// 			Expect(k8sClient.Create(ctx, testProject)).To(Succeed())
+			updated := &v1alpha1.BlockStorage{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
+		})
+	})
 
-// 			By("Updating the project status with ProjectID")
-// 			testProject.Status.ResourceID = "test-project-id-12345"
-// 			Expect(k8sClient.Status().Update(ctx, testProject)).To(Succeed())
+	Describe("Creation accomplished", func() {
+		It("transitions to Active+Synchronized and sets ResourceID", func() {
+			m := newBSReconcilerWithMocks(GinkgoT())
+			bs = createTestBlockStorage(ctx, "test-bs-creation-accomplished", defaultBSSpec(bsProjectName))
+			setBSStatus(ctx, bs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronized, "", "", 0, time.Now())
 
-// 			By("Creating block storage resource with project reference")
-// 			bsName := fmt.Sprintf("test-get-project-id-bs-%d-%d", GinkgoRandomSeed(), GinkgoParallelProcess())
-// 			arubaBlockStorage = &v1alpha1.BlockStorage{
-// 				ObjectMeta: metav1.ObjectMeta{
-// 					Name:      bsName,
-// 					Namespace: "default",
-// 				},
-// 				Spec: v1alpha1.BlockStorageSpec{
-// 					Tenant: "test-tenant",
-// 					Location: v1alpha1.Location{
-// 						Value: "ITBG-Bergamo",
-// 					},
-// 					SizeGb:        10,
-// 					BillingPeriod: "Hour",
-// 					DataCenter:    "ITBG-1",
-// 					ProjectReference: v1alpha1.ResourceReference{
-// 						Name:      projectName,
-// 						Namespace: "default",
-// 					},
-// 				},
-// 			}
-// 			Expect(k8sClient.Create(ctx, arubaBlockStorage)).To(Succeed())
+			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-creation-accomplished", CSPResourceStateActive)
+			m.expectProjectList(bsProjectID, bsProjectName)
+			m.expectBSList(bsProjectID, cmpBS)
 
-// 			By("Testing GetProjectID method - this would require proper reconciler setup")
-// 			// In a real test, we would need to properly initialize the reconciler with all dependencies
-// 			// For now, we'll just verify that the project reference is correct in the spec
-// 			Expect(arubaBlockStorage.Spec.ProjectReference.Name).To(Equal(projectName))
-// 			Expect(arubaBlockStorage.Spec.ProjectReference.Namespace).To(Equal("default"))
+			_, err := m.r.HandleReconcile(ctx, bs)
+			Expect(err).To(Succeed())
 
-// 			By("Cleanup")
-// 			Expect(k8sClient.Delete(ctx, arubaBlockStorage)).To(Succeed())
-// 			Expect(k8sClient.Delete(ctx, testProject)).To(Succeed())
-// 		})
-// 	})
-// })
+			updated := &v1alpha1.BlockStorage{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseActive))
+			Expect(updated.Status.ResourceID).To(Equal("bs-id-1"))
+		})
+	})
+
+	Describe("HasDeniedChanges", func() {
+		It("returns LongRequeue when immutable field (size decrease) is changed", func() {
+			m := newBSReconcilerWithMocks(GinkgoT())
+			bs = createTestBlockStorage(ctx, "test-bs-denied-changes", defaultBSSpec(bsProjectName))
+			setBSStatus(ctx, bs, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "bs-id-1", bsProjectID, 1, time.Now())
+
+			// Force generation change with smaller size
+			bFetch := &v1alpha1.BlockStorage{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bFetch)).To(Succeed())
+			bFetch.Spec.SizeGb = 1 // decrease from 10 to 1
+			Expect(k8sClient.Update(ctx, bFetch)).To(Succeed())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bs)).To(Succeed())
+
+			// CMP has size 10 (larger than new spec 1)
+			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-denied-changes", CSPResourceStateActive)
+			m.expectProjectList(bsProjectID, bsProjectName)
+			m.expectBSList(bsProjectID, cmpBS)
+
+			result, err := m.r.HandleReconcile(ctx, bs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
+		})
+	})
+
+	Describe("IsInError", func() {
+		It("transitions to Failed+Synchronized when CMP state is Failed", func() {
+			m := newBSReconcilerWithMocks(GinkgoT())
+			bs = createTestBlockStorage(ctx, "test-bs-in-error", defaultBSSpec(bsProjectName))
+			setBSStatus(ctx, bs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "bs-id-1", bsProjectID, 1, time.Now())
+
+			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-in-error", CSPResourceStateFailed)
+			m.expectProjectList(bsProjectID, bsProjectName)
+			m.expectBSList(bsProjectID, cmpBS)
+
+			_, err := m.r.HandleReconcile(ctx, bs)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.BlockStorage{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
+		})
+	})
+
+	Describe("CMP transitory during deletion", func() {
+		It("returns LongRequeue when CMP state is Deleting", func() {
+			m := newBSReconcilerWithMocks(GinkgoT())
+			bs = createTestBlockStorage(ctx, "test-bs-deleting-transitory", defaultBSSpec(bsProjectName))
+			bFetch := &v1alpha1.BlockStorage{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bFetch)).To(Succeed())
+			bFetch.Finalizers = []string{blockStorageFinalizerName}
+			Expect(k8sClient.Update(ctx, bFetch)).To(Succeed())
+			setBSStatus(ctx, bs, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronizing, "bs-id-1", bsProjectID, 1, time.Now())
+			Expect(k8sClient.Delete(ctx, bs)).To(Succeed())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bs)).To(Succeed())
+
+			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-deleting-transitory", CSPResourceStateDeleting)
+			m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
+			m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
+			m.mockVolumes.EXPECT().List(mock.Anything, bsProjectID, mock.Anything).Return(buildBlockStorageList(cmpBS), nil)
+
+			result, err := m.r.HandleReconcile(ctx, bs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
+		})
+	})
+
+	Describe("Project not found yet", func() {
+		It("returns LongRequeue when project doesn't exist in CMP yet", func() {
+			m := newBSReconcilerWithMocks(GinkgoT())
+			bs = createTestBlockStorage(ctx, "test-bs-no-project", defaultBSSpec(bsProjectName))
+
+			m.mockAruba.EXPECT().FromProject().Return(m.mockProject)
+			m.mockProject.EXPECT().List(mock.Anything, mock.Anything).Return(buildProjectList(), nil)
+
+			result, err := m.r.HandleReconcile(ctx, bs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
+		})
+	})
+
+	Describe("ProjectID set in status via prePatch callback", func() {
+		It("stamps ProjectID on status when first transitioning", func() {
+			m := newBSReconcilerWithMocks(GinkgoT())
+			bs = createTestBlockStorage(ctx, "test-bs-project-id", defaultBSSpec(bsProjectName))
+
+			m.expectProjectList(bsProjectID, bsProjectName)
+			m.expectBSList(bsProjectID)
+
+			_, err := m.r.HandleReconcile(ctx, bs)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.BlockStorage{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), updated)).To(Succeed())
+			Expect(updated.Status.ProjectID).To(Equal(bsProjectID))
+		})
+	})
+
+	Describe("Should delete", func() {
+		It("transitions to Deleting+ShallSynchronize when deletion is requested on Active BS", func() {
+			m := newBSReconcilerWithMocks(GinkgoT())
+			bs = createTestBlockStorage(ctx, "test-bs-should-delete", defaultBSSpec(bsProjectName))
+			bFetch := &v1alpha1.BlockStorage{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bFetch)).To(Succeed())
+			bFetch.Finalizers = []string{blockStorageFinalizerName}
+			Expect(k8sClient.Update(ctx, bFetch)).To(Succeed())
+			setBSStatus(ctx, bs, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "bs-id-1", bsProjectID, 1, time.Now())
+			Expect(k8sClient.Delete(ctx, bs)).To(Succeed())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bs)).To(Succeed())
+
+			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-should-delete", CSPResourceStateActive)
+			m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
+			m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
+			m.mockVolumes.EXPECT().List(mock.Anything, bsProjectID, mock.Anything).Return(buildBlockStorageList(cmpBS), nil)
+
+			_, err := m.r.HandleReconcile(ctx, bs)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.BlockStorage{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleting))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
+		})
+	})
+
+	Describe("Delete on CMP", func() {
+		It("transitions to Deleting+Synchronizing after successful CMP delete", func() {
+			m := newBSReconcilerWithMocks(GinkgoT())
+			bs = createTestBlockStorage(ctx, "test-bs-delete-cmp", defaultBSSpec(bsProjectName))
+			bFetch := &v1alpha1.BlockStorage{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bFetch)).To(Succeed())
+			bFetch.Finalizers = []string{blockStorageFinalizerName}
+			Expect(k8sClient.Update(ctx, bFetch)).To(Succeed())
+			setBSStatus(ctx, bs, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize, "bs-id-1", bsProjectID, 1, time.Now())
+			Expect(k8sClient.Delete(ctx, bs)).To(Succeed())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bs)).To(Succeed())
+
+			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-delete-cmp", CSPResourceStateActive)
+			m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
+			m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
+			m.mockVolumes.EXPECT().List(mock.Anything, bsProjectID, mock.Anything).Return(buildBlockStorageList(cmpBS), nil)
+			m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
+			m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
+			m.mockVolumes.EXPECT().Delete(mock.Anything, bsProjectID, "bs-id-1", mock.Anything).Return(buildDeleteResponse(http.StatusOK), nil)
+
+			_, err := m.r.HandleReconcile(ctx, bs)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.BlockStorage{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleting))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronizing))
+		})
+	})
+
+	Describe("Deletion accomplished", func() {
+		It("transitions to Deleted phase when CMP BS is gone", func() {
+			m := newBSReconcilerWithMocks(GinkgoT())
+			bs = createTestBlockStorage(ctx, "test-bs-deletion-accomplished", defaultBSSpec(bsProjectName))
+			bFetch := &v1alpha1.BlockStorage{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bFetch)).To(Succeed())
+			bFetch.Finalizers = []string{blockStorageFinalizerName}
+			Expect(k8sClient.Update(ctx, bFetch)).To(Succeed())
+			setBSStatus(ctx, bs, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronized, "bs-id-1", bsProjectID, 1, time.Now())
+			Expect(k8sClient.Delete(ctx, bs)).To(Succeed())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bs)).To(Succeed())
+
+			m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
+			m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
+			m.mockVolumes.EXPECT().List(mock.Anything, bsProjectID, mock.Anything).Return(buildBlockStorageList(), nil)
+
+			_, err := m.r.HandleReconcile(ctx, bs)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.BlockStorage{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleted))
+		})
+	})
+
+	Describe("Update on CMP", func() {
+		It("transitions to Updating+Synchronizing after successful CMP update", func() {
+			m := newBSReconcilerWithMocks(GinkgoT())
+			bs = createTestBlockStorage(ctx, "test-bs-update-cmp", defaultBSSpec(bsProjectName))
+			setBSStatus(ctx, bs, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, "bs-id-1", bsProjectID, 1, time.Now())
+
+			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-update-cmp", CSPResourceStateActive)
+			m.expectProjectList(bsProjectID, bsProjectName)
+			m.expectBSList(bsProjectID, cmpBS)
+			m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
+			m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
+			m.mockVolumes.EXPECT().Update(mock.Anything, bsProjectID, "bs-id-1", mock.Anything, mock.Anything).Return(buildBSCRUDResponse(http.StatusOK), nil)
+
+			_, err := m.r.HandleReconcile(ctx, bs)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.BlockStorage{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseUpdating))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseUpdating))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronizing))
+		})
+	})
+
+	Describe("Phase timeout", func() {
+		It("transitions to Failed when stuck in transitory phase too long", func() {
+			m := newBSReconcilerWithMocks(GinkgoT())
+			bs = createTestBlockStorage(ctx, "test-bs-timeout", defaultBSSpec(bsProjectName))
+			setBSStatus(ctx, bs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, "", bsProjectID,
+				0, time.Now().Add(-(reconciler.MaxPhaseTimeout + time.Minute)))
+
+			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-timeout", CSPResourceStateActive)
+			m.expectProjectList(bsProjectID, bsProjectName)
+			m.expectBSList(bsProjectID, cmpBS)
+
+			_, err := m.r.HandleReconcile(ctx, bs)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.BlockStorage{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+		})
+	})
+})

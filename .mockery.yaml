@@ -9,3 +9,12 @@ packages:
       all: true
       dir: internal/mocks
       outpkg: mocks
+  github.com/Arubacloud/sdk-go/pkg/aruba:
+    config:
+      dir: internal/mocks/aruba
+      outpkg: arubamocks
+    interfaces:
+      Client:
+      ProjectClient:
+      StorageClient:
+      VolumesClient:

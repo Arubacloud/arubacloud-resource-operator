@@ -116,6 +116,16 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 		defaultRequeueOnError: NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 	}
 
+	// 0. PhaseTimedOut — safety net: fail if stuck in a transitory phase too long
+	ts.Add(&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+		name:           "PhaseTimedOut",
+		kCondition:     kubePhaseTimedOut[*v1alpha1.Project, *arubatypes.ProjectResponse],
+		aCondition:     AlwaysTrue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+		kAction:        r.kubeSetFailedOnTimeout,
+		requeue:        NoRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+	})
+
 	// Project should be deleted (but not in "Deleting")
 	ts.Add(
 		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
@@ -349,6 +359,10 @@ func cmpProjectNotExists(_ *v1alpha1.Project, cmpProj *arubatypes.ProjectRespons
 
 func (r *ProjectReconciler) kubeSetPhaseAndCondition(ctx context.Context, kubeProj *v1alpha1.Project, phase v1alpha1.ResourcePhase, reason string, actionErr error) error {
 	return setPhaseAndCondition(r.Client, ctx, kubeProj, phase, reason, actionErr)
+}
+
+func (r *ProjectReconciler) kubeSetFailedOnTimeout(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
+	return setFailedOnTimeout(r.Client, ctx, kubeProj)
 }
 
 func (r *ProjectReconciler) kubeMarkToDelete(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {

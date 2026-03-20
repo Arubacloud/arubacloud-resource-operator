@@ -51,6 +51,9 @@ const (
 	// ConditionReasonSynchronized indicates whether the resource is
 	// synchronized with the CMP
 	ConditionReasonSynchronized = "Synchronized"
+	// ConditionReasonFailed indicates that the resource has exceeded the maximum
+	// allowed time in a transitory phase and has been moved to Failed.
+	ConditionReasonFailed = "Failed"
 )
 
 // Location specifies the location for resources

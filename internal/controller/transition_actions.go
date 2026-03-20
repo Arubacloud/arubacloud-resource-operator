@@ -134,6 +134,56 @@ func setActiveAndSetID[K DeepCopyableObject[K]](
 	})
 }
 
+// setFailedOnTimeout performs a retry-on-conflict status patch that moves a
+// resource stuck in a transitory phase to Failed, recording the timeout reason
+// on both the previous phase's condition and the new Failed condition.
+func setFailedOnTimeout[K DeepCopyableObject[K]](
+	c client.Client, ctx context.Context, obj K,
+	prePatch ...func(K),
+) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		objCopy := obj.DeepCopy()
+		if err := c.Get(ctx, client.ObjectKeyFromObject(obj), objCopy); err != nil {
+			return err
+		}
+
+		objPatch := objCopy.DeepCopy()
+		for _, fn := range prePatch {
+			fn(objPatch)
+		}
+
+		rs := objPatch.GetResourceStatus()
+		previousPhase := rs.Phase
+		timeoutMsg := fmt.Sprintf("phase timeout exceeded (%s)", reconciler.MaxPhaseTimeout)
+
+		// Set ALL existing conditions to ConditionFalse
+		for i := range rs.Conditions {
+			rs.Conditions[i].Status = metav1.ConditionFalse
+		}
+
+		// Update the timed-out phase condition: Status=False, Reason=Failed
+		meta.SetStatusCondition(&rs.Conditions, metav1.Condition{
+			Type:    string(previousPhase),
+			Status:  metav1.ConditionFalse,
+			Reason:  v1alpha1.ConditionReasonFailed,
+			Message: fmt.Sprintf("%s %s - %s", string(previousPhase), v1alpha1.ConditionReasonFailed, timeoutMsg),
+		})
+
+		// Set phase to Failed
+		rs.Phase = v1alpha1.ResourcePhaseFailed
+
+		// Add Failed condition: Status=True, Reason=Failed, same message as the timed-out phase
+		meta.SetStatusCondition(&rs.Conditions, metav1.Condition{
+			Type:    string(v1alpha1.ResourcePhaseFailed),
+			Status:  metav1.ConditionTrue,
+			Reason:  v1alpha1.ConditionReasonFailed,
+			Message: fmt.Sprintf("%s %s - %s", string(previousPhase), v1alpha1.ConditionReasonFailed, timeoutMsg),
+		})
+
+		return c.Status().Patch(ctx, objPatch, client.MergeFrom(objCopy))
+	})
+}
+
 // tagsAreEqual returns true when both tag slices contain the same elements
 // regardless of order.
 func tagsAreEqual(a, b []string) bool {

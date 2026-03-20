@@ -1,12 +1,35 @@
 package controller
 
 import (
+	"time"
+
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
 	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
 )
+
+// kubePhaseTimedOut returns true when the resource has been stuck in a transitory
+// phase with reason ShallSynchronize or Synchronizing for longer than MaxPhaseTimeout.
+func kubePhaseTimedOut[K reconciler.ResourceObject, A any](k K, _ A) bool {
+	rs := k.GetResourceStatus()
+	if rs == nil || rs.AssessPhaseNature() != v1alpha1.PhaseNatureTransitory {
+		return false
+	}
+
+	condition := meta.FindStatusCondition(rs.Conditions, string(rs.Phase))
+	if condition == nil || condition.Status != metav1.ConditionTrue {
+		return false
+	}
+
+	if condition.Reason != v1alpha1.ConditionReasonShallSynchronize &&
+		condition.Reason != v1alpha1.ConditionReasonSynchronizing {
+		return false
+	}
+
+	return time.Since(condition.LastTransitionTime.Time) > reconciler.MaxPhaseTimeout
+}
 
 // kubeHasPhaseAndReason is a shared helper that checks the common pattern:
 // DeletionTimestamp state + Phase + Condition Reason.

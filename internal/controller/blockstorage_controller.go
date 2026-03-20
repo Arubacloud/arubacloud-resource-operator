@@ -173,6 +173,16 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		defaultRequeueOnError: NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	}
 
+	// 0. PhaseTimedOut — safety net: fail if stuck in a transitory phase too long
+	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		name:           "PhaseTimedOut",
+		kCondition:     kubePhaseTimedOut[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		aCondition:     AlwaysTrue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		kAction:        r.kubeSetFailedOnTimeout,
+		requeue:        NoRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
+
 	// 1. ShouldBeDeleted
 	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
 		name:           "ShouldBeDeleted",
@@ -479,6 +489,14 @@ func (r *BlockStorageReconciler) kubeSetActiveAndSetID(ctx context.Context, kube
 	}
 	return setActiveAndSetID(r.Client, ctx, kubeBS, cmpID, nil, func(bs *v1alpha1.BlockStorage) {
 		if prjID, ok := ctx.Value(projectIDKey).(string); ok && bs.Status.ProjectID != "" {
+			bs.Status.ProjectID = prjID
+		}
+	})
+}
+
+func (r *BlockStorageReconciler) kubeSetFailedOnTimeout(ctx context.Context, kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {
+	return setFailedOnTimeout(r.Client, ctx, kubeBS, func(bs *v1alpha1.BlockStorage) {
+		if prjID, ok := ctx.Value(projectIDKey).(string); ok && bs.Status.ProjectID == "" {
 			bs.Status.ProjectID = prjID
 		}
 	})

@@ -73,6 +73,39 @@ func kubeShouldDelete[K reconciler.ResourceObject, A any](k K, _ A) bool {
 		condition.Reason == v1alpha1.ConditionReasonSynchronized
 }
 
+// failedPhase returns the phase that triggered a timeout-driven failure, or "" if none.
+// After setFailedOnTimeout, exactly one condition has Status=False + Reason=Failed
+// and its Type encodes the phase that timed out.
+func failedPhase(rs *v1alpha1.ResourceStatus) v1alpha1.ResourcePhase {
+	for _, c := range rs.Conditions {
+		if c.Status == metav1.ConditionFalse && c.Reason == v1alpha1.ConditionReasonFailed {
+			return v1alpha1.ResourcePhase(c.Type)
+		}
+	}
+	return ""
+}
+
+// kubeShouldDeleteTimedOut checks whether a timed-out resource (Phase=Failed, Reason=Failed)
+// should enter the deletion flow. Returns false when the timed-out phase was Deleting,
+// since re-entering deletion for an already-failing delete is pointless.
+func kubeShouldDeleteTimedOut[K reconciler.ResourceObject, A any](k K, _ A) bool {
+	rs := k.GetResourceStatus()
+	if rs == nil || k.GetDeletionTimestamp().IsZero() {
+		return false
+	}
+	if rs.Phase != v1alpha1.ResourcePhaseFailed {
+		return false
+	}
+
+	failedCond := meta.FindStatusCondition(rs.Conditions, string(v1alpha1.ResourcePhaseFailed))
+	if failedCond == nil || failedCond.Status != metav1.ConditionTrue || failedCond.Reason != v1alpha1.ConditionReasonFailed {
+		return false
+	}
+
+	prevPhase := failedPhase(rs)
+	return prevPhase != "" && prevPhase != v1alpha1.ResourcePhaseDeleting
+}
+
 // kubeShouldBeDeletedOnCMP checks: deleting, Phase=Deleting, Reason=ShallSynchronize.
 func kubeShouldBeDeletedOnCMP[K reconciler.ResourceObject, A any](k K, _ A) bool {
 	return kubeHasPhaseAndReason(k, true, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize)

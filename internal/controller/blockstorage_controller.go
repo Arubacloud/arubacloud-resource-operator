@@ -193,6 +193,16 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
+	// 1b. ShouldDeleteTimedOut — enter deletion flow for timed-out resources (except those that timed out during Deleting)
+	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		name:           "ShouldDeleteTimedOut",
+		kCondition:     kubeShouldDeleteTimedOut[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		aCondition:     AlwaysTrue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		kAction:        r.kubeMarkToDelete,
+		requeue:        ShortRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
+
 	// 2. ShouldBeDeletedOnCMP
 	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
 		name:              "ShouldBeDeletedOnCMP",
@@ -202,6 +212,16 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		kActionOnASuccess: r.kubeMarkDeleting,
 		requeue:           ShortRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 		requeueOnError:    LongRequeueAndIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
+
+	// 2b. DeletionOnCMPNotNeeded — resource marked for deletion but CMP resource doesn't exist; skip CMP delete
+	ts.Add(&AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		name:           "DeletionOnCMPNotNeeded",
+		kCondition:     kubeShouldBeDeletedOnCMP[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		aCondition:     cmpBlockStorageNotExists,
+		kAction:        r.kubeMarkDeletingDone,
+		requeue:        ShortRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
 	// 3. WaitingDeletionOnCMP

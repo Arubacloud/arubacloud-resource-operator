@@ -138,6 +138,18 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 		},
 	)
 
+	// ShouldDeleteTimedOut — enter deletion flow for timed-out resources (except those that timed out during Deleting)
+	ts.Add(
+		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+			name:           "ShouldDeleteTimedOut",
+			kCondition:     kubeShouldDeleteTimedOut[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			aCondition:     AlwaysTrue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			kAction:        r.kubeMarkToDelete,
+			requeue:        ShortRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+		},
+	)
+
 	// Project should be deleted on CMP (marked as "Deleting + ShallSynchronize")
 	ts.Add(
 		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
@@ -148,6 +160,18 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 			kActionOnASuccess: r.kubeMarkDeleting,
 			requeue:           ShortRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
 			requeueOnError:    LongRequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+		},
+	)
+
+	// DeletionOnCMPNotNeeded — resource marked for deletion but CMP resource doesn't exist; skip CMP delete
+	ts.Add(
+		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+			name:           "DeletionOnCMPNotNeeded",
+			kCondition:     kubeShouldBeDeletedOnCMP[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			aCondition:     cmpProjectNotExists,
+			kAction:        r.kubeMarkDeletingDone,
+			requeue:        ShortRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
 	)
 

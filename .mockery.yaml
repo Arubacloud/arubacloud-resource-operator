@@ -21,3 +21,5 @@ packages:
       NetworkClient:
       VPCsClient:
       ElasticIPsClient:
+      ComputeClient:
+      KeyPairsClient:

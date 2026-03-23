@@ -20,3 +20,4 @@ packages:
       VolumesClient:
       NetworkClient:
       VPCsClient:
+      ElasticIPsClient:

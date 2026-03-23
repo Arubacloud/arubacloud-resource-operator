@@ -17,6 +17,7 @@ rules:
   - arubacloud.com
   resources:
   - blockstorages
+  - elasticips
   - vpcs
   verbs:
   - create
@@ -30,6 +31,7 @@ rules:
   - arubacloud.com
   resources:
   - blockstorages/finalizers
+  - elasticips/finalizers
   - vpcs/finalizers
   verbs:
   - update
@@ -37,6 +39,7 @@ rules:
   - arubacloud.com
   resources:
   - blockstorages/status
+  - elasticips/status
   - vpcs/status
   verbs:
   - get

@@ -259,12 +259,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	// // Setup ElasticIp controller
-	// elasticIpReconciler := controller.NewElasticIpReconciler(baseReconciler)
-	// if err = elasticIpReconciler.SetupWithManager(mgr); err != nil {
-	// 	setupLog.Error(err, "unable to create controller", "controller", "ElasticIp")
-	// 	os.Exit(1)
-	// }
+	// Setup ElasticIp controller
+	elasticIpReconciler := controller.NewElasticIpReconciler(baseReconciler)
+	if err = elasticIpReconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "ElasticIp")
+		os.Exit(1)
+	}
 
 	// Setup BlockStorage controller
 	blockStorageReconciler := controller.NewBlockStorageReconciler(baseReconciler)

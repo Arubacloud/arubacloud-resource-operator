@@ -112,6 +112,17 @@ type ReconcilerConfig struct {
 	HTTPClient *http.Client
 }
 
+// NewReconcilerForTest creates a Reconciler suitable for unit testing. It accepts a
+// pre-populated Multitenant client cache and a Kubernetes client+scheme directly,
+// bypassing the ctrl.Manager requirement and real credential configuration.
+func NewReconcilerForTest(k8sClient client.Client, scheme *runtime.Scheme, mtClient arubamt.Multitenant) *Reconciler {
+	return &Reconciler{
+		Client:            k8sClient,
+		Scheme:            scheme,
+		multiTenantClient: mtClient,
+	}
+}
+
 // NewReconciler creates a new base Reconciler wired to the given controller-runtime
 // Manager and configured via cfg. It initialises the Aruba cloud client, selecting
 // either Vault-based or direct client-credential authentication depending on

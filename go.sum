@@ -1,7 +1,7 @@
 cel.dev/expr v0.19.1 h1:NciYrtDRIR0lNCnH1LFJegdjspNx9fI59O7TWcua/W4=
 cel.dev/expr v0.19.1/go.mod h1:MrpN08Q+lEBs+bGYdLxxHkZoUSsCp0nSKTs0nTymJgw=
-github.com/Arubacloud/sdk-go v0.1.22-alpha1 h1:Lij8wbpIwjayY0vInIn52tiU6Lt5ASUcdpqhCNLa7LI=
-github.com/Arubacloud/sdk-go v0.1.22-alpha1/go.mod h1:4lXc0Dte8HqeKag8eMo0/TClwsgMqXW0KbKaQ2BYlXA=
+github.com/Arubacloud/sdk-go v0.1.22-alpha4 h1:bnu2P3pDfG0ibsFDniaNB2sHUb3SVf2MZgcF8ORFPoY=
+github.com/Arubacloud/sdk-go v0.1.22-alpha4/go.mod h1:4lXc0Dte8HqeKag8eMo0/TClwsgMqXW0KbKaQ2BYlXA=
 github.com/Nerzal/gocloak/v13 v13.9.0 h1:YWsJsdM5b0yhM2Ba3MLydiOlujkBry4TtdzfIzSVZhw=
 github.com/Nerzal/gocloak/v13 v13.9.0/go.mod h1:YYuDcXZ7K2zKECyVP7pPqjKxx2AzYSpKDj8d6GuyM10=
 github.com/antlr4-go/antlr/v4 v4.13.0 h1:lxCg3LAv+EUK6t1i0y1V6/SLeUi0eKEKdhQAlS8TVTI=

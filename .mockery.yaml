@@ -15,7 +15,6 @@ packages:
       outpkg: arubamocks
     interfaces:
       Client:
-      Multitenant:
       ProjectClient:
       StorageClient:
       VolumesClient:
@@ -24,3 +23,9 @@ packages:
       ElasticIPsClient:
       ComputeClient:
       KeyPairsClient:
+  github.com/Arubacloud/sdk-go/pkg/multitenant:
+    config:
+      dir: internal/mocks/aruba
+      outpkg: arubamocks
+    interfaces:
+      Multitenant:

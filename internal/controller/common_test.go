@@ -4,8 +4,22 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/Arubacloud/sdk-go/pkg/aruba"
+	arubamt "github.com/Arubacloud/sdk-go/pkg/multitenant"
 	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
+
+	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
 )
+
+// newTestReconciler creates a base Reconciler for unit testing. It seeds a real
+// arubamt.Multitenant cache with the given mockArubaClient under the "test-tenant" key,
+// so that controllers calling r.ArubaClient("test-tenant") receive the mock without
+// requiring real credentials or a ctrl.Manager.
+func newTestReconciler(_ GinkgoTInterface, mockArubaClient aruba.Client) *reconciler.Reconciler {
+	mt := arubamt.New()
+	mt.Add("test-tenant", mockArubaClient)
+	return reconciler.NewReconcilerForTest(k8sClient, k8sClient.Scheme(), mt)
+}
 
 func strPtr(s string) *string { return &s }
 

@@ -21,6 +21,6 @@ metadata:
 data:
   role-id: {{ required "controllerManager.roleId is required" .Values.controllerManager.roleId
     | b64enc | quote }}
-  role-secret: {{ required "controllerManager.roleSecret is required" .Values.controllerManager.roleSecret
+  secret-id: {{ required "controllerManager.roleSecretID is required" .Values.controllerManager.roleSecretID
     | b64enc | quote }}
 type: Opaque

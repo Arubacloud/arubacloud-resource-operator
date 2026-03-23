@@ -37,7 +37,7 @@ controllerManager:
   replicas: 1
   roleId: ""
   rolePath: approle
-  roleSecret: ""
+  roleSecretID: ""
   tolerations: []
   topologySpreadConstraints: []
   vaultAddress: http://vault0.default.svc.cluster.local:8200

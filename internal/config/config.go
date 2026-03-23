@@ -19,7 +19,7 @@ type MainConfig struct {
 	RolePath       string
 	KVMount        string
 	RoleID         string
-	RoleSecret     string
+	RoleSecretID   string
 	ClientID       string
 	ClientSecret   string //nolint:gosec // G117: ClientSecret is intentionally storing OAuth secret
 }
@@ -49,7 +49,7 @@ func (c *MainConfig) Validate() error {
 			"role-path":     c.RolePath,
 			"kv-mount":      c.KVMount,
 			"role-id":       c.RoleID,
-			"role-secret":   c.RoleSecret,
+			"secret-id":     c.RoleSecretID,
 		}
 	}
 	ctrl.Log.V(1).Info("Validate configurations", "required", required)
@@ -76,6 +76,6 @@ func (c *MainConfig) ToReconcilerConfig() reconciler.ReconcilerConfig {
 		RolePath:       c.RolePath,
 		KVMount:        c.KVMount,
 		RoleID:         c.RoleID,
-		RoleSecret:     c.RoleSecret,
+		RoleSecret:     c.RoleSecretID,
 	}
 }

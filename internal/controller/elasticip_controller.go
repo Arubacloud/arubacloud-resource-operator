@@ -24,6 +24,7 @@ import (
 
 	ctrl "sigs.k8s.io/controller-runtime"
 
+	"github.com/Arubacloud/sdk-go/pkg/aruba"
 	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
@@ -74,6 +75,11 @@ func (r *ElasticIpReconciler) HandleReconcile(ctx context.Context, obj reconcile
 		return ctrl.Result{}, errors.New("obj is not a *v1alpha1.ElasticIp")
 	}
 
+	arubaClient, err := r.ArubaClient(kubeEip.Spec.Tenant)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to get Aruba client: %w", err)
+	}
+
 	if kubeEip.Spec.ProjectReference.Name == "" {
 		return ctrl.Result{}, fmt.Errorf("project reference is not valid")
 	}
@@ -87,7 +93,7 @@ func (r *ElasticIpReconciler) HandleReconcile(ctx context.Context, obj reconcile
 	if !kubeEip.GetDeletionTimestamp().IsZero() && kubeEip.Status.ProjectID != "" {
 		prjID = kubeEip.Status.ProjectID
 	} else {
-		cmpProjectList, err := r.ArubaClient.FromProject().List(ctx, &arubatypes.RequestParameters{Filter: &prjFilter})
+		cmpProjectList, err := arubaClient.FromProject().List(ctx, &arubatypes.RequestParameters{Filter: &prjFilter})
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf(
 				"failed to find project in Aruba cloud: %w, project_name: '%s', project_filter: '%s'",
@@ -127,7 +133,7 @@ func (r *ElasticIpReconciler) HandleReconcile(ctx context.Context, obj reconcile
 		)
 	}
 
-	cmpEipList, err := r.ArubaClient.FromNetwork().ElasticIPs().List(ctx, prjID, &arubatypes.RequestParameters{Filter: &eipFilter})
+	cmpEipList, err := arubaClient.FromNetwork().ElasticIPs().List(ctx, prjID, &arubatypes.RequestParameters{Filter: &eipFilter})
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf(
 			"failed to find elasticip in Aruba cloud: %w, eip_name: '%s', eip_filter: '%s', project_name: '%s'",
@@ -154,6 +160,7 @@ func (r *ElasticIpReconciler) HandleReconcile(ctx context.Context, obj reconcile
 	}
 
 	ctx = context.WithValue(ctx, projectIDKey, prjID)
+	ctx = context.WithValue(ctx, reconciler.ArubaClientKey, arubaClient)
 
 	return r.ts.Run(ctx, kubeEip, cmpEip)
 }
@@ -526,7 +533,9 @@ func (r *ElasticIpReconciler) kubeSetFailed(ctx context.Context, kubeEip *v1alph
 
 func (r *ElasticIpReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.ElasticIp, cmpEip *arubatypes.ElasticIPResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
-	cmpEipResp, err := r.ArubaClient.FromNetwork().ElasticIPs().Delete(ctx, prjID, *cmpEip.Metadata.ID, nil)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+
+	cmpEipResp, err := arubaClient.FromNetwork().ElasticIPs().Delete(ctx, prjID, *cmpEip.Metadata.ID, nil)
 	if err != nil {
 		return fmt.Errorf("failed to delete elasticip '%s' in Aruba CMP: error: '%w'", *cmpEip.Metadata.Name, err)
 	}
@@ -552,6 +561,7 @@ func (r *ElasticIpReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.Elastic
 
 func (r *ElasticIpReconciler) cmpUpdate(ctx context.Context, kubeEip *v1alpha1.ElasticIp, cmpEip *arubatypes.ElasticIPResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
 
 	// Guard: should have been caught by HasDeniedChanges, but double-check.
 	if err := checkElasticIpDeniedChanges(kubeEip, cmpEip); err != nil {
@@ -560,7 +570,7 @@ func (r *ElasticIpReconciler) cmpUpdate(ctx context.Context, kubeEip *v1alpha1.E
 
 	request := buildElasticIpUpdateRequest(kubeEip, cmpEip)
 
-	cmpEipResp, err := r.ArubaClient.FromNetwork().ElasticIPs().Update(ctx, prjID, *cmpEip.Metadata.ID, *request, nil)
+	cmpEipResp, err := arubaClient.FromNetwork().ElasticIPs().Update(ctx, prjID, *cmpEip.Metadata.ID, *request, nil)
 	if err != nil {
 		return fmt.Errorf("failed to update elasticip '%s' in Aruba CMP: error: '%w'", kubeEip.Name, err)
 	}
@@ -586,7 +596,9 @@ func (r *ElasticIpReconciler) cmpUpdate(ctx context.Context, kubeEip *v1alpha1.E
 
 func (r *ElasticIpReconciler) cmpCreate(ctx context.Context, kubeEip *v1alpha1.ElasticIp, _ *arubatypes.ElasticIPResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
-	cmpEipResp, err := r.ArubaClient.FromNetwork().ElasticIPs().Create(ctx, prjID, *cmpElasticIpRequestFromKube(kubeEip), nil)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+
+	cmpEipResp, err := arubaClient.FromNetwork().ElasticIPs().Create(ctx, prjID, *cmpElasticIpRequestFromKube(kubeEip), nil)
 	if err != nil {
 		return fmt.Errorf("failed to create elasticip '%s' in Aruba CMP: error: '%w'", kubeEip.Name, err)
 	}

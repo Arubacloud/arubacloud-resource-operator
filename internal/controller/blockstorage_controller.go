@@ -24,6 +24,7 @@ import (
 
 	ctrl "sigs.k8s.io/controller-runtime"
 
+	"github.com/Arubacloud/sdk-go/pkg/aruba"
 	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
@@ -79,6 +80,10 @@ func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconc
 	if !ok {
 		return ctrl.Result{}, errors.New("obj is not a *v1alpha1.BlockStorage")
 	}
+	arubaClient, err := r.ArubaClient(kubeBlockStorage.Spec.Tenant)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to get Aruba client: %w", err)
+	}
 
 	if kubeBlockStorage.Spec.ProjectReference.Name == "" {
 		return ctrl.Result{}, fmt.Errorf("project reference is not valid")
@@ -93,7 +98,7 @@ func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconc
 	if !kubeBlockStorage.GetDeletionTimestamp().IsZero() && kubeBlockStorage.Status.ProjectID != "" {
 		prjID = kubeBlockStorage.Status.ProjectID
 	} else {
-		cmpProjectList, err := r.ArubaClient.FromProject().List(ctx, &arubatypes.RequestParameters{Filter: &prjFilter})
+		cmpProjectList, err := arubaClient.FromProject().List(ctx, &arubatypes.RequestParameters{Filter: &prjFilter})
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf(
 				"failed to find project in Aruba cloud: %w, project_name: '%s', project_filter: '%s'",
@@ -134,7 +139,7 @@ func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconc
 		)
 	}
 
-	cmpBlockStorageList, err := r.ArubaClient.FromStorage().Volumes().List(ctx, prjID, &arubatypes.RequestParameters{Filter: &bsFilter})
+	cmpBlockStorageList, err := arubaClient.FromStorage().Volumes().List(ctx, prjID, &arubatypes.RequestParameters{Filter: &bsFilter})
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf(
 			"failed to find blockstorage in Aruba cloud: %w, blockstorage_name: '%s', blockstorage_filter: '%s', project_name: '%s'",
@@ -161,6 +166,7 @@ func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconc
 	}
 
 	ctx = context.WithValue(ctx, projectIDKey, prjID)
+	ctx = context.WithValue(ctx, reconciler.ArubaClientKey, arubaClient)
 
 	return r.ts.Run(ctx, kubeBlockStorage, cmpBlockStorage)
 }
@@ -530,7 +536,8 @@ func (r *BlockStorageReconciler) kubeSetFailed(ctx context.Context, kubeBS *v1al
 
 func (r *BlockStorageReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockStorageResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
-	cmpBSResp, err := r.ArubaClient.FromStorage().Volumes().Delete(ctx, prjID, *cmpBS.Metadata.ID, nil)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+	cmpBSResp, err := arubaClient.FromStorage().Volumes().Delete(ctx, prjID, *cmpBS.Metadata.ID, nil)
 	if err != nil {
 		return fmt.Errorf("failed to delete blockstorage '%s' in Aruba CMP: error: '%w'", *cmpBS.Metadata.Name, err)
 	}
@@ -556,6 +563,7 @@ func (r *BlockStorageReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.Bloc
 
 func (r *BlockStorageReconciler) cmpUpdate(ctx context.Context, kubeBS *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockStorageResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
 
 	// Guard: should have been caught by HasDeniedChanges, but double-check.
 	if err := checkBlockStorageDeniedChanges(kubeBS, cmpBS); err != nil {
@@ -564,7 +572,7 @@ func (r *BlockStorageReconciler) cmpUpdate(ctx context.Context, kubeBS *v1alpha1
 
 	request := buildBlockStorageUpdateRequest(kubeBS, cmpBS)
 
-	cmpBSResp, err := r.ArubaClient.FromStorage().Volumes().Update(ctx, prjID, *cmpBS.Metadata.ID, *request, nil)
+	cmpBSResp, err := arubaClient.FromStorage().Volumes().Update(ctx, prjID, *cmpBS.Metadata.ID, *request, nil)
 	if err != nil {
 		return fmt.Errorf("failed to update blockstorage '%s' in Aruba CMP: error: '%w'", kubeBS.Name, err)
 	}
@@ -590,7 +598,9 @@ func (r *BlockStorageReconciler) cmpUpdate(ctx context.Context, kubeBS *v1alpha1
 
 func (r *BlockStorageReconciler) cmpCreate(ctx context.Context, kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
-	cmpBSResp, err := r.ArubaClient.FromStorage().Volumes().Create(ctx, prjID, *cmpBlockStorageRequestFromKube(kubeBS), nil)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+
+	cmpBSResp, err := arubaClient.FromStorage().Volumes().Create(ctx, prjID, *cmpBlockStorageRequestFromKube(kubeBS), nil)
 	if err != nil {
 		return fmt.Errorf("failed to create blockstorage '%s' in Aruba CMP: error: '%w'", kubeBS.Name, err)
 	}

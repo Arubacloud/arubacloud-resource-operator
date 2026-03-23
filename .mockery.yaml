@@ -15,6 +15,7 @@ packages:
       outpkg: arubamocks
     interfaces:
       Client:
+      Multitenant:
       ProjectClient:
       StorageClient:
       VolumesClient:

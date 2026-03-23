@@ -18,6 +18,7 @@ rules:
   resources:
   - blockstorages
   - elasticips
+  - keypairs
   - vpcs
   verbs:
   - create
@@ -32,6 +33,7 @@ rules:
   resources:
   - blockstorages/finalizers
   - elasticips/finalizers
+  - keypairs/finalizers
   - vpcs/finalizers
   verbs:
   - update
@@ -40,6 +42,7 @@ rules:
   resources:
   - blockstorages/status
   - elasticips/status
+  - keypairs/status
   - vpcs/status
   verbs:
   - get

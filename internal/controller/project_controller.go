@@ -24,6 +24,7 @@ import (
 
 	ctrl "sigs.k8s.io/controller-runtime"
 
+	"github.com/Arubacloud/sdk-go/pkg/aruba"
 	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
@@ -75,11 +76,14 @@ func (r *ProjectReconciler) HandleReconcile(ctx context.Context, obj reconciler.
 	if !ok {
 		return ctrl.Result{}, errors.New("obj is not a *v1alpha1.Project")
 	}
-
+	arubaClient, err := r.ArubaClient(kubeProject.Spec.Tenant)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to get Aruba client: %w", err)
+	}
 	projectName := kubeProject.Name
 	projectFilter := fmt.Sprintf(`name:eq("%s")`, projectName)
 
-	cmpProjectList, err := r.ArubaClient.FromProject().List(ctx, &arubatypes.RequestParameters{Filter: &projectFilter})
+	cmpProjectList, err := arubaClient.FromProject().List(ctx, &arubatypes.RequestParameters{Filter: &projectFilter})
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf(
 			"failed to find project in Aruba cloud: %w, project_name: '%s', project_filter: '%s'",
@@ -104,6 +108,8 @@ func (r *ProjectReconciler) HandleReconcile(ctx context.Context, obj reconciler.
 	if cmpProjectList.Data.Total == 1 {
 		cmpProject = &cmpProjectList.Data.Values[0]
 	}
+
+	ctx = context.WithValue(ctx, reconciler.ArubaClientKey, arubaClient)
 
 	return r.ts.Run(ctx, kubeProject, cmpProject)
 }
@@ -440,7 +446,9 @@ func (r *ProjectReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeProj 
 // CMP action methods
 
 func (r *ProjectReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) error {
-	cmpProjList, err := r.ArubaClient.FromProject().Delete(ctx, *cmpProj.Metadata.ID, nil)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+
+	cmpProjList, err := arubaClient.FromProject().Delete(ctx, *cmpProj.Metadata.ID, nil)
 	if err != nil {
 		return fmt.Errorf("failed to delete project '%s' in Aruba CMP: error: '%w'", *cmpProj.Metadata.Name, err)
 	}
@@ -472,8 +480,9 @@ func (r *ProjectReconciler) cmpUpdate(ctx context.Context, kubeProj *v1alpha1.Pr
 	request.Metadata.Tags = kubeProj.Spec.Tags
 	request.Properties.Description = &kubeProj.Spec.Description
 	request.Properties.Default = kubeProj.Spec.Default
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
 
-	cmpProjResp, err := r.ArubaClient.FromProject().Update(ctx, kubeProj.Status.ResourceID, *request, nil)
+	cmpProjResp, err := arubaClient.FromProject().Update(ctx, kubeProj.Status.ResourceID, *request, nil)
 	if err != nil {
 		return fmt.Errorf("failed to update project '%s' in Aruba CMP: error: '%w'", kubeProj.Name, err)
 	}
@@ -499,7 +508,8 @@ func (r *ProjectReconciler) cmpUpdate(ctx context.Context, kubeProj *v1alpha1.Pr
 }
 
 func (r *ProjectReconciler) cmpCreate(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
-	cmpProjResp, err := r.ArubaClient.FromProject().Create(ctx, *cmpProjectRequestFromKube(kubeProj), nil)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+	cmpProjResp, err := arubaClient.FromProject().Create(ctx, *cmpProjectRequestFromKube(kubeProj), nil)
 	if err != nil {
 		return fmt.Errorf("failed to create project '%s' in Aruba CMP: error: '%w'", kubeProj.Name, err)
 	}

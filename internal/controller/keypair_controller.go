@@ -28,6 +28,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/Arubacloud/sdk-go/pkg/aruba"
 	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
@@ -77,7 +78,10 @@ func (r *KeyPairReconciler) HandleReconcile(ctx context.Context, obj reconciler.
 	if !ok {
 		return ctrl.Result{}, errors.New("obj is not a *v1alpha1.KeyPair")
 	}
-
+	arubaClient, err := r.ArubaClient(kubeKp.Spec.Tenant)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to get Aruba client: %w", err)
+	}
 	if kubeKp.Spec.ProjectReference.Name == "" {
 		return ctrl.Result{}, fmt.Errorf("project reference is not valid")
 	}
@@ -91,7 +95,7 @@ func (r *KeyPairReconciler) HandleReconcile(ctx context.Context, obj reconciler.
 	if !kubeKp.GetDeletionTimestamp().IsZero() && kubeKp.Status.ProjectID != "" {
 		prjID = kubeKp.Status.ProjectID
 	} else {
-		cmpProjectList, err := r.ArubaClient.FromProject().List(ctx, &arubatypes.RequestParameters{Filter: &prjFilter})
+		cmpProjectList, err := arubaClient.FromProject().List(ctx, &arubatypes.RequestParameters{Filter: &prjFilter})
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf(
 				"failed to find project in Aruba cloud: %w, project_name: '%s', project_filter: '%s'",
@@ -131,7 +135,7 @@ func (r *KeyPairReconciler) HandleReconcile(ctx context.Context, obj reconciler.
 		)
 	}
 
-	cmpKpList, err := r.ArubaClient.FromCompute().KeyPairs().List(ctx, prjID, &arubatypes.RequestParameters{Filter: &kpFilter})
+	cmpKpList, err := arubaClient.FromCompute().KeyPairs().List(ctx, prjID, &arubatypes.RequestParameters{Filter: &kpFilter})
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf(
 			"failed to find keypair in Aruba cloud: %w, kp_name: '%s', kp_filter: '%s', project_name: '%s'",
@@ -158,6 +162,7 @@ func (r *KeyPairReconciler) HandleReconcile(ctx context.Context, obj reconciler.
 	}
 
 	ctx = context.WithValue(ctx, projectIDKey, prjID)
+	ctx = context.WithValue(ctx, reconciler.ArubaClientKey, arubaClient)
 
 	return r.ts.Run(ctx, kubeKp, cmpKp)
 }
@@ -458,8 +463,9 @@ func (r *KeyPairReconciler) kubeRollbackSpecAndSetActive(ctx context.Context, ku
 
 func (r *KeyPairReconciler) cmpCreate(ctx context.Context, kubeKp *v1alpha1.KeyPair, _ *arubatypes.KeyPairResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
 
-	cmpKpResp, err := r.ArubaClient.FromCompute().KeyPairs().Create(ctx, prjID, cmpKeyPairRequestFromKube(kubeKp), nil)
+	cmpKpResp, err := arubaClient.FromCompute().KeyPairs().Create(ctx, prjID, cmpKeyPairRequestFromKube(kubeKp), nil)
 	if err != nil {
 		return fmt.Errorf("failed to create keypair '%s' in Aruba CMP: error: '%w'", kubeKp.Name, err)
 	}
@@ -486,8 +492,9 @@ func (r *KeyPairReconciler) cmpCreate(ctx context.Context, kubeKp *v1alpha1.KeyP
 
 func (r *KeyPairReconciler) cmpDelete(ctx context.Context, kubeKp *v1alpha1.KeyPair, cmpKp *arubatypes.KeyPairResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
 
-	cmpKpResp, err := r.ArubaClient.FromCompute().KeyPairs().Delete(ctx, prjID, *cmpKp.Metadata.ID, nil)
+	cmpKpResp, err := arubaClient.FromCompute().KeyPairs().Delete(ctx, prjID, *cmpKp.Metadata.ID, nil)
 	if err != nil {
 		return fmt.Errorf("failed to delete keypair '%s' in Aruba CMP: error: '%w'", *cmpKp.Metadata.Name, err)
 	}

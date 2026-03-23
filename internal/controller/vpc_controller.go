@@ -24,6 +24,7 @@ import (
 
 	ctrl "sigs.k8s.io/controller-runtime"
 
+	"github.com/Arubacloud/sdk-go/pkg/aruba"
 	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
@@ -76,6 +77,11 @@ func (r *VpcReconciler) HandleReconcile(ctx context.Context, obj reconciler.Reso
 		return ctrl.Result{}, errors.New("obj is not a *v1alpha1.Vpc")
 	}
 
+	arubaClient, err := r.ArubaClient(kubeVpc.Spec.Tenant)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to get Aruba client: %w", err)
+	}
+
 	if kubeVpc.Spec.ProjectReference.Name == "" {
 		return ctrl.Result{}, fmt.Errorf("project reference is not valid")
 	}
@@ -89,7 +95,7 @@ func (r *VpcReconciler) HandleReconcile(ctx context.Context, obj reconciler.Reso
 	if !kubeVpc.GetDeletionTimestamp().IsZero() && kubeVpc.Status.ProjectID != "" {
 		prjID = kubeVpc.Status.ProjectID
 	} else {
-		cmpProjectList, err := r.ArubaClient.FromProject().List(ctx, &arubatypes.RequestParameters{Filter: &prjFilter})
+		cmpProjectList, err := arubaClient.FromProject().List(ctx, &arubatypes.RequestParameters{Filter: &prjFilter})
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf(
 				"failed to find project in Aruba cloud: %w, project_name: '%s', project_filter: '%s'",
@@ -129,7 +135,7 @@ func (r *VpcReconciler) HandleReconcile(ctx context.Context, obj reconciler.Reso
 		)
 	}
 
-	cmpVpcList, err := r.ArubaClient.FromNetwork().VPCs().List(ctx, prjID, &arubatypes.RequestParameters{Filter: &vpcFilter})
+	cmpVpcList, err := arubaClient.FromNetwork().VPCs().List(ctx, prjID, &arubatypes.RequestParameters{Filter: &vpcFilter})
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf(
 			"failed to find vpc in Aruba cloud: %w, vpc_name: '%s', vpc_filter: '%s', project_name: '%s'",
@@ -156,6 +162,7 @@ func (r *VpcReconciler) HandleReconcile(ctx context.Context, obj reconciler.Reso
 	}
 
 	ctx = context.WithValue(ctx, projectIDKey, prjID)
+	ctx = context.WithValue(ctx, reconciler.ArubaClientKey, arubaClient)
 
 	return r.ts.Run(ctx, kubeVpc, cmpVpc)
 }
@@ -522,7 +529,9 @@ func (r *VpcReconciler) kubeSetFailed(ctx context.Context, kubeVpc *v1alpha1.Vpc
 
 func (r *VpcReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.Vpc, cmpVpc *arubatypes.VPCResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
-	cmpVpcResp, err := r.ArubaClient.FromNetwork().VPCs().Delete(ctx, prjID, *cmpVpc.Metadata.ID, nil)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+
+	cmpVpcResp, err := arubaClient.FromNetwork().VPCs().Delete(ctx, prjID, *cmpVpc.Metadata.ID, nil)
 	if err != nil {
 		return fmt.Errorf("failed to delete vpc '%s' in Aruba CMP: error: '%w'", *cmpVpc.Metadata.Name, err)
 	}
@@ -548,6 +557,7 @@ func (r *VpcReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.Vpc, cmpVpc *
 
 func (r *VpcReconciler) cmpUpdate(ctx context.Context, kubeVpc *v1alpha1.Vpc, cmpVpc *arubatypes.VPCResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
 
 	// Guard: should have been caught by HasDeniedChanges, but double-check.
 	if err := checkVpcDeniedChanges(kubeVpc, cmpVpc); err != nil {
@@ -556,7 +566,7 @@ func (r *VpcReconciler) cmpUpdate(ctx context.Context, kubeVpc *v1alpha1.Vpc, cm
 
 	request := buildVpcUpdateRequest(kubeVpc, cmpVpc)
 
-	cmpVpcResp, err := r.ArubaClient.FromNetwork().VPCs().Update(ctx, prjID, *cmpVpc.Metadata.ID, *request, nil)
+	cmpVpcResp, err := arubaClient.FromNetwork().VPCs().Update(ctx, prjID, *cmpVpc.Metadata.ID, *request, nil)
 	if err != nil {
 		return fmt.Errorf("failed to update vpc '%s' in Aruba CMP: error: '%w'", kubeVpc.Name, err)
 	}
@@ -582,7 +592,9 @@ func (r *VpcReconciler) cmpUpdate(ctx context.Context, kubeVpc *v1alpha1.Vpc, cm
 
 func (r *VpcReconciler) cmpCreate(ctx context.Context, kubeVpc *v1alpha1.Vpc, _ *arubatypes.VPCResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
-	cmpVpcResp, err := r.ArubaClient.FromNetwork().VPCs().Create(ctx, prjID, *cmpVpcRequestFromKube(kubeVpc), nil)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+
+	cmpVpcResp, err := arubaClient.FromNetwork().VPCs().Create(ctx, prjID, *cmpVpcRequestFromKube(kubeVpc), nil)
 	if err != nil {
 		return fmt.Errorf("failed to create vpc '%s' in Aruba CMP: error: '%w'", kubeVpc.Name, err)
 	}

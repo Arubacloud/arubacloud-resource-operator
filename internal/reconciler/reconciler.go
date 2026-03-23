@@ -2,6 +2,7 @@ package reconciler
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"slices"
@@ -14,6 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/Arubacloud/sdk-go/pkg/aruba"
+	arubamt "github.com/Arubacloud/sdk-go/pkg/multitenant"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
 )
@@ -27,6 +29,12 @@ const (
 	LongRequeueAfter = 20 * time.Second
 	// MaxPhaseTimeout defines the maximum time a resource can remain in a non-final phase
 	MaxPhaseTimeout = 10 * time.Minute
+)
+
+type contextKey string
+
+const (
+	ArubaClientKey contextKey = "arubaClient"
 )
 
 // ResourceReconciler is an interface that must be implemented by all resource reconcilers.
@@ -54,7 +62,10 @@ type Reconciler struct {
 	// Scheme is the runtime scheme used for object type registration.
 	*runtime.Scheme
 	// ArubaClient is the authenticated Aruba cloud API client.
-	ArubaClient aruba.Client
+	config            ReconcilerConfig
+	multiTenantClient arubamt.Multitenant
+
+	// ArubaClient aruba.Client
 }
 
 // ResourceObject is the constraint that every managed custom resource must satisfy.
@@ -107,26 +118,51 @@ type ReconcilerConfig struct {
 // cfg.VaultIsEnabled. The process is terminated with log.Fatalf if the Aruba client
 // cannot be created, since the operator cannot function without a valid API client.
 func NewReconciler(mgr ctrl.Manager, cfg ReconcilerConfig) *Reconciler {
-	options := aruba.NewOptions().WithBaseURL(cfg.APIGateway).WithDefaultTokenIssuerURL()
+	// arubaClient, err := aruba.NewClient(options)
+	// if err != nil {
+	// 	log.Fatalf("failed to create Aruba Client: %v, options: `%v`", err, options)
+	// }
 
-	if cfg.VaultIsEnabled {
+	return &Reconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+		config: cfg,
+		// ArubaClient: arubaClient,
+		multiTenantClient: arubamt.New(),
+	}
+}
+
+// ArubaClient returns an authenticated Aruba cloud API client scoped to the tenant associated
+// with the given resource. It first checks if a client for the tenant already exists in
+// the multi-tenant client cache, and if not, it creates a new client using the Reconciler's
+// configuration (either Vault-based or direct credentials) and adds it to the cache for
+// future use. Errors during client creation are returned to the caller for handling.
+func (r *Reconciler) ArubaClient(tenant string) (aruba.Client, error) {
+	c, ok := r.multiTenantClient.Get(tenant)
+	if ok {
+		return c, nil
+	}
+
+	options := aruba.NewOptions().WithBaseURL(r.config.APIGateway).WithDefaultTokenIssuerURL()
+
+	if r.config.VaultIsEnabled {
 		options = options.WithVaultCredentialsRepository(
-			cfg.VaultAddress, cfg.KVMount, "test-tenant", cfg.Namespace, cfg.RolePath, cfg.RoleID, cfg.RoleSecret,
+			r.config.VaultAddress, r.config.KVMount, tenant, r.config.Namespace, r.config.RolePath, r.config.RoleID, r.config.RoleSecret,
 		)
 	} else {
-		options = options.WithClientCredentials(cfg.ClientID, cfg.ClientSecret)
+		log.Printf("Warning: Operator is not configured to use Vault for credentials management")
+		options = options.WithClientCredentials(r.config.ClientID, r.config.ClientSecret)
+
 	}
 
 	arubaClient, err := aruba.NewClient(options)
 	if err != nil {
-		log.Fatalf("failed to create Aruba Client: %v, options: `%v`", err, options)
+		return nil, fmt.Errorf("failed to create Aruba Client: %v, options: `%v`", err, options)
 	}
 
-	return &Reconciler{
-		Client:      mgr.GetClient(),
-		Scheme:      mgr.GetScheme(),
-		ArubaClient: arubaClient,
-	}
+	r.multiTenantClient.Add(tenant, arubaClient)
+
+	return arubaClient, nil
 }
 
 // Reconcile implements the shared three-step reconciliation loop used by all resource

@@ -83,6 +83,8 @@ Triggered by Kubernetes setting `DeletionTimestamp`. Steps:
 
 Triggered when `ObservedGeneration != Generation` (spec changed). Resources may additionally guard immutable fields before entering this flow.
 
+#### 2a. Standard update (CMP has an update API)
+
 | Transition | K condition | CMP condition | Action |
 |-----------|-------------|---------------|--------|
 | `HasDeniedChanges` *(optional)* | `Active` + generation changed + immutable field differs | CMP exists in final state | Return error (surfaced as status message); long requeue |
@@ -92,6 +94,26 @@ Triggered when `ObservedGeneration != Generation` (spec changed). Resources may 
 | `WaitingUpdateOnCMP` | `Updating+Synchronizing` + spec still differs | CMP exists (transitory or diverged) | No action, long requeue |
 | `UpdateConfirmedOnCMP` | `Updating+Synchronizing` + spec converged | CMP exists | Mark `Updating+Synchronized` |
 | `UpdateAccomplished` | `Updating+Synchronized` | CMP in final/active state | `setActive+setID` |
+
+#### 2b. Update-not-supported rollback (CMP has no update API)
+
+When the CMP provides no update endpoint, spec changes must be rejected and rolled back. The resource visibly enters the `Updating` phase, surfaces a `Failed` condition, then reverts the spec to the CMP's current state and returns to `Active`. This uses three transitions instead of the standard update flow:
+
+| Transition | K condition | CMP condition | Action |
+|-----------|-------------|---------------|--------|
+| `ShouldBeUpdated` | `Active` + `ObservedGeneration != Generation` | CMP exists | Mark `Updating+ShallSynchronize` |
+| `UpdateNotSupported` | `Updating+ShallSynchronize` | CMP exists | `kubeMarkUpdatingFailed` — set `Updating+Failed` condition with message `"updating <Resource> resources is not supported"` |
+| `UpdateRollback` | `kube<Resource>UpdatingFailed` (phase=Updating + condition reason=Failed) | CMP exists | `kubeRollbackSpecAndSetActive` — restore spec fields from CMP response (object patch), then call `setActiveAndSetID` (status patch) |
+
+**Key implementation details:**
+
+- `kubeMarkUpdatingFailed` is a thin wrapper over `setPhaseAndCondition` with `phase=Updating`, `reason=Failed`, and a resource-specific error message.
+- `kube<Resource>UpdatingFailed` is a custom KCondition that checks `phase == Updating` AND `condition.Reason == Failed` (guards against matching other Updating sub-states).
+- `kubeRollbackSpecAndSetActive` is a two-step action:
+  1. **Spec rollback** (object patch via `retry.RetryOnConflict`): read a fresh copy, restore mutable spec fields from the CMP response, patch the object. This produces a new `Generation`.
+  2. **Set Active** (`setActiveAndSetID`): reads fresh object (capturing the new generation from step 1), stamps `ObservedGeneration`, writes `Active+Synchronized`.
+- The rollback transition uses `NoRequeue` because `setActiveAndSetID` internally stamps `ObservedGeneration` to the new generation, preventing re-entry into `ShouldBeUpdated` on the next reconcile.
+- In tests, the `UpdateRollback` test verifies that `Spec.Tags`, `Spec.Location.Value`, and `Spec.Value` (or the resource's equivalent mutable fields) are restored to the CMP response values.
 
 ### 3. Creation flow
 

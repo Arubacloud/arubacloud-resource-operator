@@ -73,6 +73,18 @@ List every transition the `TransitionSet` will contain, in evaluation order (top
 
 > Remove rows for transitions that do not apply. Add resource-specific transitions as needed.
 
+### Alternative: update-not-supported rollback
+
+When the CMP provides **no update endpoint**, replace transitions 8–14 above with the following three transitions. The resource visibly enters `Updating`, surfaces a `Failed` condition with a clear message, then has its spec rolled back to the CMP's current state before returning to `Active`.
+
+| # | Name | KCondition | ACondition | KAction | Requeue | RequeueOnError | Description |
+|---|------|-----------|-----------|---------|---------|---------------|-------------|
+| 8 | `ShouldBeUpdated` | `kubeActiveAndGenerationChanged` | `cmp<Resource>Exists` | `kubeMarkToUpdate` | `ShortRequeue` | `NoRequeueButIgnoreError` | Spec changed → mark `Updating+ShallSynchronize` |
+| 9 | `UpdateNotSupported` | `kubeShouldBeUpdatedOnCMP` | `cmp<Resource>Exists` | `kubeMarkUpdatingFailed` | `ShortRequeue` | `NoRequeueButIgnoreError` | Signal that update is not supported: set `Updating+Failed` with error message |
+| 10 | `UpdateRollback` | `kube<Resource>UpdatingFailed` | `cmp<Resource>Exists` | `kubeRollbackSpecAndSetActive` | `NoRequeue` | `NoRequeueButIgnoreError` | Restore spec from CMP response (object patch) then set `Active+Synchronized` (status patch) |
+
+**Reference implementation**: `internal/controller/keypair_controller.go` (transitions 8–10).
+
 ---
 
 ## 4. Component reuse analysis
@@ -133,6 +145,14 @@ Identify which pieces already exist and can be reused as-is, and which must be i
 | `kubeSetActiveAndSetID` | KAction wrapper | thin wrapper over `setActiveAndSetID` |
 | `kubeSetFailedOnTimeout` | KAction wrapper | thin wrapper over `setFailedOnTimeout` |
 | `kubeSetFailed` *(if applicable)* | KAction wrapper | thin wrapper over `setPhaseAndCondition` for CMP-driven failures |
+
+**Additional components for the update-not-supported rollback pattern** *(include these instead of the standard update components when the CMP has no update API)*:
+
+| Component | Type | Notes |
+|-----------|------|-------|
+| `kubeMarkUpdatingFailed` | KAction wrapper | wraps `setPhaseAndCondition` with `phase=Updating`, `reason=Failed`, resource-specific error message |
+| `kube<Resource>UpdatingFailed` | KCondition | checks `phase == Updating` AND condition `Reason == Failed`; needed to distinguish from other Updating sub-states |
+| `kubeRollbackSpecAndSetActive` | KAction | two-step: (1) object patch restoring mutable spec fields from CMP response via `retry.RetryOnConflict`; (2) `setActiveAndSetID` to write `Active+Synchronized` and stamp the new `ObservedGeneration` |
 
 > Update this table after the component analysis: mark items that turn out to be reusable from another controller as "reuse from `<resource>_controller.go`".
 
@@ -213,8 +233,12 @@ Currently no standard `KActionOnAError` is used in the reference implementations
 - [ ] Implement `newTransitionSet()` wiring all transitions from §3 in the correct order.
 - [ ] Write controller-level integration tests covering the full lifecycle:
   - Create flow (first reconciliation → CMP create → polling → Active)
-  - Update flow (spec change → CMP update → polling → Active)
+  - Update flow (spec change → CMP update → polling → Active) *(standard update)*
   - Update with immutable field change → error surfaced, no CMP call *(if applicable)*
+  - Update-not-supported rollback *(if CMP has no update API)*:
+    - Spec change → `Updating+ShallSynchronize` (`ShouldBeUpdated`)
+    - Next reconcile → `Updating+Failed` with error message (`UpdateNotSupported`)
+    - Next reconcile → spec fields restored to CMP values + `Active+Synchronized` (`UpdateRollback`)
   - Delete flow (DeletionTimestamp → CMP delete → polling → Deleted → finalizer removed)
   - Timeout detection (transitory phase exceeds MaxPhaseTimeout → Failed)
   - CMP-side failure detection *(if applicable)*
@@ -238,6 +262,7 @@ Create or identify a fixture file for this resource, then exercise the scenarios
 | 1 | Resource created successfully | `NN=<N> ACTION=apply …` | Phase reaches `Active`; `ResourceID` is set in status |
 | 2 | Resource deleted cleanly | `NN=<N> ACTION=delete …` | Phase reaches `Deleted`; finalizer removed; CMP resource gone |
 | 3 | Spec update (mutable field) | Edit the resource, re-apply | Phase cycles `Active → Updating → Active`; CMP reflects change |
+| 3b | Spec update (no CMP update API) *(if applicable)* | Edit any spec field, re-apply | Phase cycles `Active → Updating (ShallSynchronize) → Updating (Failed) → Active`; spec rolled back to CMP values; `Updating+Failed` condition visible briefly |
 | 4 | Spec update (immutable field) *(if applicable)* | Edit an immutable field, re-apply | Phase stays `Active`; status message describes the rejected change |
 | 5 | Dependency not yet ready | Apply before parent resource is Active | Controller requeues; eventually reaches `Active` once parent is ready |
 | 6 | CMP-side failure *(if applicable)* | Trigger a CMP failure (e.g. invalid config) | Phase moves to `Failed`; status message reflects CMP error |

@@ -99,7 +99,18 @@ log.Error(err, "failed to fetch CMP resource")
 
 ### Mock setup pattern
 
-Group mocks in a struct with an `expect*` method per API call scenario:
+Group mocks in a struct with an `expect*` method per API call scenario.
+
+The reconciler is constructed using `newTestReconciler` (defined in `common_test.go`), which creates a real `arubamt.Multitenant` cache pre-seeded with the mock client for `"test-tenant"`:
+
+```go
+// common_test.go
+func newTestReconciler(t GinkgoTInterface, mockArubaClient aruba.Client) *reconciler.Reconciler {
+    mt := arubamt.New()
+    mt.Add("test-tenant", mockArubaClient)
+    return reconciler.NewReconcilerForTest(k8sClient, k8sClient.Scheme(), mt)
+}
+```
 
 ```go
 type bsMocks struct {
@@ -109,13 +120,20 @@ type bsMocks struct {
     // ...
 }
 
-func newBSReconcilerWithMocks(t GinkgoTInterface) *bsMocks { ... }
+func newBSReconcilerWithMocks(t GinkgoTInterface) *bsMocks {
+    mockAruba := arubamocks.NewMockClient(t)
+    // ...
+    r := NewBlockStorageReconciler(newTestReconciler(t, mockAruba))
+    return &bsMocks{r: r, mockAruba: mockAruba, ...}
+}
 
 func (m *bsMocks) expectProjectList(projectID, projectName string) {
     m.mockAruba.EXPECT().FromProject().Return(m.mockProject)
     m.mockProject.EXPECT().List(mock.Anything, mock.Anything).Return(...)
 }
 ```
+
+All test specs must use `Tenant: "test-tenant"` so that `r.ArubaClient("test-tenant")` hits the pre-seeded cache entry.
 
 ### Assertion style
 

@@ -30,6 +30,13 @@ Defines all Custom Resource types and the shared status model.
 
 Contains only `reconciler.go`. Defines the shared three-step loop (`Reconcile`), the `ResourceReconciler` interface that every controller must implement, the `ResourceObject` constraint interface, `ReconcilerConfig`, and the timing constants (`ShortRequeueAfter`, `LongRequeueAfter`, `MaxPhaseTimeout`).
 
+Key elements of the `Reconciler` struct:
+- Private `multiTenantClient arubamt.Multitenant` — thread-safe cache of `aruba.Client` per tenant, initialized in `NewReconciler()`.
+- Private `config ReconcilerConfig` — holds all credential and endpoint configuration for deferred client creation.
+- Method `ArubaClient(tenant string) (aruba.Client, error)` — lazily creates and caches a tenant-scoped SDK client.
+- Exported context key `ArubaClientKey` (type `contextKey`) — used by controllers to pass the resolved client through `context.WithValue`.
+- `NewReconcilerForTest(k8sClient, scheme, mtClient)` — test-only constructor that bypasses `ctrl.Manager` and real credentials; accepts a pre-seeded `arubamt.Multitenant` so mock clients can be injected per tenant.
+
 ### `internal/controller/`
 
 One file per concern:

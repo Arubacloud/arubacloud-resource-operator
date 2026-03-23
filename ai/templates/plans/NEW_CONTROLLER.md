@@ -25,7 +25,7 @@ If this is a refactor, briefly describe what the old implementation does and wha
 | API group/version | `arubacloud.com/v1alpha1` |
 | CMP resource type | `<e.g. BlockStorage, VPC, …>` |
 | CMP API reference | link to the relevant section in https://api.arubacloud.com/docs/docs/intro |
-| SDK client accessor | `r.ArubaClient.From<…>()` |
+| SDK client accessor | `arubaClient.From<…>()` (client obtained from context via `reconciler.ArubaClientKey`) |
 | Finalizer string | `<resource>.arubacloud.com/finalizer` |
 
 ---
@@ -173,7 +173,10 @@ Work through each sub-step in order. Do not proceed to the next sub-step until t
 - [ ] Create (or rewrite) `internal/controller/<resource>_controller.go`:
   - Struct `<Resource>Reconciler` embedding `*reconciler.Reconciler` and holding `ts *TransitionSet[*v1alpha1.<Resource>, *arubatypes.<CMPType>]`
   - `Object()`, `Finalizer()`, `Reconcile()` (delegates to base), `SetupWithManager()`
-  - `HandleReconcile()`: resolve dependencies → fetch CMP resource → validate consistency → call `ts.Run()`
+  - `HandleReconcile()`:
+    1. Resolve tenant client: `arubaClient, err := r.ArubaClient(kubeObj.Spec.Tenant)` → inject into context: `ctx = context.WithValue(ctx, reconciler.ArubaClientKey, arubaClient)`
+    2. Resolve parent references (if any) → inject parent IDs into context
+    3. Fetch CMP resource → validate cardinality → pass to `ts.Run()`
 - [ ] Write tests for `HandleReconcile` covering: dependency not yet ready (requeue), CMP fetch error, cardinality error, happy path (delegates to ts).
 
 ### 5.3 TransitionSet
@@ -211,6 +214,15 @@ Implement all resource-specific AConditions listed in §4.2.
 - [ ] `kubeSetFailed` + test *(if applicable)*
 
 #### 5.3.4 AActions
+
+AActions receive `ctx` and must extract the `aruba.Client` from it:
+
+```go
+func (r *<Resource>Reconciler) cmpCreate(ctx context.Context, kube *v1alpha1.<Resource>, _ *arubatypes.<CMPType>) error {
+    arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+    // use arubaClient.From<…>()...
+}
+```
 
 - [ ] `cmpCreate` (using `cmp<Resource>RequestFromKube`) + test
 - [ ] `cmpUpdate` (using `cmp<Resource>RequestFromCMP` seeded, then overwrite mutable fields) + test

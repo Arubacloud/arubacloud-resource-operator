@@ -15,6 +15,7 @@
 | `config/crd/` | Generated CRD manifests (committed, updated by `make manifests`) |
 | `config/samples/` | Example CR manifests used in manual and e2e testing |
 | `test/scripts/` | Manual testing tooling (`test_runner.sh` + fixtures) |
+| `devex/build/` | Containerized development environment (`Dockerfile` for the devtools image) |
 
 ## Package details
 

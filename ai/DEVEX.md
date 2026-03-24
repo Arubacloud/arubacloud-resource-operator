@@ -3,6 +3,9 @@
 ## Commands
 
 ```bash
+# Host setup: install all development tools to bin/ via go install (one-time)
+make go-install-all-tools
+
 # Build
 make build                        # Build manager binary to bin/manager
 make manifests                    # Regenerate CRDs, RBAC, webhook manifests (run after API changes)
@@ -24,6 +27,56 @@ make lint-fix                     # Run golangci-lint with auto-fix
 # Run locally
 make run-dev                      # Run controller locally (installs CRDs first)
 ```
+
+> **Note:** Make targets no longer auto-install tools as a side effect. Either run `make go-install-all-tools` once for host development, or use the containerized workflow below.
+
+## Containerized Development
+
+Any Make target can be run inside a purpose-built container so that every developer uses identical tool versions regardless of host OS. The pattern is `make <target>-ctzd`.
+
+```bash
+# First-time setup: build the devtools image (takes a few minutes; cached after that)
+make devtools-image
+
+# Run any target inside the container
+make fmt-ctzd
+make lint-ctzd
+make vet-ctzd
+make generate-ctzd
+make manifests-ctzd
+make test-ctzd
+make build-ctzd
+make helm-operator-ctzd
+make helm-crd-ctzd
+
+# Open an interactive shell in the container
+make sh-ctzd
+
+# Remove the image and all caches
+make devtools-image-clean
+```
+
+The devtools image (`devex/build/Dockerfile`) is based on `golang:1.24-bookworm` and includes all development tools at pinned versions:
+
+| Tool | Version | Install method |
+|------|---------|----------------|
+| golangci-lint | v2.1.6 | `go install` (built with Go 1.24; v2 required for `.golangci.yml` v2 config format) |
+| mockery | v2.53.5 | Precompiled binary |
+| kustomize | v5.6.0 | Precompiled binary |
+| controller-gen | v0.18.0 | `go install` |
+| helmify | v0.4.19 | `go install` |
+| setup-envtest | release-0.21 | `go install` |
+
+**How it works:**
+
+- The repo is bind-mounted at `/workspace` inside the container; generated files (mocks, CRDs, binaries) are written directly to the host filesystem with the caller's UID/GID.
+- Tools are pre-installed in the image at `/devtools/bin` — they are never installed on the host. `LOCALBIN=/devtools/bin` is injected as a container environment variable so it applies to both the initial `make` call and any commands typed in `make sh-ctzd`.
+- Go module cache, build cache, and golangci-lint cache are stored in named Docker/Podman volumes and reused across runs.
+- The image is rebuilt automatically when `devex/build/Dockerfile` changes (tracked via a stamp file in `bin/`).
+
+**Podman / podman-docker compatibility:** The Makefile auto-detects whether the `docker` command is actually podman-docker (by inspecting `docker --version`). When podman-docker is detected, `--userns=keep-id` is used (required for rootless podman bind mount access); otherwise `--user $(id -u):$(id -g)` is used for real Docker. `--security-opt label=disable` is always passed to prevent SELinux from blocking bind mount access on enforcing systems (e.g. Fedora). No manual configuration is needed.
+
+**Targets NOT suitable for containerization** (require host Docker daemon, live Kubernetes cluster, or Kind): `docker-build`, `docker-push`, `install`, `deploy`, `undeploy`, `run`, `run-dev`, `test-e2e`, `setup-test-e2e`, `cleanup-test-e2e`, `logs`, `push-charts`.
 
 ## Verifying metrics
 

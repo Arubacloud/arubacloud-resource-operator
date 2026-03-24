@@ -166,7 +166,7 @@ Work through each sub-step in order. Do not proceed to the next sub-step until t
 
 - [ ] **New controller only**: create `api/v1alpha1/<resource>_types.go` defining `<Resource>Spec`, `<Resource>Status` (embedding `ResourceStatus`), `<Resource>`, and `<Resource>List`.
 - [ ] **Refactor**: verify the existing type is complete and correct; update if needed.
-- [ ] Run `make manifests generate` and confirm no diff errors.
+- [ ] Run `make manifests-ctzd generate-ctzd` and confirm no diff errors.
 
 ### 5.2 Controller scaffold
 
@@ -258,8 +258,8 @@ Currently no standard `KActionOnAError` is used in the reference implementations
 ### 5.4 Register the controller
 
 - [ ] Add `<Resource>Reconciler` setup in `cmd/main.go`.
-- [ ] Run `make test` and confirm all tests pass.
-- [ ] Run `make lint` and fix any issues.
+- [ ] Run `make test-ctzd` and confirm all tests pass.
+- [ ] Run `make lint-ctzd` and fix any issues.
 
 ---
 

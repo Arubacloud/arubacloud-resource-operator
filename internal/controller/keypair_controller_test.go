@@ -647,4 +647,70 @@ var _ = Describe("KeyPairReconciler", func() {
 			Expect(updated.Status.ProjectID).To(Equal(kpProjectID))
 		})
 	})
+
+	Describe("CMP error handling", func() {
+		DescribeTable("CMP create fails — preserves Creating+ShallSynchronize, surfaces error in condition",
+			func(name string, statusCode int, expectedRequeue time.Duration) {
+				m := newKpReconcilerWithMocks(GinkgoT())
+				kp = createTestKeyPair(ctx, name, defaultKeyPairSpec(kpProjectName))
+				setKeyPairStatus(ctx, kp, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, "", kpProjectID, 0, time.Now())
+
+				m.expectProjectList(kpProjectID, kpProjectName)
+				m.expectKeyPairList(kpProjectID)
+				m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
+				m.mockCompute.EXPECT().KeyPairs().Return(m.mockKeyPairs)
+				m.mockKeyPairs.EXPECT().Create(mock.Anything, kpProjectID, mock.Anything, mock.Anything).Return(buildKeyPairCRUDResponse(statusCode), nil)
+
+				result, err := m.r.HandleReconcile(ctx, kp)
+				Expect(err).To(Succeed())
+				Expect(result.RequeueAfter).To(Equal(expectedRequeue))
+
+				updated := &v1alpha1.KeyPair{}
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), updated)).To(Succeed())
+				Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
+				cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
+				Expect(cond).NotTo(BeNil())
+				Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
+				Expect(cond.Message).To(ContainSubstring("ERROR"))
+			},
+			Entry("4xx → LongRequeueAfter, no phase change", "kp-cmp-err-create-400", http.StatusBadRequest, reconciler.LongRequeueAfter),
+			Entry("5xx → ShortRequeueAfter, no phase change", "kp-cmp-err-create-500", http.StatusInternalServerError, reconciler.ShortRequeueAfter),
+		)
+
+		DescribeTable("CMP delete fails — preserves Deleting+ShallSynchronize, surfaces error in condition",
+			func(name string, statusCode int, expectedRequeue time.Duration) {
+				m := newKpReconcilerWithMocks(GinkgoT())
+				kp = createTestKeyPair(ctx, name, defaultKeyPairSpec(kpProjectName))
+				kFetch := &v1alpha1.KeyPair{}
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), kFetch)).To(Succeed())
+				kFetch.Finalizers = []string{keyPairFinalizerName}
+				Expect(k8sClient.Update(ctx, kFetch)).To(Succeed())
+				setKeyPairStatus(ctx, kp, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize, "kp-id-1", kpProjectID, 1, time.Now())
+				Expect(k8sClient.Delete(ctx, kp)).To(Succeed())
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), kp)).To(Succeed())
+
+				cmpKp := buildKeyPairResponse("kp-id-1", name)
+				m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
+				m.mockCompute.EXPECT().KeyPairs().Return(m.mockKeyPairs)
+				m.mockKeyPairs.EXPECT().List(mock.Anything, kpProjectID, mock.Anything).Return(buildKeyPairList(cmpKp), nil)
+				m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
+				m.mockCompute.EXPECT().KeyPairs().Return(m.mockKeyPairs)
+				m.mockKeyPairs.EXPECT().Delete(mock.Anything, kpProjectID, "kp-id-1", mock.Anything).Return(buildDeleteResponse(statusCode), nil)
+
+				result, err := m.r.HandleReconcile(ctx, kp)
+				Expect(err).To(Succeed())
+				Expect(result.RequeueAfter).To(Equal(expectedRequeue))
+
+				updated := &v1alpha1.KeyPair{}
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), updated)).To(Succeed())
+				Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleting))
+				cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
+				Expect(cond).NotTo(BeNil())
+				Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
+				Expect(cond.Message).To(ContainSubstring("ERROR"))
+			},
+			Entry("4xx → LongRequeueAfter, no phase change", "kp-cmp-err-delete-400", http.StatusBadRequest, reconciler.LongRequeueAfter),
+			Entry("5xx → ShortRequeueAfter, no phase change", "kp-cmp-err-delete-500", http.StatusInternalServerError, reconciler.ShortRequeueAfter),
+		)
+	})
 })

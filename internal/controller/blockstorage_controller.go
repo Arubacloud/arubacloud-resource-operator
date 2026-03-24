@@ -216,8 +216,9 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		aCondition:        cmpBlockStorageIsFinal,
 		aAction:           r.cmpDelete,
 		kActionOnASuccess: r.kubeMarkDeleting,
+		kActionOnAError:   kubeSetErrorMessageOnCMPError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse](r.Client),
 		requeue:           ShortRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		requeueOnError:    LongRequeueAndIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError:    SmartRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
 	// 2b. DeletionOnCMPNotNeeded — resource marked for deletion but CMP resource doesn't exist; skip CMP delete
@@ -298,8 +299,9 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		aCondition:        cmpBlockStorageIsFinal,
 		aAction:           r.cmpUpdate,
 		kActionOnASuccess: r.kubeMarkUpdating,
+		kActionOnAError:   kubeSetErrorMessageOnCMPError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse](r.Client),
 		requeue:           ShortRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		requeueOnError:    LongRequeueAndIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError:    SmartRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
 	// 6e. WaitingUpdateOnCMP — CMP is still processing the update
@@ -348,8 +350,9 @@ func (r *BlockStorageReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Blo
 		aCondition:        cmpBlockStorageNotExists,
 		aAction:           r.cmpCreate,
 		kActionOnASuccess: r.kubeMarkCreating,
+		kActionOnAError:   kubeSetErrorMessageOnCMPError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse](r.Client),
 		requeue:           ShortRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
-		requeueOnError:    LongRequeueAndIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		requeueOnError:    SmartRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
 	// 9. WaitingCreationInCMP
@@ -539,26 +542,10 @@ func (r *BlockStorageReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.Bloc
 	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
 	cmpBSResp, err := arubaClient.FromStorage().Volumes().Delete(ctx, prjID, *cmpBS.Metadata.ID, nil)
 	if err != nil {
-		return fmt.Errorf("failed to delete blockstorage '%s' in Aruba CMP: error: '%w'", *cmpBS.Metadata.Name, err)
+		return cmpTransportError("delete", *cmpBS.Metadata.Name, err)
 	}
-
-	switch cmpBSResp.StatusCode {
-	case http.StatusOK, http.StatusAccepted, http.StatusNoContent, http.StatusNotFound:
-		// Do nothing, we can consider the delete request as successful
-
-	case http.StatusBadRequest:
-		return fmt.Errorf(
-			"failed to delete blockstorage '%s' in Aruba CMP: status_code: %d, error_nature: 'semantic or precondition error', error: '%s'",
-			*cmpBS.Metadata.Name, cmpBSResp.StatusCode, cmpErrorDetails(cmpBSResp.Error),
-		)
-
-	default:
-		return fmt.Errorf(
-			"failed to delete blockstorage '%s' in Aruba CMP: status_code: %d, error_nature: 'internal error', error: '%s'",
-			*cmpBS.Metadata.Name, cmpBSResp.StatusCode, cmpErrorDetails(cmpBSResp.Error),
-		)
-	}
-	return nil
+	return cmpCheckResponse("delete", *cmpBS.Metadata.Name, cmpBSResp,
+		http.StatusOK, http.StatusAccepted, http.StatusNoContent, http.StatusNotFound)
 }
 
 func (r *BlockStorageReconciler) cmpUpdate(ctx context.Context, kubeBS *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockStorageResponse) error {
@@ -574,26 +561,10 @@ func (r *BlockStorageReconciler) cmpUpdate(ctx context.Context, kubeBS *v1alpha1
 
 	cmpBSResp, err := arubaClient.FromStorage().Volumes().Update(ctx, prjID, *cmpBS.Metadata.ID, *request, nil)
 	if err != nil {
-		return fmt.Errorf("failed to update blockstorage '%s' in Aruba CMP: error: '%w'", kubeBS.Name, err)
+		return cmpTransportError("update", kubeBS.Name, err)
 	}
-
-	switch cmpBSResp.StatusCode {
-	case http.StatusOK, http.StatusAccepted, http.StatusNoContent:
-		// Do nothing, we can consider the update request as successful
-
-	case http.StatusBadRequest:
-		return fmt.Errorf(
-			"failed to update blockstorage '%s' in Aruba CMP: status_code: %d, error_nature: 'semantic or precondition error', error: '%s'",
-			*cmpBS.Metadata.Name, cmpBSResp.StatusCode, cmpErrorDetails(cmpBSResp.Error),
-		)
-
-	default:
-		return fmt.Errorf(
-			"failed to update blockstorage '%s' in Aruba CMP: status_code: %d, error_nature: 'internal error', error: '%s'",
-			*cmpBS.Metadata.Name, cmpBSResp.StatusCode, cmpErrorDetails(cmpBSResp.Error),
-		)
-	}
-	return nil
+	return cmpCheckResponse("update", kubeBS.Name, cmpBSResp,
+		http.StatusOK, http.StatusAccepted, http.StatusNoContent)
 }
 
 func (r *BlockStorageReconciler) cmpCreate(ctx context.Context, kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {
@@ -602,26 +573,10 @@ func (r *BlockStorageReconciler) cmpCreate(ctx context.Context, kubeBS *v1alpha1
 
 	cmpBSResp, err := arubaClient.FromStorage().Volumes().Create(ctx, prjID, *cmpBlockStorageRequestFromKube(kubeBS), nil)
 	if err != nil {
-		return fmt.Errorf("failed to create blockstorage '%s' in Aruba CMP: error: '%w'", kubeBS.Name, err)
+		return cmpTransportError("create", kubeBS.Name, err)
 	}
-
-	switch cmpBSResp.StatusCode {
-	case http.StatusOK, http.StatusCreated, http.StatusAccepted:
-		// Do nothing, we can consider the create request as successful
-
-	case http.StatusBadRequest:
-		return fmt.Errorf(
-			"failed to create blockstorage '%s' in Aruba CMP: status_code: %d, error_nature: 'semantic or precondition error', error: '%s'",
-			kubeBS.Name, cmpBSResp.StatusCode, cmpErrorDetails(cmpBSResp.Error),
-		)
-
-	default:
-		return fmt.Errorf(
-			"failed to create blockstorage '%s' in Aruba CMP: status_code: %d, error_nature: 'internal error', error: '%s'",
-			kubeBS.Name, cmpBSResp.StatusCode, cmpErrorDetails(cmpBSResp.Error),
-		)
-	}
-	return nil
+	return cmpCheckResponse("create", kubeBS.Name, cmpBSResp,
+		http.StatusOK, http.StatusCreated, http.StatusAccepted)
 }
 
 // Helper functions

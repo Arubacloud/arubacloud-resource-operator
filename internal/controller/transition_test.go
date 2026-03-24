@@ -4,14 +4,16 @@ import (
 	"context"
 	"errors"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 
+	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
+
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
 	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
-	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 type testProject = *v1alpha1.Project
@@ -297,42 +299,62 @@ var _ = Describe("Requeue helpers", func() {
 	})
 
 	It("ShortRequeue returns ShortRequeueAfter", func() {
-		result := ShortRequeue[testProject, testCMP](proj, nilCMP)
+		result := ShortRequeue(proj, nilCMP)
 		Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
 	})
 
 	It("LongRequeue returns LongRequeueAfter", func() {
-		result := LongRequeue[testProject, testCMP](proj, nilCMP)
+		result := LongRequeue(proj, nilCMP)
 		Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
 	})
 
 	It("NoRequeue returns empty Result", func() {
-		result := NoRequeue[testProject, testCMP](proj, nilCMP)
+		result := NoRequeue(proj, nilCMP)
 		Expect(result).To(Equal(ctrl.Result{}))
 	})
 
 	It("ShortRequeueAndIgnoreError returns ShortRequeueAfter and nil error", func() {
-		result, err := ShortRequeueAndIgnoreError[testProject, testCMP](proj, nilCMP, errors.New("some error"))
+		result, err := ShortRequeueAndIgnoreError(proj, nilCMP, errors.New("some error"))
 		Expect(err).To(Succeed())
 		Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
 	})
 
 	It("LongRequeueAndIgnoreError returns LongRequeueAfter and nil error", func() {
-		result, err := LongRequeueAndIgnoreError[testProject, testCMP](proj, nilCMP, errors.New("some error"))
+		result, err := LongRequeueAndIgnoreError(proj, nilCMP, errors.New("some error"))
 		Expect(err).To(Succeed())
 		Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
 	})
 
 	It("NoRequeueButIgnoreError returns empty Result and nil error", func() {
-		result, err := NoRequeueButIgnoreError[testProject, testCMP](proj, nilCMP, errors.New("some error"))
+		result, err := NoRequeueButIgnoreError(proj, nilCMP, errors.New("some error"))
 		Expect(err).To(Succeed())
 		Expect(result).To(Equal(ctrl.Result{}))
 	})
 
 	It("NoRequeueAndPropagateError returns empty Result and propagates error", func() {
 		testErr := errors.New("some error")
-		result, err := NoRequeueAndPropagateError[testProject, testCMP](proj, nilCMP, testErr)
+		result, err := NoRequeueAndPropagateError(proj, nilCMP, testErr)
 		Expect(err).To(MatchError(testErr))
 		Expect(result).To(Equal(ctrl.Result{}))
+	})
+
+	It("SmartRequeueOnError returns LongRequeueAfter for semantic CMPError", func() {
+		semanticErr := &CMPError{Category: CMPErrorCategorySemantic, StatusCode: 400}
+		result, err := SmartRequeueOnError(proj, nilCMP, semanticErr)
+		Expect(err).To(Succeed())
+		Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
+	})
+
+	It("SmartRequeueOnError returns ShortRequeueAfter for technical CMPError", func() {
+		technicalErr := &CMPError{Category: CMPErrorCategoryTechnical, StatusCode: 500}
+		result, err := SmartRequeueOnError(proj, nilCMP, technicalErr)
+		Expect(err).To(Succeed())
+		Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
+	})
+
+	It("SmartRequeueOnError returns ShortRequeueAfter for plain (non-CMP) errors", func() {
+		result, err := SmartRequeueOnError(proj, nilCMP, errors.New("unknown error"))
+		Expect(err).To(Succeed())
+		Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
 	})
 })

@@ -164,8 +164,9 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 			aCondition:        cmpProjectExists,
 			aAction:           r.cmpDelete,
 			kActionOnASuccess: r.kubeMarkDeleting,
+			kActionOnAError:   kubeSetErrorMessageOnCMPError[*v1alpha1.Project, *arubatypes.ProjectResponse](r.Client),
 			requeue:           ShortRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeueOnError:    LongRequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError:    SmartRequeueOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
 	)
 
@@ -250,8 +251,9 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 			aCondition:        cmpProjectExists,
 			aAction:           r.cmpUpdate,
 			kActionOnASuccess: r.kubeMarkUpdating, // Mark as "Updating + Synchronizing"
+			kActionOnAError:   kubeSetErrorMessageOnCMPError[*v1alpha1.Project, *arubatypes.ProjectResponse](r.Client),
 			requeue:           ShortRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeueOnError:    LongRequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError:    SmartRequeueOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
 	)
 
@@ -312,8 +314,9 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 			aCondition:        cmpProjectNotExists,
 			aAction:           r.cmpCreate,
 			kActionOnASuccess: r.kubeMarkCreating,
+			kActionOnAError:   kubeSetErrorMessageOnCMPError[*v1alpha1.Project, *arubatypes.ProjectResponse](r.Client),
 			requeue:           ShortRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			requeueOnError:    LongRequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError:    SmartRequeueOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
 	)
 
@@ -450,27 +453,10 @@ func (r *ProjectReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.Project, 
 
 	cmpProjList, err := arubaClient.FromProject().Delete(ctx, *cmpProj.Metadata.ID, nil)
 	if err != nil {
-		return fmt.Errorf("failed to delete project '%s' in Aruba CMP: error: '%w'", *cmpProj.Metadata.Name, err)
+		return cmpTransportError("delete", *cmpProj.Metadata.Name, err)
 	}
-
-	switch cmpProjList.StatusCode {
-	case http.StatusOK, http.StatusAccepted, http.StatusNoContent, http.StatusNotFound:
-		// Do nothing, we can consider the delete request as successful
-
-	case http.StatusBadRequest:
-		return fmt.Errorf(
-			"failed to delete project '%s' in Aruba CMP: status_code: %d, error_nature: 'semantic or precondition error', error: '%s'",
-			*cmpProj.Metadata.Name, cmpProjList.StatusCode, cmpErrorDetails(cmpProjList.Error),
-		)
-
-	default:
-		return fmt.Errorf(
-			"failed to delete project '%s' in Aruba CMP: status_code: %d, error_nature: 'internal error', error: '%s'",
-			*cmpProj.Metadata.Name, cmpProjList.StatusCode, cmpErrorDetails(cmpProjList.Error),
-		)
-	}
-
-	return nil
+	return cmpCheckResponse("delete", *cmpProj.Metadata.Name, cmpProjList,
+		http.StatusOK, http.StatusAccepted, http.StatusNoContent, http.StatusNotFound)
 }
 
 func (r *ProjectReconciler) cmpUpdate(ctx context.Context, kubeProj *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) error {
@@ -484,54 +470,19 @@ func (r *ProjectReconciler) cmpUpdate(ctx context.Context, kubeProj *v1alpha1.Pr
 
 	cmpProjResp, err := arubaClient.FromProject().Update(ctx, kubeProj.Status.ResourceID, *request, nil)
 	if err != nil {
-		return fmt.Errorf("failed to update project '%s' in Aruba CMP: error: '%w'", kubeProj.Name, err)
+		return cmpTransportError("update", kubeProj.Name, err)
 	}
-
-	switch cmpProjResp.StatusCode {
-	case http.StatusOK, http.StatusAccepted, http.StatusNoContent:
-		// Do nothing, we can consider the update request as successful
-
-	case http.StatusBadRequest:
-		return fmt.Errorf(
-			"failed to update project '%s' in Aruba CMP: status_code: %d, error_nature: 'semantic or precondition error', error: '%s'",
-			*cmpProj.Metadata.Name, cmpProjResp.StatusCode, cmpErrorDetails(cmpProjResp.Error),
-		)
-
-	default:
-		return fmt.Errorf(
-			"failed to update project '%s' in Aruba CMP: status_code: %d, error_nature: 'internal error', error: '%s'",
-			*cmpProj.Metadata.Name, cmpProjResp.StatusCode, cmpErrorDetails(cmpProjResp.Error),
-		)
-	}
-
-	return nil
+	return cmpCheckResponse("update", kubeProj.Name, cmpProjResp,
+		http.StatusOK, http.StatusAccepted, http.StatusNoContent)
 }
 
 func (r *ProjectReconciler) cmpCreate(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
 	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
 	cmpProjResp, err := arubaClient.FromProject().Create(ctx, *cmpProjectRequestFromKube(kubeProj), nil)
 	if err != nil {
-		return fmt.Errorf("failed to create project '%s' in Aruba CMP: error: '%w'", kubeProj.Name, err)
+		return cmpTransportError("create", kubeProj.Name, err)
 	}
-
-	switch cmpProjResp.StatusCode {
-	case http.StatusOK, http.StatusCreated:
-		// Do nothing, we can consider the create request as successful
-
-	case http.StatusBadRequest:
-		return fmt.Errorf(
-			"failed to create project '%s' in Aruba CMP: status_code: %d, error_nature: 'semantic or precondition error', error: '%s'",
-			kubeProj.Name, cmpProjResp.StatusCode, cmpErrorDetails(cmpProjResp.Error),
-		)
-
-	default:
-		return fmt.Errorf(
-			"failed to create project '%s' in Aruba CMP: status_code: %d, error_nature: 'internal error', error: '%s'",
-			kubeProj.Name, cmpProjResp.StatusCode, cmpErrorDetails(cmpProjResp.Error),
-		)
-	}
-
-	return nil
+	return cmpCheckResponse("create", kubeProj.Name, cmpProjResp, http.StatusOK, http.StatusCreated)
 }
 
 // Helper functions

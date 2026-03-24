@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -18,6 +19,25 @@ import (
 type DeepCopyableObject[K any] interface {
 	reconciler.ResourceObject
 	DeepCopy() K
+}
+
+// kubeSetErrorMessageOnCMPError returns an ActionOnErrorFunc that surfaces the CMP error
+// details in the condition message without changing the resource's phase or reason.
+// The Aruba CMP API does not reliably distinguish transient dependency blockages (e.g. deleting
+// a project with remaining resources) from permanent bad-request errors, so CMP errors must
+// never move a resource to Failed. Only timeouts (PhaseTimedOut) may set the Failed reason.
+func kubeSetErrorMessageOnCMPError[K DeepCopyableObject[K], A any](c client.Client) ActionOnErrorFunc[K, A] {
+	return func(ctx context.Context, k K, _ A, err error) error {
+		rs := k.GetResourceStatus()
+		currentReason := v1alpha1.ConditionReasonShallSynchronize // safe fallback
+		for _, cond := range rs.Conditions {
+			if cond.Status == metav1.ConditionTrue {
+				currentReason = cond.Reason
+				break
+			}
+		}
+		return setPhaseAndCondition(c, ctx, k, rs.Phase, currentReason, err)
+	}
 }
 
 // setPhaseAndCondition performs a retry-on-conflict status patch that sets the
@@ -50,7 +70,13 @@ func setPhaseAndCondition[K DeepCopyableObject[K]](
 
 		msgSuffix := " - OK"
 		if actionErr != nil {
-			msgSuffix = fmt.Sprintf(" - ERROR: %s", actionErr.Error())
+			var cmpErr *CMPError
+			if errors.As(actionErr, &cmpErr) {
+				msgSuffix = fmt.Sprintf(" - ERROR [%s]: %s (status: %d, detail: %s)",
+					cmpErr.Category, cmpErr.Title, cmpErr.StatusCode, cmpErr.Detail)
+			} else {
+				msgSuffix = fmt.Sprintf(" - ERROR: %s", actionErr.Error())
+			}
 		}
 
 		meta.SetStatusCondition(

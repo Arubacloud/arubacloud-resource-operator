@@ -538,4 +538,99 @@ var _ = Describe("BlockStorageReconciler", func() {
 			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
 		})
 	})
+
+	Describe("CMP error handling", func() {
+		DescribeTable("CMP create fails — preserves Creating+ShallSynchronize, surfaces error in condition",
+			func(name string, statusCode int, expectedRequeue time.Duration) {
+				m := newBSReconcilerWithMocks(GinkgoT())
+				bs = createTestBlockStorage(ctx, name, defaultBSSpec(bsProjectName))
+				setBSStatus(ctx, bs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, "", bsProjectID, 0, time.Now())
+
+				m.expectProjectList(bsProjectID, bsProjectName)
+				m.expectBSList(bsProjectID)
+				m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
+				m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
+				m.mockVolumes.EXPECT().Create(mock.Anything, bsProjectID, mock.Anything, mock.Anything).Return(buildBSCRUDResponse(statusCode), nil)
+
+				result, err := m.r.HandleReconcile(ctx, bs)
+				Expect(err).To(Succeed())
+				Expect(result.RequeueAfter).To(Equal(expectedRequeue))
+
+				updated := &v1alpha1.BlockStorage{}
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), updated)).To(Succeed())
+				Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
+				cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
+				Expect(cond).NotTo(BeNil())
+				Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
+				Expect(cond.Message).To(ContainSubstring("ERROR"))
+			},
+			Entry("4xx → LongRequeueAfter, no phase change", "bs-cmp-err-create-400", http.StatusBadRequest, reconciler.LongRequeueAfter),
+			Entry("5xx → ShortRequeueAfter, no phase change", "bs-cmp-err-create-500", http.StatusInternalServerError, reconciler.ShortRequeueAfter),
+		)
+
+		DescribeTable("CMP update fails — preserves Updating+ShallSynchronize, surfaces error in condition",
+			func(name string, statusCode int, expectedRequeue time.Duration) {
+				m := newBSReconcilerWithMocks(GinkgoT())
+				bs = createTestBlockStorage(ctx, name, defaultBSSpec(bsProjectName))
+				setBSStatus(ctx, bs, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, "bs-id-1", bsProjectID, 1, time.Now())
+
+				cmpBS := buildBlockStorageResponse("bs-id-1", name, CSPResourceStateActive)
+				m.expectProjectList(bsProjectID, bsProjectName)
+				m.expectBSList(bsProjectID, cmpBS)
+				m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
+				m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
+				m.mockVolumes.EXPECT().Update(mock.Anything, bsProjectID, "bs-id-1", mock.Anything, mock.Anything).Return(buildBSCRUDResponse(statusCode), nil)
+
+				result, err := m.r.HandleReconcile(ctx, bs)
+				Expect(err).To(Succeed())
+				Expect(result.RequeueAfter).To(Equal(expectedRequeue))
+
+				updated := &v1alpha1.BlockStorage{}
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), updated)).To(Succeed())
+				Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseUpdating))
+				cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseUpdating))
+				Expect(cond).NotTo(BeNil())
+				Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
+				Expect(cond.Message).To(ContainSubstring("ERROR"))
+			},
+			Entry("4xx → LongRequeueAfter, no phase change", "bs-cmp-err-update-400", http.StatusBadRequest, reconciler.LongRequeueAfter),
+			Entry("5xx → ShortRequeueAfter, no phase change", "bs-cmp-err-update-500", http.StatusInternalServerError, reconciler.ShortRequeueAfter),
+		)
+
+		DescribeTable("CMP delete fails — preserves Deleting+ShallSynchronize, surfaces error in condition",
+			func(name string, statusCode int, expectedRequeue time.Duration) {
+				m := newBSReconcilerWithMocks(GinkgoT())
+				bs = createTestBlockStorage(ctx, name, defaultBSSpec(bsProjectName))
+				bFetch := &v1alpha1.BlockStorage{}
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bFetch)).To(Succeed())
+				bFetch.Finalizers = []string{blockStorageFinalizerName}
+				Expect(k8sClient.Update(ctx, bFetch)).To(Succeed())
+				setBSStatus(ctx, bs, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize, "bs-id-1", bsProjectID, 1, time.Now())
+				Expect(k8sClient.Delete(ctx, bs)).To(Succeed())
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bs)).To(Succeed())
+
+				cmpBS := buildBlockStorageResponse("bs-id-1", name, CSPResourceStateActive)
+				m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
+				m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
+				m.mockVolumes.EXPECT().List(mock.Anything, bsProjectID, mock.Anything).Return(buildBlockStorageList(cmpBS), nil)
+				m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
+				m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
+				m.mockVolumes.EXPECT().Delete(mock.Anything, bsProjectID, "bs-id-1", mock.Anything).Return(buildDeleteResponse(statusCode), nil)
+
+				result, err := m.r.HandleReconcile(ctx, bs)
+				Expect(err).To(Succeed())
+				Expect(result.RequeueAfter).To(Equal(expectedRequeue))
+
+				updated := &v1alpha1.BlockStorage{}
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), updated)).To(Succeed())
+				Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleting))
+				cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
+				Expect(cond).NotTo(BeNil())
+				Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
+				Expect(cond.Message).To(ContainSubstring("ERROR"))
+			},
+			Entry("4xx → LongRequeueAfter, no phase change", "bs-cmp-err-delete-400", http.StatusBadRequest, reconciler.LongRequeueAfter),
+			Entry("5xx → ShortRequeueAfter, no phase change", "bs-cmp-err-delete-500", http.StatusInternalServerError, reconciler.ShortRequeueAfter),
+		)
+	})
 })

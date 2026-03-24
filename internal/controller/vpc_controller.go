@@ -212,8 +212,9 @@ func (r *VpcReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Vpc, *arubat
 		aCondition:        cmpVpcIsFinal,
 		aAction:           r.cmpDelete,
 		kActionOnASuccess: r.kubeMarkDeleting,
+		kActionOnAError:   kubeSetErrorMessageOnCMPError[*v1alpha1.Vpc, *arubatypes.VPCResponse](r.Client),
 		requeue:           ShortRequeue[*v1alpha1.Vpc, *arubatypes.VPCResponse],
-		requeueOnError:    LongRequeueAndIgnoreError[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		requeueOnError:    SmartRequeueOnError[*v1alpha1.Vpc, *arubatypes.VPCResponse],
 	})
 
 	// 4. DeletionOnCMPNotNeeded — resource marked for deletion but CMP resource doesn't exist; skip CMP delete
@@ -294,8 +295,9 @@ func (r *VpcReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Vpc, *arubat
 		aCondition:        cmpVpcIsFinal,
 		aAction:           r.cmpUpdate,
 		kActionOnASuccess: r.kubeMarkUpdating,
+		kActionOnAError:   kubeSetErrorMessageOnCMPError[*v1alpha1.Vpc, *arubatypes.VPCResponse](r.Client),
 		requeue:           ShortRequeue[*v1alpha1.Vpc, *arubatypes.VPCResponse],
-		requeueOnError:    LongRequeueAndIgnoreError[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		requeueOnError:    SmartRequeueOnError[*v1alpha1.Vpc, *arubatypes.VPCResponse],
 	})
 
 	// 12. WaitingUpdateOnCMP — CMP is still processing the update
@@ -344,8 +346,9 @@ func (r *VpcReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Vpc, *arubat
 		aCondition:        cmpVpcNotExists,
 		aAction:           r.cmpCreate,
 		kActionOnASuccess: r.kubeMarkCreating,
+		kActionOnAError:   kubeSetErrorMessageOnCMPError[*v1alpha1.Vpc, *arubatypes.VPCResponse](r.Client),
 		requeue:           ShortRequeue[*v1alpha1.Vpc, *arubatypes.VPCResponse],
-		requeueOnError:    LongRequeueAndIgnoreError[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		requeueOnError:    SmartRequeueOnError[*v1alpha1.Vpc, *arubatypes.VPCResponse],
 	})
 
 	// 17. WaitingCreationInCMP
@@ -533,26 +536,10 @@ func (r *VpcReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.Vpc, cmpVpc *
 
 	cmpVpcResp, err := arubaClient.FromNetwork().VPCs().Delete(ctx, prjID, *cmpVpc.Metadata.ID, nil)
 	if err != nil {
-		return fmt.Errorf("failed to delete vpc '%s' in Aruba CMP: error: '%w'", *cmpVpc.Metadata.Name, err)
+		return cmpTransportError("delete", *cmpVpc.Metadata.Name, err)
 	}
-
-	switch cmpVpcResp.StatusCode {
-	case http.StatusOK, http.StatusAccepted, http.StatusNoContent, http.StatusNotFound:
-		// Do nothing, we can consider the delete request as successful
-
-	case http.StatusBadRequest:
-		return fmt.Errorf(
-			"failed to delete vpc '%s' in Aruba CMP: status_code: %d, error_nature: 'semantic or precondition error', error: '%s'",
-			*cmpVpc.Metadata.Name, cmpVpcResp.StatusCode, cmpErrorDetails(cmpVpcResp.Error),
-		)
-
-	default:
-		return fmt.Errorf(
-			"failed to delete vpc '%s' in Aruba CMP: status_code: %d, error_nature: 'internal error', error: '%s'",
-			*cmpVpc.Metadata.Name, cmpVpcResp.StatusCode, cmpErrorDetails(cmpVpcResp.Error),
-		)
-	}
-	return nil
+	return cmpCheckResponse("delete", *cmpVpc.Metadata.Name, cmpVpcResp,
+		http.StatusOK, http.StatusAccepted, http.StatusNoContent, http.StatusNotFound)
 }
 
 func (r *VpcReconciler) cmpUpdate(ctx context.Context, kubeVpc *v1alpha1.Vpc, cmpVpc *arubatypes.VPCResponse) error {
@@ -568,26 +555,10 @@ func (r *VpcReconciler) cmpUpdate(ctx context.Context, kubeVpc *v1alpha1.Vpc, cm
 
 	cmpVpcResp, err := arubaClient.FromNetwork().VPCs().Update(ctx, prjID, *cmpVpc.Metadata.ID, *request, nil)
 	if err != nil {
-		return fmt.Errorf("failed to update vpc '%s' in Aruba CMP: error: '%w'", kubeVpc.Name, err)
+		return cmpTransportError("update", kubeVpc.Name, err)
 	}
-
-	switch cmpVpcResp.StatusCode {
-	case http.StatusOK, http.StatusAccepted, http.StatusNoContent:
-		// Do nothing, we can consider the update request as successful
-
-	case http.StatusBadRequest:
-		return fmt.Errorf(
-			"failed to update vpc '%s' in Aruba CMP: status_code: %d, error_nature: 'semantic or precondition error', error: '%s'",
-			*cmpVpc.Metadata.Name, cmpVpcResp.StatusCode, cmpErrorDetails(cmpVpcResp.Error),
-		)
-
-	default:
-		return fmt.Errorf(
-			"failed to update vpc '%s' in Aruba CMP: status_code: %d, error_nature: 'internal error', error: '%s'",
-			*cmpVpc.Metadata.Name, cmpVpcResp.StatusCode, cmpErrorDetails(cmpVpcResp.Error),
-		)
-	}
-	return nil
+	return cmpCheckResponse("update", kubeVpc.Name, cmpVpcResp,
+		http.StatusOK, http.StatusAccepted, http.StatusNoContent)
 }
 
 func (r *VpcReconciler) cmpCreate(ctx context.Context, kubeVpc *v1alpha1.Vpc, _ *arubatypes.VPCResponse) error {
@@ -596,26 +567,10 @@ func (r *VpcReconciler) cmpCreate(ctx context.Context, kubeVpc *v1alpha1.Vpc, _ 
 
 	cmpVpcResp, err := arubaClient.FromNetwork().VPCs().Create(ctx, prjID, *cmpVpcRequestFromKube(kubeVpc), nil)
 	if err != nil {
-		return fmt.Errorf("failed to create vpc '%s' in Aruba CMP: error: '%w'", kubeVpc.Name, err)
+		return cmpTransportError("create", kubeVpc.Name, err)
 	}
-
-	switch cmpVpcResp.StatusCode {
-	case http.StatusOK, http.StatusCreated, http.StatusAccepted:
-		// Do nothing, we can consider the create request as successful
-
-	case http.StatusBadRequest:
-		return fmt.Errorf(
-			"failed to create vpc '%s' in Aruba CMP: status_code: %d, error_nature: 'semantic or precondition error', error: '%s'",
-			kubeVpc.Name, cmpVpcResp.StatusCode, cmpErrorDetails(cmpVpcResp.Error),
-		)
-
-	default:
-		return fmt.Errorf(
-			"failed to create vpc '%s' in Aruba CMP: status_code: %d, error_nature: 'internal error', error: '%s'",
-			kubeVpc.Name, cmpVpcResp.StatusCode, cmpErrorDetails(cmpVpcResp.Error),
-		)
-	}
-	return nil
+	return cmpCheckResponse("create", kubeVpc.Name, cmpVpcResp,
+		http.StatusOK, http.StatusCreated, http.StatusAccepted)
 }
 
 // Helper functions

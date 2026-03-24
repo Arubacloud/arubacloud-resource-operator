@@ -210,8 +210,9 @@ func (r *ElasticIpReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Elasti
 		aCondition:        cmpElasticIpIsFinal,
 		aAction:           r.cmpDelete,
 		kActionOnASuccess: r.kubeMarkDeleting,
+		kActionOnAError:   kubeSetErrorMessageOnCMPError[*v1alpha1.ElasticIp, *arubatypes.ElasticIPResponse](r.Client),
 		requeue:           ShortRequeue[*v1alpha1.ElasticIp, *arubatypes.ElasticIPResponse],
-		requeueOnError:    LongRequeueAndIgnoreError[*v1alpha1.ElasticIp, *arubatypes.ElasticIPResponse],
+		requeueOnError:    SmartRequeueOnError[*v1alpha1.ElasticIp, *arubatypes.ElasticIPResponse],
 	})
 
 	// 4. DeletionOnCMPNotNeeded — resource marked for deletion but CMP resource doesn't exist
@@ -292,8 +293,9 @@ func (r *ElasticIpReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Elasti
 		aCondition:        cmpElasticIpIsFinal,
 		aAction:           r.cmpUpdate,
 		kActionOnASuccess: r.kubeMarkUpdating,
+		kActionOnAError:   kubeSetErrorMessageOnCMPError[*v1alpha1.ElasticIp, *arubatypes.ElasticIPResponse](r.Client),
 		requeue:           ShortRequeue[*v1alpha1.ElasticIp, *arubatypes.ElasticIPResponse],
-		requeueOnError:    LongRequeueAndIgnoreError[*v1alpha1.ElasticIp, *arubatypes.ElasticIPResponse],
+		requeueOnError:    SmartRequeueOnError[*v1alpha1.ElasticIp, *arubatypes.ElasticIPResponse],
 	})
 
 	// 12. WaitingUpdateOnCMP — CMP is still processing the update
@@ -342,8 +344,9 @@ func (r *ElasticIpReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Elasti
 		aCondition:        cmpElasticIpNotExists,
 		aAction:           r.cmpCreate,
 		kActionOnASuccess: r.kubeMarkCreating,
+		kActionOnAError:   kubeSetErrorMessageOnCMPError[*v1alpha1.ElasticIp, *arubatypes.ElasticIPResponse](r.Client),
 		requeue:           ShortRequeue[*v1alpha1.ElasticIp, *arubatypes.ElasticIPResponse],
-		requeueOnError:    LongRequeueAndIgnoreError[*v1alpha1.ElasticIp, *arubatypes.ElasticIPResponse],
+		requeueOnError:    SmartRequeueOnError[*v1alpha1.ElasticIp, *arubatypes.ElasticIPResponse],
 	})
 
 	// 17. WaitingCreationInCMP
@@ -537,26 +540,10 @@ func (r *ElasticIpReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.Elastic
 
 	cmpEipResp, err := arubaClient.FromNetwork().ElasticIPs().Delete(ctx, prjID, *cmpEip.Metadata.ID, nil)
 	if err != nil {
-		return fmt.Errorf("failed to delete elasticip '%s' in Aruba CMP: error: '%w'", *cmpEip.Metadata.Name, err)
+		return cmpTransportError("delete", *cmpEip.Metadata.Name, err)
 	}
-
-	switch cmpEipResp.StatusCode {
-	case http.StatusOK, http.StatusAccepted, http.StatusNoContent, http.StatusNotFound:
-		// Do nothing, we can consider the delete request as successful
-
-	case http.StatusBadRequest:
-		return fmt.Errorf(
-			"failed to delete elasticip '%s' in Aruba CMP: status_code: %d, error_nature: 'semantic or precondition error', error: '%s'",
-			*cmpEip.Metadata.Name, cmpEipResp.StatusCode, cmpErrorDetails(cmpEipResp.Error),
-		)
-
-	default:
-		return fmt.Errorf(
-			"failed to delete elasticip '%s' in Aruba CMP: status_code: %d, error_nature: 'internal error', error: '%s'",
-			*cmpEip.Metadata.Name, cmpEipResp.StatusCode, cmpErrorDetails(cmpEipResp.Error),
-		)
-	}
-	return nil
+	return cmpCheckResponse("delete", *cmpEip.Metadata.Name, cmpEipResp,
+		http.StatusOK, http.StatusAccepted, http.StatusNoContent, http.StatusNotFound)
 }
 
 func (r *ElasticIpReconciler) cmpUpdate(ctx context.Context, kubeEip *v1alpha1.ElasticIp, cmpEip *arubatypes.ElasticIPResponse) error {
@@ -572,26 +559,10 @@ func (r *ElasticIpReconciler) cmpUpdate(ctx context.Context, kubeEip *v1alpha1.E
 
 	cmpEipResp, err := arubaClient.FromNetwork().ElasticIPs().Update(ctx, prjID, *cmpEip.Metadata.ID, *request, nil)
 	if err != nil {
-		return fmt.Errorf("failed to update elasticip '%s' in Aruba CMP: error: '%w'", kubeEip.Name, err)
+		return cmpTransportError("update", kubeEip.Name, err)
 	}
-
-	switch cmpEipResp.StatusCode {
-	case http.StatusOK, http.StatusAccepted, http.StatusNoContent:
-		// Do nothing, we can consider the update request as successful
-
-	case http.StatusBadRequest:
-		return fmt.Errorf(
-			"failed to update elasticip '%s' in Aruba CMP: status_code: %d, error_nature: 'semantic or precondition error', error: '%s'",
-			*cmpEip.Metadata.Name, cmpEipResp.StatusCode, cmpErrorDetails(cmpEipResp.Error),
-		)
-
-	default:
-		return fmt.Errorf(
-			"failed to update elasticip '%s' in Aruba CMP: status_code: %d, error_nature: 'internal error', error: '%s'",
-			*cmpEip.Metadata.Name, cmpEipResp.StatusCode, cmpErrorDetails(cmpEipResp.Error),
-		)
-	}
-	return nil
+	return cmpCheckResponse("update", kubeEip.Name, cmpEipResp,
+		http.StatusOK, http.StatusAccepted, http.StatusNoContent)
 }
 
 func (r *ElasticIpReconciler) cmpCreate(ctx context.Context, kubeEip *v1alpha1.ElasticIp, _ *arubatypes.ElasticIPResponse) error {
@@ -600,26 +571,10 @@ func (r *ElasticIpReconciler) cmpCreate(ctx context.Context, kubeEip *v1alpha1.E
 
 	cmpEipResp, err := arubaClient.FromNetwork().ElasticIPs().Create(ctx, prjID, *cmpElasticIpRequestFromKube(kubeEip), nil)
 	if err != nil {
-		return fmt.Errorf("failed to create elasticip '%s' in Aruba CMP: error: '%w'", kubeEip.Name, err)
+		return cmpTransportError("create", kubeEip.Name, err)
 	}
-
-	switch cmpEipResp.StatusCode {
-	case http.StatusOK, http.StatusCreated, http.StatusAccepted:
-		// Do nothing, we can consider the create request as successful
-
-	case http.StatusBadRequest:
-		return fmt.Errorf(
-			"failed to create elasticip '%s' in Aruba CMP: status_code: %d, error_nature: 'semantic or precondition error', error: '%s'",
-			kubeEip.Name, cmpEipResp.StatusCode, cmpErrorDetails(cmpEipResp.Error),
-		)
-
-	default:
-		return fmt.Errorf(
-			"failed to create elasticip '%s' in Aruba CMP: status_code: %d, error_nature: 'internal error', error: '%s'",
-			kubeEip.Name, cmpEipResp.StatusCode, cmpErrorDetails(cmpEipResp.Error),
-		)
-	}
-	return nil
+	return cmpCheckResponse("create", kubeEip.Name, cmpEipResp,
+		http.StatusOK, http.StatusCreated, http.StatusAccepted)
 }
 
 // Helper functions

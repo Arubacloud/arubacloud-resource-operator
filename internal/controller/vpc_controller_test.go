@@ -588,4 +588,99 @@ var _ = Describe("VpcReconciler", func() {
 			Expect(updated.Status.ProjectID).To(Equal(vpcProjectID))
 		})
 	})
+
+	Describe("CMP error handling", func() {
+		DescribeTable("CMP create fails — preserves Creating+ShallSynchronize, surfaces error in condition",
+			func(name string, statusCode int, expectedRequeue time.Duration) {
+				m := newVpcReconcilerWithMocks(GinkgoT())
+				vpc = createTestVpc(ctx, name, defaultVpcSpec(vpcProjectName))
+				setVpcStatus(ctx, vpc, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, "", "", 0, time.Now())
+
+				m.expectProjectList(vpcProjectID, vpcProjectName)
+				m.expectVpcList(vpcProjectID)
+				m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
+				m.mockNetwork.EXPECT().VPCs().Return(m.mockVPCsClient)
+				m.mockVPCsClient.EXPECT().Create(mock.Anything, vpcProjectID, mock.Anything, mock.Anything).Return(buildVpcCRUDResponse(statusCode), nil)
+
+				result, err := m.r.HandleReconcile(ctx, vpc)
+				Expect(err).To(Succeed())
+				Expect(result.RequeueAfter).To(Equal(expectedRequeue))
+
+				updated := &v1alpha1.Vpc{}
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(vpc), updated)).To(Succeed())
+				Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
+				cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
+				Expect(cond).NotTo(BeNil())
+				Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
+				Expect(cond.Message).To(ContainSubstring("ERROR"))
+			},
+			Entry("4xx → LongRequeueAfter, no phase change", "vpc-cmp-err-create-400", http.StatusBadRequest, reconciler.LongRequeueAfter),
+			Entry("5xx → ShortRequeueAfter, no phase change", "vpc-cmp-err-create-500", http.StatusInternalServerError, reconciler.ShortRequeueAfter),
+		)
+
+		DescribeTable("CMP update fails — preserves Updating+ShallSynchronize, surfaces error in condition",
+			func(name string, statusCode int, expectedRequeue time.Duration) {
+				m := newVpcReconcilerWithMocks(GinkgoT())
+				vpc = createTestVpc(ctx, name, defaultVpcSpec(vpcProjectName))
+				setVpcStatus(ctx, vpc, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, "vpc-id-1", vpcProjectID, 1, time.Now())
+
+				cmpVpc := buildVpcResponse("vpc-id-1", name, CSPResourceStateActive)
+				m.expectProjectList(vpcProjectID, vpcProjectName)
+				m.expectVpcList(vpcProjectID, cmpVpc)
+				m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
+				m.mockNetwork.EXPECT().VPCs().Return(m.mockVPCsClient)
+				m.mockVPCsClient.EXPECT().Update(mock.Anything, vpcProjectID, "vpc-id-1", mock.Anything, mock.Anything).Return(buildVpcCRUDResponse(statusCode), nil)
+
+				result, err := m.r.HandleReconcile(ctx, vpc)
+				Expect(err).To(Succeed())
+				Expect(result.RequeueAfter).To(Equal(expectedRequeue))
+
+				updated := &v1alpha1.Vpc{}
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(vpc), updated)).To(Succeed())
+				Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseUpdating))
+				cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseUpdating))
+				Expect(cond).NotTo(BeNil())
+				Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
+				Expect(cond.Message).To(ContainSubstring("ERROR"))
+			},
+			Entry("4xx → LongRequeueAfter, no phase change", "vpc-cmp-err-update-400", http.StatusBadRequest, reconciler.LongRequeueAfter),
+			Entry("5xx → ShortRequeueAfter, no phase change", "vpc-cmp-err-update-500", http.StatusInternalServerError, reconciler.ShortRequeueAfter),
+		)
+
+		DescribeTable("CMP delete fails — preserves Deleting+ShallSynchronize, surfaces error in condition",
+			func(name string, statusCode int, expectedRequeue time.Duration) {
+				m := newVpcReconcilerWithMocks(GinkgoT())
+				vpc = createTestVpc(ctx, name, defaultVpcSpec(vpcProjectName))
+				vFetch := &v1alpha1.Vpc{}
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(vpc), vFetch)).To(Succeed())
+				vFetch.Finalizers = []string{vpcFinalizerName}
+				Expect(k8sClient.Update(ctx, vFetch)).To(Succeed())
+				setVpcStatus(ctx, vpc, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize, "vpc-id-1", vpcProjectID, 1, time.Now())
+				Expect(k8sClient.Delete(ctx, vpc)).To(Succeed())
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(vpc), vpc)).To(Succeed())
+
+				cmpVpc := buildVpcResponse("vpc-id-1", name, CSPResourceStateActive)
+				m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
+				m.mockNetwork.EXPECT().VPCs().Return(m.mockVPCsClient)
+				m.mockVPCsClient.EXPECT().List(mock.Anything, vpcProjectID, mock.Anything).Return(buildVpcList(cmpVpc), nil)
+				m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
+				m.mockNetwork.EXPECT().VPCs().Return(m.mockVPCsClient)
+				m.mockVPCsClient.EXPECT().Delete(mock.Anything, vpcProjectID, "vpc-id-1", mock.Anything).Return(buildDeleteResponse(statusCode), nil)
+
+				result, err := m.r.HandleReconcile(ctx, vpc)
+				Expect(err).To(Succeed())
+				Expect(result.RequeueAfter).To(Equal(expectedRequeue))
+
+				updated := &v1alpha1.Vpc{}
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(vpc), updated)).To(Succeed())
+				Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleting))
+				cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
+				Expect(cond).NotTo(BeNil())
+				Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
+				Expect(cond.Message).To(ContainSubstring("ERROR"))
+			},
+			Entry("4xx → LongRequeueAfter, no phase change", "vpc-cmp-err-delete-400", http.StatusBadRequest, reconciler.LongRequeueAfter),
+			Entry("5xx → ShortRequeueAfter, no phase change", "vpc-cmp-err-delete-500", http.StatusInternalServerError, reconciler.ShortRequeueAfter),
+		)
+	})
 })

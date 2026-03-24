@@ -212,8 +212,9 @@ func (r *KeyPairReconciler) newTransitionSet() *TransitionSet[*v1alpha1.KeyPair,
 		aCondition:        cmpKeyPairExists,
 		aAction:           r.cmpDelete,
 		kActionOnASuccess: r.kubeMarkDeleting,
+		kActionOnAError:   kubeSetErrorMessageOnCMPError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse](r.Client),
 		requeue:           ShortRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		requeueOnError:    LongRequeueAndIgnoreError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		requeueOnError:    SmartRequeueOnError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
 	})
 
 	// 4. DeletionOnCMPNotNeeded — marked Deleting+ShallSynchronize but CMP already gone
@@ -302,8 +303,9 @@ func (r *KeyPairReconciler) newTransitionSet() *TransitionSet[*v1alpha1.KeyPair,
 		aCondition:        cmpKeyPairNotExists,
 		aAction:           r.cmpCreate,
 		kActionOnASuccess: r.kubeMarkCreating,
+		kActionOnAError:   kubeSetErrorMessageOnCMPError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse](r.Client),
 		requeue:           ShortRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		requeueOnError:    LongRequeueAndIgnoreError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		requeueOnError:    SmartRequeueOnError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
 	})
 
 	// 13. WaitingCreationInCMP — Creating+Synchronizing + CMP not found yet → poll
@@ -467,27 +469,10 @@ func (r *KeyPairReconciler) cmpCreate(ctx context.Context, kubeKp *v1alpha1.KeyP
 
 	cmpKpResp, err := arubaClient.FromCompute().KeyPairs().Create(ctx, prjID, cmpKeyPairRequestFromKube(kubeKp), nil)
 	if err != nil {
-		return fmt.Errorf("failed to create keypair '%s' in Aruba CMP: error: '%w'", kubeKp.Name, err)
+		return cmpTransportError("create", kubeKp.Name, err)
 	}
-
-	switch cmpKpResp.StatusCode {
-	case http.StatusOK, http.StatusCreated, http.StatusAccepted:
-		// Do nothing, we can consider the create request as successful
-
-	case http.StatusBadRequest:
-		return fmt.Errorf(
-			"failed to create keypair '%s' in Aruba CMP: status_code: %d, error_nature: 'semantic or precondition error', error: '%s'",
-			kubeKp.Name, cmpKpResp.StatusCode, cmpErrorDetails(cmpKpResp.Error),
-		)
-
-	default:
-		return fmt.Errorf(
-			"failed to create keypair '%s' in Aruba CMP: status_code: %d, error_nature: 'internal error', error: '%s'",
-			kubeKp.Name, cmpKpResp.StatusCode, cmpErrorDetails(cmpKpResp.Error),
-		)
-	}
-
-	return nil
+	return cmpCheckResponse("create", kubeKp.Name, cmpKpResp,
+		http.StatusOK, http.StatusCreated, http.StatusAccepted)
 }
 
 func (r *KeyPairReconciler) cmpDelete(ctx context.Context, kubeKp *v1alpha1.KeyPair, cmpKp *arubatypes.KeyPairResponse) error {
@@ -496,27 +481,10 @@ func (r *KeyPairReconciler) cmpDelete(ctx context.Context, kubeKp *v1alpha1.KeyP
 
 	cmpKpResp, err := arubaClient.FromCompute().KeyPairs().Delete(ctx, prjID, *cmpKp.Metadata.ID, nil)
 	if err != nil {
-		return fmt.Errorf("failed to delete keypair '%s' in Aruba CMP: error: '%w'", *cmpKp.Metadata.Name, err)
+		return cmpTransportError("delete", *cmpKp.Metadata.Name, err)
 	}
-
-	switch cmpKpResp.StatusCode {
-	case http.StatusOK, http.StatusAccepted, http.StatusNoContent, http.StatusNotFound:
-		// Do nothing, we can consider the delete request as successful
-
-	case http.StatusBadRequest:
-		return fmt.Errorf(
-			"failed to delete keypair '%s' in Aruba CMP: status_code: %d, error_nature: 'semantic or precondition error', error: '%s'",
-			*cmpKp.Metadata.Name, cmpKpResp.StatusCode, cmpErrorDetails(cmpKpResp.Error),
-		)
-
-	default:
-		return fmt.Errorf(
-			"failed to delete keypair '%s' in Aruba CMP: status_code: %d, error_nature: 'internal error', error: '%s'",
-			*cmpKp.Metadata.Name, cmpKpResp.StatusCode, cmpErrorDetails(cmpKpResp.Error),
-		)
-	}
-
-	return nil
+	return cmpCheckResponse("delete", *cmpKp.Metadata.Name, cmpKpResp,
+		http.StatusOK, http.StatusAccepted, http.StatusNoContent, http.StatusNotFound)
 }
 
 // Helper functions

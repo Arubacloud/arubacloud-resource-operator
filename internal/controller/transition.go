@@ -84,6 +84,17 @@ func NoRequeueAndPropagateError[K reconciler.ResourceObject, A any](_ K, _ A, er
 	return ctrl.Result{}, err
 }
 
+// SmartRequeueOnError is a RequeueOnErrorFunc that inspects the error category of a *CMPError:
+// - Semantic errors (4xx, config/user mistakes) get a long requeue — no point retrying quickly.
+// - Technical errors (5xx, network failures) get a short requeue for faster recovery.
+// Non-CMPError errors are treated as technical and get a short requeue.
+func SmartRequeueOnError[K reconciler.ResourceObject, A any](_ K, _ A, err error) (ctrl.Result, error) {
+	if CMPErrorIsSemantic(err) {
+		return ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
+	}
+	return ctrl.Result{RequeueAfter: reconciler.ShortRequeueAfter}, nil
+}
+
 // Transition defines the interface for a state transition step in the reconciliation loop.
 // It dictates when the transition should occur and what actions should be performed.
 type Transition[K reconciler.ResourceObject, A any] interface {

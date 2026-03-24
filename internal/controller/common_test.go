@@ -68,37 +68,6 @@ var _ = Describe("AssesCSPResourceStateNature", func() {
 	})
 })
 
-var _ = Describe("cmpErrorDetails", func() {
-	It("returns all 'na' for nil error", func() {
-		result := cmpErrorDetails(nil)
-		Expect(result).To(Equal("title=na,detail=na,instance=na"))
-	})
-
-	It("returns formatted string when all fields are set", func() {
-		title, detail, instance := "Bad Request", "resource not found", "urn:uuid:123"
-		err := &arubatypes.ErrorResponse{
-			Title:    &title,
-			Detail:   &detail,
-			Instance: &instance,
-		}
-		result := cmpErrorDetails(err)
-		Expect(result).To(Equal("title=Bad Request,detail=resource not found,instance=urn:uuid:123"))
-	})
-
-	It("returns 'na' for missing fields", func() {
-		title := "Some Error"
-		err := &arubatypes.ErrorResponse{Title: &title}
-		result := cmpErrorDetails(err)
-		Expect(result).To(Equal("title=Some Error,detail=na,instance=na"))
-	})
-
-	It("returns all 'na' for empty ErrorResponse", func() {
-		err := &arubatypes.ErrorResponse{}
-		result := cmpErrorDetails(err)
-		Expect(result).To(Equal("title=na,detail=na,instance=na"))
-	})
-})
-
 var _ = Describe("tagsAreEqual", func() {
 	It("returns true for same order", func() {
 		Expect(tagsAreEqual([]string{"a", "b", "c"}, []string{"a", "b", "c"})).To(BeTrue())

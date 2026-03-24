@@ -622,4 +622,92 @@ var _ = Describe("ProjectReconciler", func() {
 			Expect(err).To(HaveOccurred())
 		})
 	})
+
+	Describe("CMP error handling", func() {
+		DescribeTable("CMP create fails — preserves Creating+ShallSynchronize, surfaces error in condition",
+			func(name string, statusCode int, expectedRequeue time.Duration) {
+				r, mockArubaClient, mockProjectClient := newProjectReconcilerWithMocks(GinkgoT())
+				proj = createTestProject(ctx, name, defaultProjectSpec())
+				setProjectStatus(ctx, proj, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, "", 0, time.Now())
+
+				mockArubaClient.EXPECT().FromProject().Return(mockProjectClient)
+				mockProjectClient.EXPECT().List(mock.Anything, mock.Anything).Return(buildProjectList(), nil)
+				mockProjectClient.EXPECT().Create(mock.Anything, mock.Anything, mock.Anything).Return(buildProjectCRUDResponse(statusCode), nil)
+
+				result, err := r.HandleReconcile(ctx, proj)
+				Expect(err).To(Succeed())
+				Expect(result.RequeueAfter).To(Equal(expectedRequeue))
+
+				updated := &v1alpha1.Project{}
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), updated)).To(Succeed())
+				Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
+				cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
+				Expect(cond).NotTo(BeNil())
+				Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
+				Expect(cond.Message).To(ContainSubstring("ERROR"))
+			},
+			Entry("4xx → LongRequeueAfter, no phase change", "proj-cmp-err-create-400", http.StatusBadRequest, reconciler.LongRequeueAfter),
+			Entry("5xx → ShortRequeueAfter, no phase change", "proj-cmp-err-create-500", http.StatusInternalServerError, reconciler.ShortRequeueAfter),
+		)
+
+		DescribeTable("CMP update fails — preserves Updating+ShallSynchronize, surfaces error in condition",
+			func(name string, statusCode int, expectedRequeue time.Duration) {
+				r, mockArubaClient, mockProjectClient := newProjectReconcilerWithMocks(GinkgoT())
+				proj = createTestProject(ctx, name, defaultProjectSpec())
+				setProjectStatus(ctx, proj, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, "cmp-id-1", 1, time.Now())
+
+				cmpProj := buildProjectResponse("cmp-id-1", name, nil, "old description", false)
+				mockArubaClient.EXPECT().FromProject().Return(mockProjectClient)
+				mockProjectClient.EXPECT().List(mock.Anything, mock.Anything).Return(buildProjectList(cmpProj), nil)
+				mockProjectClient.EXPECT().Update(mock.Anything, "cmp-id-1", mock.Anything, mock.Anything).Return(buildProjectCRUDResponse(statusCode), nil)
+
+				result, err := r.HandleReconcile(ctx, proj)
+				Expect(err).To(Succeed())
+				Expect(result.RequeueAfter).To(Equal(expectedRequeue))
+
+				updated := &v1alpha1.Project{}
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), updated)).To(Succeed())
+				Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseUpdating))
+				cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseUpdating))
+				Expect(cond).NotTo(BeNil())
+				Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
+				Expect(cond.Message).To(ContainSubstring("ERROR"))
+			},
+			Entry("4xx → LongRequeueAfter, no phase change", "proj-cmp-err-update-400", http.StatusBadRequest, reconciler.LongRequeueAfter),
+			Entry("5xx → ShortRequeueAfter, no phase change", "proj-cmp-err-update-500", http.StatusInternalServerError, reconciler.ShortRequeueAfter),
+		)
+
+		DescribeTable("CMP delete fails — preserves Deleting+ShallSynchronize, surfaces error in condition",
+			func(name string, statusCode int, expectedRequeue time.Duration) {
+				r, mockArubaClient, mockProjectClient := newProjectReconcilerWithMocks(GinkgoT())
+				proj = createTestProject(ctx, name, defaultProjectSpec())
+				pFetch := &v1alpha1.Project{}
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), pFetch)).To(Succeed())
+				pFetch.Finalizers = []string{projectFinalizerName}
+				Expect(k8sClient.Update(ctx, pFetch)).To(Succeed())
+				setProjectStatus(ctx, proj, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize, "cmp-id-1", 1, time.Now())
+				Expect(k8sClient.Delete(ctx, proj)).To(Succeed())
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), proj)).To(Succeed())
+
+				cmpProj := buildProjectResponse("cmp-id-1", name, nil, "test description", false)
+				mockArubaClient.EXPECT().FromProject().Return(mockProjectClient)
+				mockProjectClient.EXPECT().List(mock.Anything, mock.Anything).Return(buildProjectList(cmpProj), nil)
+				mockProjectClient.EXPECT().Delete(mock.Anything, "cmp-id-1", mock.Anything).Return(buildDeleteResponse(statusCode), nil)
+
+				result, err := r.HandleReconcile(ctx, proj)
+				Expect(err).To(Succeed())
+				Expect(result.RequeueAfter).To(Equal(expectedRequeue))
+
+				updated := &v1alpha1.Project{}
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), updated)).To(Succeed())
+				Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleting))
+				cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
+				Expect(cond).NotTo(BeNil())
+				Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
+				Expect(cond.Message).To(ContainSubstring("ERROR"))
+			},
+			Entry("4xx → LongRequeueAfter, no phase change", "proj-cmp-err-delete-400", http.StatusBadRequest, reconciler.LongRequeueAfter),
+			Entry("5xx → ShortRequeueAfter, no phase change", "proj-cmp-err-delete-500", http.StatusInternalServerError, reconciler.ShortRequeueAfter),
+		)
+	})
 })

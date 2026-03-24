@@ -595,4 +595,99 @@ var _ = Describe("ElasticIpReconciler", func() {
 			Expect(updated.Status.ProjectID).To(Equal(eipProjectID))
 		})
 	})
+
+	Describe("CMP error handling", func() {
+		DescribeTable("CMP create fails — preserves Creating+ShallSynchronize, surfaces error in condition",
+			func(name string, statusCode int, expectedRequeue time.Duration) {
+				m := newEipReconcilerWithMocks(GinkgoT())
+				eip = createTestElasticIp(ctx, name, defaultElasticIpSpec(eipProjectName))
+				setElasticIpStatus(ctx, eip, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, "", eipProjectID, 0, time.Now())
+
+				m.expectProjectList(eipProjectID, eipProjectName)
+				m.expectElasticIpList(eipProjectID)
+				m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
+				m.mockNetwork.EXPECT().ElasticIPs().Return(m.mockElasticIPs)
+				m.mockElasticIPs.EXPECT().Create(mock.Anything, eipProjectID, mock.Anything, mock.Anything).Return(buildElasticIpCRUDResponse(statusCode), nil)
+
+				result, err := m.r.HandleReconcile(ctx, eip)
+				Expect(err).To(Succeed())
+				Expect(result.RequeueAfter).To(Equal(expectedRequeue))
+
+				updated := &v1alpha1.ElasticIp{}
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(eip), updated)).To(Succeed())
+				Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
+				cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
+				Expect(cond).NotTo(BeNil())
+				Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
+				Expect(cond.Message).To(ContainSubstring("ERROR"))
+			},
+			Entry("4xx → LongRequeueAfter, no phase change", "eip-cmp-err-create-400", http.StatusBadRequest, reconciler.LongRequeueAfter),
+			Entry("5xx → ShortRequeueAfter, no phase change", "eip-cmp-err-create-500", http.StatusInternalServerError, reconciler.ShortRequeueAfter),
+		)
+
+		DescribeTable("CMP update fails — preserves Updating+ShallSynchronize, surfaces error in condition",
+			func(name string, statusCode int, expectedRequeue time.Duration) {
+				m := newEipReconcilerWithMocks(GinkgoT())
+				eip = createTestElasticIp(ctx, name, defaultElasticIpSpec(eipProjectName))
+				setElasticIpStatus(ctx, eip, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, "eip-id-1", eipProjectID, 1, time.Now())
+
+				cmpEip := buildElasticIpResponse("eip-id-1", name, CSPResourceStateNotUsed)
+				m.expectProjectList(eipProjectID, eipProjectName)
+				m.expectElasticIpList(eipProjectID, cmpEip)
+				m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
+				m.mockNetwork.EXPECT().ElasticIPs().Return(m.mockElasticIPs)
+				m.mockElasticIPs.EXPECT().Update(mock.Anything, eipProjectID, "eip-id-1", mock.Anything, mock.Anything).Return(buildElasticIpCRUDResponse(statusCode), nil)
+
+				result, err := m.r.HandleReconcile(ctx, eip)
+				Expect(err).To(Succeed())
+				Expect(result.RequeueAfter).To(Equal(expectedRequeue))
+
+				updated := &v1alpha1.ElasticIp{}
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(eip), updated)).To(Succeed())
+				Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseUpdating))
+				cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseUpdating))
+				Expect(cond).NotTo(BeNil())
+				Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
+				Expect(cond.Message).To(ContainSubstring("ERROR"))
+			},
+			Entry("4xx → LongRequeueAfter, no phase change", "eip-cmp-err-update-400", http.StatusBadRequest, reconciler.LongRequeueAfter),
+			Entry("5xx → ShortRequeueAfter, no phase change", "eip-cmp-err-update-500", http.StatusInternalServerError, reconciler.ShortRequeueAfter),
+		)
+
+		DescribeTable("CMP delete fails — preserves Deleting+ShallSynchronize, surfaces error in condition",
+			func(name string, statusCode int, expectedRequeue time.Duration) {
+				m := newEipReconcilerWithMocks(GinkgoT())
+				eip = createTestElasticIp(ctx, name, defaultElasticIpSpec(eipProjectName))
+				eFetch := &v1alpha1.ElasticIp{}
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(eip), eFetch)).To(Succeed())
+				eFetch.Finalizers = []string{elasticIpFinalizerName}
+				Expect(k8sClient.Update(ctx, eFetch)).To(Succeed())
+				setElasticIpStatus(ctx, eip, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize, "eip-id-1", eipProjectID, 1, time.Now())
+				Expect(k8sClient.Delete(ctx, eip)).To(Succeed())
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(eip), eip)).To(Succeed())
+
+				cmpEip := buildElasticIpResponse("eip-id-1", name, CSPResourceStateNotUsed)
+				m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
+				m.mockNetwork.EXPECT().ElasticIPs().Return(m.mockElasticIPs)
+				m.mockElasticIPs.EXPECT().List(mock.Anything, eipProjectID, mock.Anything).Return(buildElasticIpList(cmpEip), nil)
+				m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
+				m.mockNetwork.EXPECT().ElasticIPs().Return(m.mockElasticIPs)
+				m.mockElasticIPs.EXPECT().Delete(mock.Anything, eipProjectID, "eip-id-1", mock.Anything).Return(buildDeleteResponse(statusCode), nil)
+
+				result, err := m.r.HandleReconcile(ctx, eip)
+				Expect(err).To(Succeed())
+				Expect(result.RequeueAfter).To(Equal(expectedRequeue))
+
+				updated := &v1alpha1.ElasticIp{}
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(eip), updated)).To(Succeed())
+				Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleting))
+				cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
+				Expect(cond).NotTo(BeNil())
+				Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
+				Expect(cond.Message).To(ContainSubstring("ERROR"))
+			},
+			Entry("4xx → LongRequeueAfter, no phase change", "eip-cmp-err-delete-400", http.StatusBadRequest, reconciler.LongRequeueAfter),
+			Entry("5xx → ShortRequeueAfter, no phase change", "eip-cmp-err-delete-500", http.StatusInternalServerError, reconciler.ShortRequeueAfter),
+		)
+	})
 })

@@ -43,7 +43,7 @@ Within each phase, the `Reason` field on the active condition acts as a sub-stat
 | `ShallSynchronize` | Intent recorded; CMP call not yet dispatched |
 | `Synchronizing` | CMP call dispatched; waiting for confirmation |
 | `Synchronized` | CMP confirmed; ready to advance to next phase |
-| `Failed` | Timeout or CMP failure; terminal until manually resolved |
+| `Failed` | Timeout or CMP-side failure state; terminal until manually resolved |
 
 ## Action Execution Order in a Transition
 
@@ -53,9 +53,15 @@ else if AAction defined:
     run AAction
     on success → run KActionOnASuccess (typically updates K8s status)
     on error   → run KActionOnAError   (typically sets error phase)
+                 then → RequeueOnError  (determines requeue strategy)
 ```
 
 KAction and AAction are mutually exclusive by design to avoid double side-effects.
+
+**Standard error-handling wiring** for CMP-facing transitions (`ShouldBeCreatedInCMP`, `ShouldBeUpdatedOnCMP`, `ShouldBeDeletedOnCMP`):
+
+- `KActionOnAError`: `kubeSetErrorMessageOnCMPError[K, A](r.Client)` — surfaces the CMP error details in the condition message without changing the resource's phase or reason. The Aruba CMP API does not reliably distinguish transient dependency blockages from permanent errors, so CMP errors never move a resource to `Failed` — only timeouts do.
+- `RequeueOnError`: `SmartRequeueOnError[K, A]` — uses `ShortRequeueAfter` for technical errors (fast infrastructure retry) and `LongRequeueAfter` for semantic errors (wait for manual fix).
 
 ## Transition Patterns
 
@@ -73,7 +79,7 @@ Triggered by Kubernetes setting `DeletionTimestamp`. Steps:
 |-----------|-------------|---------------|--------|
 | `ShouldBeDeleted` | deleting + Active/Synchronized | CMP resource exists in a final state | Mark `Deleting+ShallSynchronize` |
 | `ShouldDeleteTimedOut` | deleting + Failed (timed-out, not during Deleting) | any | Mark `Deleting+ShallSynchronize` |
-| `ShouldBeDeletedOnCMP` | `Deleting+ShallSynchronize` | CMP exists | Call CMP delete → on success mark `Deleting+Synchronizing` |
+| `ShouldBeDeletedOnCMP` | `Deleting+ShallSynchronize` | CMP exists | Call CMP delete → on success mark `Deleting+Synchronizing`; on error: `kubeSetErrorMessageOnCMPError` + `SmartRequeueOnError` |
 | `DeletionOnCMPNotNeeded` | `Deleting+ShallSynchronize` | CMP not found | Skip CMP call, mark `Deleting+Synchronized` directly |
 | `WaitingDeletionOnCMP` | `Deleting+Synchronizing` | CMP still exists | No action, long requeue |
 | `DeletionConfirmedOnCMP` | `Deleting+Synchronizing` | CMP gone | Mark `Deleting+Synchronized` |
@@ -90,7 +96,7 @@ Triggered when `ObservedGeneration != Generation` (spec changed). Resources may 
 | `HasDeniedChanges` *(optional)* | `Active` + generation changed + immutable field differs | CMP exists in final state | Return error (surfaced as status message); long requeue |
 | `SpecAlreadyInSyncWithCMP` | `Active` + generation changed + no actual diff | CMP exists | Re-stamp `ObservedGeneration`, stay `Active+Synchronized` |
 | `ShouldBeUpdated` | `Active` + generation changed + real diff | CMP exists in final state | Mark `Updating+ShallSynchronize` |
-| `ShouldBeUpdatedOnCMP` | `Updating+ShallSynchronize` | CMP exists in final state | Call CMP update → on success mark `Updating+Synchronizing` |
+| `ShouldBeUpdatedOnCMP` | `Updating+ShallSynchronize` | CMP exists in final state | Call CMP update → on success mark `Updating+Synchronizing`; on error: `kubeSetErrorMessageOnCMPError` + `SmartRequeueOnError` |
 | `WaitingUpdateOnCMP` | `Updating+Synchronizing` + spec still differs | CMP exists (transitory or diverged) | No action, long requeue |
 | `UpdateConfirmedOnCMP` | `Updating+Synchronizing` + spec converged | CMP exists | Mark `Updating+Synchronized` |
 | `UpdateAccomplished` | `Updating+Synchronized` | CMP in final/active state | `setActive+setID` |
@@ -122,7 +128,7 @@ Triggered on the first reconciliation (empty `ResourceID`, no phase, no conditio
 | Transition | K condition | CMP condition | Action |
 |-----------|-------------|---------------|--------|
 | `ShouldBeCreated` | first reconciliation | CMP not found | Mark `Creating+ShallSynchronize` |
-| `ShouldBeCreatedInCMP` | `Creating+ShallSynchronize` | CMP not found | Call CMP create → on success mark `Creating+Synchronizing` |
+| `ShouldBeCreatedInCMP` | `Creating+ShallSynchronize` | CMP not found | Call CMP create → on success mark `Creating+Synchronizing`; on error: `kubeSetErrorMessageOnCMPError` + `SmartRequeueOnError` |
 | `WaitingCreationInCMP` | `Creating+Synchronizing` | CMP not found or transitory | No action, long requeue |
 | `CreationConfirmedOnCMP` | `Creating+Synchronizing` | CMP now found/active | Mark `Creating+Synchronized` |
 | `CreationAccomplished` | `Creating+Synchronized` | CMP active | `setActive+setID` (stores `ResourceID`, stamps `ObservedGeneration`) |

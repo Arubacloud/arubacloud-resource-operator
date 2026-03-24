@@ -42,10 +42,11 @@ Key elements of the `Reconciler` struct:
 One file per concern:
 
 - `<resource>_controller.go` — embeds `*reconciler.Reconciler`, wires a `TransitionSet`, and implements `Object()`, `Finalizer()`, `HandleReconcile()`.
-- `transition.go` — the generic state-machine types: `Transition[K,A]` interface, `AbstractTransition[K,A]` (concrete impl with function-pointer fields), `TransitionSet[K,A]` (ordered list + default fallback).
+- `transition.go` — the generic state-machine types: `Transition[K,A]` interface, `AbstractTransition[K,A]` (concrete impl with function-pointer fields), `TransitionSet[K,A]` (ordered list + default fallback), and requeue helpers (`ShortRequeue`, `LongRequeue`, `NoRequeue`, `LongRequeueAndIgnoreError`, `SmartRequeueOnError`).
 - `transition_conditions.go` — all reusable `ConditionFunc[K,A]` implementations (e.g. `kubeIsFirstReconciliation`, `kubeShouldBeCreatedOnCMP`, `kubePhaseTimedOut`, `kubeShouldDelete`). These are package-private; only referenced from controller transition wiring.
-- `transition_actions.go` — all reusable status-patch helpers: `setPhaseAndCondition`, `setActiveAndSetID`, `setFailedOnTimeout`. These use `retry.RetryOnConflict` internally and are the canonical way to write back Kubernetes status.
-- `common.go` — CMP (Aruba-side) state constants (`CSPResourceState*`), `AssesCSPResourceStateNature` for classifying CMP states as Transitory/Final, and `cmpErrorDetails` for safely extracting error info from `ErrorResponse`.
+- `transition_actions.go` — all reusable status-patch helpers: `setPhaseAndCondition`, `setActiveAndSetID`, `setFailedOnTimeout`, and `kubeSetErrorMessageOnCMPError`. These use `retry.RetryOnConflict` internally and are the canonical way to write back Kubernetes status.
+- `cmp_error.go` — CMP error types: `CMPError` struct, `CMPErrorCategory` enum (Semantic/Technical), `cmpTransportError` and `cmpResponseError` constructors, `cmpCheckResponse[T]` generic response checker, and `CMPErrorIsSemantic`/`CMPErrorIsTechnical` helpers.
+- `common.go` — CMP (Aruba-side) state constants (`CSPResourceState*`) and `AssesCSPResourceStateNature` for classifying CMP states as Transitory/Final.
 
 ### `internal/client/`
 

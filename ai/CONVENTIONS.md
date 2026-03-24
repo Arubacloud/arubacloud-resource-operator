@@ -23,6 +23,51 @@ import (
 
 ## Error handling
 
+### CMP (Aruba API) errors
+
+All errors from CMP interactions use the `CMPError` struct (`internal/controller/cmp_error.go`). Never use plain `fmt.Errorf` in CMP action methods.
+
+**Two error categories:**
+- `CMPErrorCategorySemantic` — HTTP 4xx responses; may be user/config mistakes or transient dependency blockages (e.g. deleting a project with remaining resources). The error message is surfaced in the condition but the phase/reason is never changed to `Failed` (only timeouts cause `Failed`).
+- `CMPErrorCategoryTechnical` — HTTP 5xx responses and network/transport errors; transient infrastructure failures that warrant a short retry.
+
+**Constructors:**
+```go
+// For Go-level transport failures (network, timeout, context cancel)
+cmpTransportError("create", resourceName, err) // always Technical
+
+// For non-success HTTP responses
+cmpResponseError("delete", resourceName, statusCode, resp.Error) // 4xx→Semantic, 5xx→Technical
+```
+
+**Generic response checker** — canonical replacement for the status-code switch in CMP action methods:
+```go
+func (r *XxxReconciler) cmpCreate(ctx context.Context, kubeXxx *v1alpha1.Xxx, _ *arubatypes.XxxResponse) error {
+    resp, err := arubaClient.FromXxx().Create(ctx, ...)
+    if err != nil {
+        return cmpTransportError("create", kubeXxx.Name, err)
+    }
+    return cmpCheckResponse("create", kubeXxx.Name, resp, http.StatusOK, http.StatusCreated)
+}
+```
+
+**Inspecting errors** — use `errors.As` or the convenience helpers:
+```go
+var cmpErr *CMPError
+if errors.As(err, &cmpErr) { /* inspect cmpErr.Category, cmpErr.StatusCode, etc. */ }
+
+CMPErrorIsSemantic(err)  // true for 4xx CMPErrors
+CMPErrorIsTechnical(err) // true for 5xx/transport CMPErrors
+```
+
+**Standard transition wiring** for CMP-facing transitions (`ShouldBeCreatedInCMP`, `ShouldBeUpdatedOnCMP`, `ShouldBeDeletedOnCMP`):
+```go
+kActionOnAError: kubeSetErrorMessageOnCMPError[*v1alpha1.Xxx, *arubatypes.XxxResponse](r.Client),
+requeueOnError:  SmartRequeueOnError[*v1alpha1.Xxx, *arubatypes.XxxResponse],
+```
+
+### General error handling
+
 - Wrap errors with `fmt.Errorf("...: %w", err)` to preserve the error chain.
 - Define sentinel errors with `errors.New()` in the package where they originate (e.g. `ErrNotAllowedChanges` in `common.go`).
 - Include relevant identifiers in the message (resource name, ID) for debuggability.
@@ -91,7 +136,7 @@ log.Error(err, "failed to fetch CMP resource")
 | File | Content |
 |------|---------|
 | `suite_test.go` | Global `envtest` setup (`BeforeSuite` / `AfterSuite`), shared `k8sClient` and `testEnv` |
-| `common_test.go` | Tests for shared utilities (`AssesCSPResourceStateNature`, `cmpErrorDetails`) |
+| `common_test.go` | Tests for shared utilities (`AssesCSPResourceStateNature`) |
 | `transition_test.go` | Unit tests for the `TransitionSet` state machine |
 | `transition_conditions_test.go` | Unit tests for reusable condition functions |
 | `transition_actions_test.go` | Unit tests for reusable action helpers + `findCondition` utility |

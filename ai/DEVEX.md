@@ -25,6 +25,14 @@ make lint-fix                     # Run golangci-lint with auto-fix
 make run-dev                      # Run controller locally (installs CRDs first)
 ```
 
+## Verifying metrics
+
+When running the operator locally, metrics are available at `http://localhost:8080/metrics`:
+
+```bash
+curl http://localhost:8080/metrics | grep aruba_
+```
+
 ## Manual Testing with test_runner.sh
 
 `test/scripts/test_runner.sh` applies or deletes a set of Kubernetes resources against a live cluster for manual integration testing.

@@ -28,7 +28,7 @@ Defines all Custom Resource types and the shared status model.
 
 ### `internal/reconciler/`
 
-Contains only `reconciler.go`. Defines the shared three-step loop (`Reconcile`), the `ResourceReconciler` interface that every controller must implement, the `ResourceObject` constraint interface, `ReconcilerConfig`, and the timing constants (`ShortRequeueAfter`, `LongRequeueAfter`, `MaxPhaseTimeout`).
+Contains `reconciler.go` and `metrics.go`. The former defines the shared three-step loop (`Reconcile`), the `ResourceReconciler` interface that every controller must implement, the `ResourceObject` constraint interface, `ReconcilerConfig`, and the timing constants (`ShortRequeueAfter`, `LongRequeueAfter`, `MaxPhaseTimeout`). The latter defines the `aruba_reconcile_step_duration_seconds` Prometheus histogram, registers it with the controller-runtime metrics registry, and provides `getResourceKind`, `getPhaseAndReason`, and `observeStep` helpers used to instrument each reconciliation step.
 
 Key elements of the `Reconciler` struct:
 - Private `multiTenantClient arubamt.Multitenant` — thread-safe cache of `aruba.Client` per tenant, initialized in `NewReconciler()`.

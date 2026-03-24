@@ -47,6 +47,29 @@ ctx = log.IntoContext(ctx, logger)
 
 This ensures the transition engine and action helpers downstream automatically inherit the `tenant` field via their own `log.FromContext(ctx)` calls. See `CONVENTIONS.md` for the full logging guide (levels, fields, security).
 
+## Metrics
+
+The operator exposes a single Prometheus histogram defined in `internal/reconciler/metrics.go`:
+
+```
+aruba_reconcile_step_duration_seconds
+```
+
+It measures the duration of each `HandleReconcile` call (the resource-specific reconciliation step in `Reconciler.Reconcile()`) and is registered with the controller-runtime metrics registry (`sigs.k8s.io/controller-runtime/pkg/metrics`). The phase and reason labels are captured by re-fetching the resource after `HandleReconcile` returns, so they reflect the status written during that reconciliation.
+
+### Dimensions
+
+| Label | Values | Source |
+|-------|--------|--------|
+| `resource_kind` | `Project`, `BlockStorage`, `CloudServer`, `ElasticIp`, `KeyPair`, `SecurityGroup`, `SecurityRule`, `Subnet`, `Vpc` | `reflect.TypeOf(obj).Elem().Name()` |
+| `result` | `success`, `error` | Whether `HandleReconcile` returned an error |
+| `phase` | `Creating`, `Active`, `Deleting`, `Deleted`, `Failed`, etc. (or `""`) | `obj.GetResourceStatus().Phase` after `HandleReconcile` completes |
+| `reason` | `ShallSynchronize`, `Synchronizing`, `Synchronized`, `Failed` (or `""`) | Active condition's `.Reason` after `HandleReconcile` completes |
+
+### Endpoint
+
+Metrics are served on `:8080` via plain HTTP (no TLS, no authentication). The controller-runtime manager automatically handles the `/metrics` path.
+
 ## Condition Reason State Machine
 
 Within each phase, the `Reason` field on the active condition acts as a sub-state:

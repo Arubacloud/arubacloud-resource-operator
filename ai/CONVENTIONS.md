@@ -169,6 +169,20 @@ Infrastructure fields (cluster, namespace, pod, etc.) are injected by the log pi
 
 Never log secrets, tokens, or credentials — even at debug/trace levels.
 
+## Metrics
+
+Custom Prometheus metrics are defined in `internal/reconciler/metrics.go` and registered with the controller-runtime metrics registry:
+
+```go
+func init() {
+    metrics.Registry.MustRegister(myHistogram)
+}
+```
+
+- Use `sigs.k8s.io/controller-runtime/pkg/metrics` for the registry (not the global `prometheus.DefaultRegisterer`).
+- Metric names follow the `aruba_<subsystem>_<name>_<unit>` pattern — e.g. `aruba_reconcile_step_duration_seconds`.
+- Label names use `snake_case`.
+
 ## Comments
 
 - Exported types and functions get standard Go doc comments (full sentence starting with the symbol name).

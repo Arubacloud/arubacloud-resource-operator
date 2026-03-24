@@ -20,11 +20,11 @@ import (
 	"context"
 	"crypto/tls"
 	"flag"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
 
-	"log/slog"
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 
@@ -38,7 +38,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
-	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -99,12 +98,8 @@ func main() {
 		"Name of the Secret containing sensitive configuration.")
 	flag.StringVar(&configNamespace, "namespace", "aruba-system",
 		"Namespace where ConfigMap and Secret are located.")
-	flag.StringVar(&logLevel, "log-level", "info", "Set log level: debug, info, warn, error")
+	flag.StringVar(&logLevel, "log-level", "info", "Set log level: trace, debug, info, warn, error")
 
-	opts := zap.Options{
-		Development: true,
-	}
-	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
 	level := getLogLevel()
@@ -115,11 +110,29 @@ func main() {
 			case slog.TimeKey: // "time"
 				a.Key = "timestamp"
 				// format ISO8601
-				a.Value = slog.StringValue(time.Now().Format(time.RFC3339Nano))
+				a.Value = slog.StringValue(time.Now().Format(time.RFC3339))
 			case slog.MessageKey: // "msg"
 				a.Key = "message"
 			case "err":
 				a.Key = "stacktrace"
+			case slog.LevelKey:
+				// logr maps V(n) to slog.Level(-n):
+				//   V(1) = -1  → DEBUG+3 by default → rename to "DEBUG"
+				//   V(2) = -2  → DEBUG+2 by default → rename to "TRACE"
+				// Any level below -1 (V(2) and deeper) is "TRACE".
+				l := a.Value.Any().(slog.Level)
+				switch {
+				case l >= slog.LevelError:
+					a.Value = slog.StringValue("ERROR")
+				case l >= slog.LevelWarn:
+					a.Value = slog.StringValue("WARN")
+				case l >= slog.LevelInfo:
+					a.Value = slog.StringValue("INFO")
+				case l >= slog.Level(-1): // V(1)
+					a.Value = slog.StringValue("DEBUG")
+				default: // V(2) and below
+					a.Value = slog.StringValue("TRACE")
+				}
 			}
 			return a
 		},
@@ -210,7 +223,7 @@ func main() {
 			filepath.Join(metricsCertPath, metricsCertKey),
 		)
 		if err != nil {
-			setupLog.Error(err, "to initialize metrics certificate watcher", "error", err)
+			setupLog.Error(err, "failed to initialize metrics certificate watcher")
 			os.Exit(1)
 		}
 
@@ -349,8 +362,12 @@ func main() {
 
 func getLogLevel() slog.Level {
 	switch lvl := os.Getenv("LOG_LEVEL"); {
+	case lvl == "trace" || logLevel == "trace":
+		// logr maps V(n) to slog.Level(-n); V(2) = -2 → enables V(1) and V(2)
+		return slog.Level(-2)
 	case lvl == "debug" || logLevel == "debug":
-		return slog.LevelDebug
+		// V(1) = slog.Level(-1) → enables V(1) only, not V(2)
+		return slog.Level(-1)
 	case lvl == "warn" || logLevel == "warn":
 		return slog.LevelWarn
 	case lvl == "error" || logLevel == "error":

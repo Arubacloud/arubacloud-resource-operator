@@ -10,6 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
 	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
@@ -28,6 +29,7 @@ type DeepCopyableObject[K any] interface {
 // never move a resource to Failed. Only timeouts (PhaseTimedOut) may set the Failed reason.
 func kubeSetErrorMessageOnCMPError[K DeepCopyableObject[K], A any](c client.Client) ActionOnErrorFunc[K, A] {
 	return func(ctx context.Context, k K, _ A, err error) error {
+		logger := log.FromContext(ctx)
 		rs := k.GetResourceStatus()
 		currentReason := v1alpha1.ConditionReasonShallSynchronize // safe fallback
 		for _, cond := range rs.Conditions {
@@ -35,6 +37,20 @@ func kubeSetErrorMessageOnCMPError[K DeepCopyableObject[K], A any](c client.Clie
 				currentReason = cond.Reason
 				break
 			}
+		}
+		var cmpErr *CMPError
+		if errors.As(err, &cmpErr) {
+			logger.Error(err, "CMP error surfaced on resource condition",
+				"resource", fmt.Sprintf("%s/%s", k.GetNamespace(), k.GetName()),
+				"phase", string(rs.Phase),
+				"cmpErrorCategory", cmpErr.Category,
+				"cmpStatusCode", cmpErr.StatusCode,
+			)
+		} else {
+			logger.Error(err, "CMP error surfaced on resource condition",
+				"resource", fmt.Sprintf("%s/%s", k.GetNamespace(), k.GetName()),
+				"phase", string(rs.Phase),
+			)
 		}
 		return setPhaseAndCondition(c, ctx, k, rs.Phase, currentReason, err)
 	}
@@ -50,6 +66,7 @@ func setPhaseAndCondition[K DeepCopyableObject[K]](
 	actionErr error,
 	prePatch ...func(K),
 ) error {
+	logger := log.FromContext(ctx)
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		objCopy := obj.DeepCopy()
 		if err := c.Get(ctx, client.ObjectKeyFromObject(obj), objCopy); err != nil {
@@ -62,7 +79,14 @@ func setPhaseAndCondition[K DeepCopyableObject[K]](
 		}
 
 		rs := objPatch.GetResourceStatus()
+		fromPhase := rs.Phase
 		rs.Phase = phase
+		logger.Info("phase transition",
+			"resource", fmt.Sprintf("%s/%s", objPatch.GetNamespace(), objPatch.GetName()),
+			"fromPhase", string(fromPhase),
+			"toPhase", string(phase),
+			"reason", reason,
+		)
 
 		for i := range rs.Conditions {
 			rs.Conditions[i].Status = metav1.ConditionFalse
@@ -112,6 +136,7 @@ func setActiveAndSetID[K DeepCopyableObject[K]](
 	actionErr error,
 	prePatch ...func(K),
 ) error {
+	logger := log.FromContext(ctx)
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		objCopy := obj.DeepCopy()
 		if err := c.Get(ctx, client.ObjectKeyFromObject(obj), objCopy); err != nil {
@@ -128,6 +153,10 @@ func setActiveAndSetID[K DeepCopyableObject[K]](
 		if rs.ResourceID == "" && cmpResourceID != "" {
 			rs.ResourceID = cmpResourceID
 		}
+		logger.Info("resource is active",
+			"resource", fmt.Sprintf("%s/%s", objPatch.GetNamespace(), objPatch.GetName()),
+			"resourceID", rs.ResourceID,
+		)
 		rs.ObservedGeneration = objPatch.GetGeneration()
 
 		for i := range rs.Conditions {
@@ -167,6 +196,7 @@ func setFailedOnTimeout[K DeepCopyableObject[K]](
 	c client.Client, ctx context.Context, obj K,
 	prePatch ...func(K),
 ) error {
+	logger := log.FromContext(ctx)
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		objCopy := obj.DeepCopy()
 		if err := c.Get(ctx, client.ObjectKeyFromObject(obj), objCopy); err != nil {
@@ -181,6 +211,11 @@ func setFailedOnTimeout[K DeepCopyableObject[K]](
 		rs := objPatch.GetResourceStatus()
 		previousPhase := rs.Phase
 		timeoutMsg := fmt.Sprintf("phase timeout exceeded (%s)", reconciler.MaxPhaseTimeout)
+		logger.Info("resource timed out in transitory phase",
+			"resource", fmt.Sprintf("%s/%s", objPatch.GetNamespace(), objPatch.GetName()),
+			"phase", string(previousPhase),
+			"timeout", reconciler.MaxPhaseTimeout.String(),
+		)
 
 		// Set ALL existing conditions to ConditionFalse
 		for i := range rs.Conditions {

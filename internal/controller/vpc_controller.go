@@ -23,6 +23,7 @@ import (
 	"net/http"
 
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/Arubacloud/sdk-go/pkg/aruba"
 	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
@@ -77,6 +78,9 @@ func (r *VpcReconciler) HandleReconcile(ctx context.Context, obj reconciler.Reso
 		return ctrl.Result{}, errors.New("obj is not a *v1alpha1.Vpc")
 	}
 
+	logger := log.FromContext(ctx).WithValues("tenant", kubeVpc.Spec.Tenant)
+	logger.Info("reconciling VPC")
+
 	arubaClient, err := r.ArubaClient(kubeVpc.Spec.Tenant)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to get Aruba client: %w", err)
@@ -122,6 +126,7 @@ func (r *VpcReconciler) HandleReconcile(ctx context.Context, obj reconciler.Reso
 		}
 
 		if cmpProjectList.Data.Total == 0 {
+			logger.V(1).Info("parent project not found on CMP, requeuing", "projectName", projectName)
 			return ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
 		}
 
@@ -160,9 +165,11 @@ func (r *VpcReconciler) HandleReconcile(ctx context.Context, obj reconciler.Reso
 	if cmpVpcList.Data != nil && cmpVpcList.Data.Total == 1 {
 		cmpVpc = &cmpVpcList.Data.Values[0]
 	}
+	logger.V(1).Info("CMP VPC state", "found", cmpVpc != nil, "projectID", prjID)
 
 	ctx = context.WithValue(ctx, projectIDKey, prjID)
 	ctx = context.WithValue(ctx, reconciler.ArubaClientKey, arubaClient)
+	ctx = log.IntoContext(ctx, logger)
 
 	return r.ts.Run(ctx, kubeVpc, cmpVpc)
 }

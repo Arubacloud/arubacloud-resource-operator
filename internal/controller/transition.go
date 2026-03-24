@@ -3,10 +3,10 @@ package controller
 import (
 	"context"
 	"fmt"
-	"log"
 	"reflect"
 
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
 )
@@ -296,23 +296,27 @@ func (s *TransitionSet[K, A]) Run(ctx context.Context, k K, a A) (ctrl.Result, e
 	}
 	nsName := fmt.Sprintf("%s/%s", k.GetNamespace(), k.GetName())
 
+	logger := log.FromContext(ctx).WithValues(
+		"resourceKind", kind,
+		"resource", nsName,
+		"resourceID", resID,
+	)
+
 	for _, t := range s.transitions {
 		if t.Condition(k, a) {
-			log.Printf("transition met: kind: '%s', resource: '%s', resourceID: '%s', transition: '%s'",
-				kind, nsName, resID, t.Name())
+			logger.V(2).Info("transition matched", "transition", t.Name())
 			if err := t.Action(ctx, k, a); err != nil {
-				log.Printf("transition error: kind: '%s', resource: '%s', resourceID: '%s', transition: '%s', err: '%v'",
-					kind, nsName, resID, t.Name(), err)
+				logger.Error(err, "transition action failed", "transition", t.Name())
 				return t.RequeueOnError(k, a, err)
 			}
 
-			log.Printf("transition succeed: kind: '%s', resource: '%s', resourceID: '%s', transition: '%s'",
-				kind, nsName, resID, t.Name())
+			logger.V(1).Info("transition completed", "transition", t.Name())
 			return t.Requeue(k, a), nil
 		}
 	}
 
 	// For the case which no transition gives condition we run the default actions
+	logger.V(2).Info("no transition matched, running default action")
 	if err := s.DefaultAction(ctx, k, a); err != nil {
 		return s.defaultRequeueOnError(k, a, err)
 	}

@@ -5,6 +5,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	ctrl "sigs.k8s.io/controller-runtime"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
 	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
@@ -28,7 +29,16 @@ func kubePhaseTimedOut[K reconciler.ResourceObject, A any](k K, _ A) bool {
 		return false
 	}
 
-	return time.Since(condition.LastTransitionTime.Time) > reconciler.MaxPhaseTimeout
+	elapsed := time.Since(condition.LastTransitionTime.Time)
+	timed := elapsed > reconciler.MaxPhaseTimeout
+	ctrl.Log.V(2).Info("checking phase timeout",
+		"resource", k.GetNamespace()+"/"+k.GetName(),
+		"phase", string(rs.Phase),
+		"elapsed", elapsed.String(),
+		"timeout", reconciler.MaxPhaseTimeout.String(),
+		"timedOut", timed,
+	)
+	return timed
 }
 
 // kubeHasPhaseAndReason is a shared helper that checks the common pattern:
@@ -190,11 +200,18 @@ func kubeActiveAndGenerationChanged[K reconciler.ResourceObject, A any](k K, _ A
 	}
 	condition := meta.FindStatusCondition(rs.Conditions, string(v1alpha1.ResourcePhaseActive))
 
-	return k.GetDeletionTimestamp().IsZero() &&
+	changed := k.GetDeletionTimestamp().IsZero() &&
 		rs.Phase == v1alpha1.ResourcePhaseActive &&
 		rs.ResourceID != "" &&
 		rs.ObservedGeneration != k.GetGeneration() &&
 		condition != nil &&
 		condition.Status == metav1.ConditionTrue &&
 		condition.Reason == v1alpha1.ConditionReasonSynchronized
+	ctrl.Log.V(2).Info("checking generation change",
+		"resource", k.GetNamespace()+"/"+k.GetName(),
+		"observedGeneration", rs.ObservedGeneration,
+		"generation", k.GetGeneration(),
+		"changed", changed,
+	)
+	return changed
 }

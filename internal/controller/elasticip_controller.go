@@ -23,6 +23,7 @@ import (
 	"net/http"
 
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/Arubacloud/sdk-go/pkg/aruba"
 	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
@@ -75,6 +76,9 @@ func (r *ElasticIpReconciler) HandleReconcile(ctx context.Context, obj reconcile
 		return ctrl.Result{}, errors.New("obj is not a *v1alpha1.ElasticIp")
 	}
 
+	logger := log.FromContext(ctx).WithValues("tenant", kubeEip.Spec.Tenant)
+	logger.Info("reconciling elastic IP")
+
 	arubaClient, err := r.ArubaClient(kubeEip.Spec.Tenant)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to get Aruba client: %w", err)
@@ -120,6 +124,7 @@ func (r *ElasticIpReconciler) HandleReconcile(ctx context.Context, obj reconcile
 		}
 
 		if cmpProjectList.Data.Total == 0 {
+			logger.V(1).Info("parent project not found on CMP, requeuing", "projectName", projectName)
 			return ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
 		}
 
@@ -158,9 +163,11 @@ func (r *ElasticIpReconciler) HandleReconcile(ctx context.Context, obj reconcile
 	if cmpEipList.Data != nil && cmpEipList.Data.Total == 1 {
 		cmpEip = &cmpEipList.Data.Values[0]
 	}
+	logger.V(1).Info("CMP elastic IP state", "found", cmpEip != nil, "projectID", prjID)
 
 	ctx = context.WithValue(ctx, projectIDKey, prjID)
 	ctx = context.WithValue(ctx, reconciler.ArubaClientKey, arubaClient)
+	ctx = log.IntoContext(ctx, logger)
 
 	return r.ts.Run(ctx, kubeEip, cmpEip)
 }

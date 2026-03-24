@@ -23,6 +23,7 @@ import (
 	"net/http"
 
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/Arubacloud/sdk-go/pkg/aruba"
 	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
@@ -80,6 +81,10 @@ func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconc
 	if !ok {
 		return ctrl.Result{}, errors.New("obj is not a *v1alpha1.BlockStorage")
 	}
+
+	logger := log.FromContext(ctx).WithValues("tenant", kubeBlockStorage.Spec.Tenant)
+	logger.Info("reconciling block storage")
+
 	arubaClient, err := r.ArubaClient(kubeBlockStorage.Spec.Tenant)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to get Aruba client: %w", err)
@@ -126,6 +131,7 @@ func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconc
 
 		if cmpProjectList.Data.Total == 0 {
 			// Wait for the project to be created
+			logger.V(1).Info("parent project not found on CMP, requeuing", "projectName", projectName)
 			return ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
 		}
 
@@ -164,9 +170,11 @@ func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconc
 	if cmpBlockStorageList.Data.Total == 1 {
 		cmpBlockStorage = &cmpBlockStorageList.Data.Values[0]
 	}
+	logger.V(1).Info("CMP block storage state", "found", cmpBlockStorage != nil, "projectID", prjID)
 
 	ctx = context.WithValue(ctx, projectIDKey, prjID)
 	ctx = context.WithValue(ctx, reconciler.ArubaClientKey, arubaClient)
+	ctx = log.IntoContext(ctx, logger)
 
 	return r.ts.Run(ctx, kubeBlockStorage, cmpBlockStorage)
 }

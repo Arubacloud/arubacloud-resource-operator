@@ -23,6 +23,7 @@ import (
 	"net/http"
 
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/Arubacloud/sdk-go/pkg/aruba"
 	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
@@ -76,6 +77,10 @@ func (r *ProjectReconciler) HandleReconcile(ctx context.Context, obj reconciler.
 	if !ok {
 		return ctrl.Result{}, errors.New("obj is not a *v1alpha1.Project")
 	}
+
+	logger := log.FromContext(ctx).WithValues("tenant", kubeProject.Spec.Tenant)
+	logger.Info("reconciling project")
+
 	arubaClient, err := r.ArubaClient(kubeProject.Spec.Tenant)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to get Aruba client: %w", err)
@@ -85,22 +90,16 @@ func (r *ProjectReconciler) HandleReconcile(ctx context.Context, obj reconciler.
 
 	cmpProjectList, err := arubaClient.FromProject().List(ctx, &arubatypes.RequestParameters{Filter: &projectFilter})
 	if err != nil {
-		return ctrl.Result{}, fmt.Errorf(
-			"failed to find project in Aruba cloud: %w, project_name: '%s', project_filter: '%s'",
-			err, projectName, projectFilter,
-		)
+		return ctrl.Result{}, fmt.Errorf("listing CMP projects: %w", err)
 	}
 	if cmpProjectList.IsError() {
-		return ctrl.Result{}, fmt.Errorf(
-			"failed to find project in Aruba cloud: status_code: %d, project_name: '%s', project_filter: '%s'",
-			cmpProjectList.StatusCode, projectName, projectFilter,
-		)
+		return ctrl.Result{}, fmt.Errorf("listing CMP projects: status %d", cmpProjectList.StatusCode)
 	}
 
 	if cmpProjectList.Data.Total < 0 || cmpProjectList.Data.Total > 1 {
 		return ctrl.Result{}, fmt.Errorf(
-			"inconsistent data: total: %d, status_code: %d, project_name: '%s', project_filter: '%s'",
-			cmpProjectList.Data.Total, cmpProjectList.StatusCode, projectName, projectFilter,
+			"inconsistent CMP project list: total %d for %q",
+			cmpProjectList.Data.Total, projectName,
 		)
 	}
 
@@ -108,8 +107,10 @@ func (r *ProjectReconciler) HandleReconcile(ctx context.Context, obj reconciler.
 	if cmpProjectList.Data.Total == 1 {
 		cmpProject = &cmpProjectList.Data.Values[0]
 	}
+	logger.V(1).Info("CMP project state", "found", cmpProject != nil)
 
 	ctx = context.WithValue(ctx, reconciler.ArubaClientKey, arubaClient)
+	ctx = log.IntoContext(ctx, logger)
 
 	return r.ts.Run(ctx, kubeProject, cmpProject)
 }

@@ -27,6 +27,7 @@ import (
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/Arubacloud/sdk-go/pkg/aruba"
 	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
@@ -78,6 +79,10 @@ func (r *KeyPairReconciler) HandleReconcile(ctx context.Context, obj reconciler.
 	if !ok {
 		return ctrl.Result{}, errors.New("obj is not a *v1alpha1.KeyPair")
 	}
+
+	logger := log.FromContext(ctx).WithValues("tenant", kubeKp.Spec.Tenant)
+	logger.Info("reconciling key pair")
+
 	arubaClient, err := r.ArubaClient(kubeKp.Spec.Tenant)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to get Aruba client: %w", err)
@@ -122,6 +127,7 @@ func (r *KeyPairReconciler) HandleReconcile(ctx context.Context, obj reconciler.
 		}
 
 		if cmpProjectList.Data.Total == 0 {
+			logger.V(1).Info("parent project not found on CMP, requeuing", "projectName", projectName)
 			return ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
 		}
 
@@ -161,8 +167,11 @@ func (r *KeyPairReconciler) HandleReconcile(ctx context.Context, obj reconciler.
 		cmpKp = &cmpKpList.Data.Values[0]
 	}
 
+	logger.V(1).Info("CMP key pair state", "found", cmpKp != nil, "projectID", prjID)
+
 	ctx = context.WithValue(ctx, projectIDKey, prjID)
 	ctx = context.WithValue(ctx, reconciler.ArubaClientKey, arubaClient)
+	ctx = log.IntoContext(ctx, logger)
 
 	return r.ts.Run(ctx, kubeKp, cmpKp)
 }

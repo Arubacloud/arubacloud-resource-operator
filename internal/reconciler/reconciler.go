@@ -3,7 +3,6 @@ package reconciler
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"slices"
 	"strings"
@@ -13,6 +12,7 @@ import (
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/Arubacloud/sdk-go/pkg/aruba"
 	arubamt "github.com/Arubacloud/sdk-go/pkg/multitenant"
@@ -161,14 +161,13 @@ func (r *Reconciler) ArubaClient(tenant string) (aruba.Client, error) {
 			r.config.VaultAddress, r.config.KVMount, tenant, r.config.Namespace, r.config.RolePath, r.config.RoleID, r.config.RoleSecret,
 		)
 	} else {
-		log.Printf("Warning: Operator is not configured to use Vault for credentials management")
+		ctrl.Log.Info("vault disabled, using direct credentials", "tenant", tenant)
 		options = options.WithClientCredentials(r.config.ClientID, r.config.ClientSecret)
-
 	}
 
 	arubaClient, err := aruba.NewClient(options)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Aruba Client: %v, options: `%v`", err, options)
+		return nil, fmt.Errorf("failed to create Aruba Client: %w, options: `%v`", err, options)
 	}
 
 	r.multiTenantClient.Add(tenant, arubaClient)
@@ -190,6 +189,7 @@ func (r *Reconciler) ArubaClient(tenant string) (aruba.Client, error) {
 // Both finalizer operations are wrapped in retry.RetryOnConflict to handle optimistic
 // concurrency conflicts from concurrent writes.
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request, resourceReconciler ResourceReconciler) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
 	var result ctrl.Result
 
 	// 1 - Make sure that the finalizers are in place when resource is not
@@ -208,6 +208,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request, resourceRe
 				return err
 			}
 
+			logger.V(2).Info("finalizer added", "finalizer", resourceReconciler.Finalizer())
 			// The reconciliation is requeued after the finalizer have been set
 			result = ctrl.Result{RequeueAfter: 1 * time.Second}
 			return nil // TODO: better RequeueAfter management
@@ -230,6 +231,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request, resourceRe
 
 	result, err = resourceReconciler.HandleReconcile(ctx, obj)
 	if err != nil {
+		logger.Error(err, "reconcile failed")
 		return ctrl.Result{}, err
 	} else if !result.IsZero() {
 		return result, nil
@@ -254,6 +256,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request, resourceRe
 			if err := r.Update(ctx, obj); err != nil {
 				return err
 			}
+			logger.V(2).Info("finalizer removed, resource deleted", "finalizer", resourceReconciler.Finalizer())
 		}
 
 		return nil
@@ -270,7 +273,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request, resourceRe
 // allowing callers to treat a missing object as a no-op rather than an error.
 func (r *Reconciler) getResource(ctx context.Context, req ctrl.Request, obj ResourceObject) (ResourceObject, error) {
 	if err := r.Get(ctx, req.NamespacedName, obj); err != nil {
-		return nil, client.IgnoreNotFound(err)
+		if client.IgnoreNotFound(err) == nil {
+			log.FromContext(ctx).V(2).Info("resource not found, skipping", "resource", req.NamespacedName)
+			return nil, nil
+		}
+		return nil, err
 	}
 
 	return obj, nil

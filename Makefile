@@ -57,11 +57,11 @@ help: ## Display this help.
 ##@ Development
 
 .PHONY: manifests
-manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
+manifests: ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
 	$(CONTROLLER_GEN) rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
 
 .PHONY: generate
-generate: controller-gen mockery ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
+generate: ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./..."
 	$(MOCKERY)
 
@@ -74,7 +74,7 @@ vet: ## Run go vet against code.
 	go vet ./...
 
 .PHONY: test
-test: manifests generate fmt vet setup-envtest ## Run tests.
+test: manifests generate fmt vet ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
 # TODO(user): To use a different vendor for e2e tests, modify the setup under 'tests/e2e'.
@@ -103,15 +103,15 @@ cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
 	@$(KIND) delete cluster --name $(KIND_CLUSTER) 2>/dev/null || true
 
 .PHONY: lint
-lint: golangci-lint ## Run golangci-lint linter
+lint: ## Run golangci-lint linter
 	$(GOLANGCI_LINT) run
 
 .PHONY: lint-fix
-lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
+lint-fix: ## Run golangci-lint linter and perform fixes
 	$(GOLANGCI_LINT) run --fix
 
 .PHONY: lint-config
-lint-config: golangci-lint ## Verify golangci-lint linter configuration
+lint-config: ## Verify golangci-lint linter configuration
 	$(GOLANGCI_LINT) config verify
 
 ##@ Build
@@ -157,12 +157,12 @@ HELMIFY ?= $(LOCALBIN)/helmify
 .PHONY: helmify
 helmify: $(HELMIFY) ## Download helmify locally if necessary.
 $(HELMIFY): $(LOCALBIN)
-	test -s $(LOCALBIN)/helmify || GOBIN=$(LOCALBIN) go install github.com/arttor/helmify/cmd/helmify@latest
-    
-helm-operator: manifests kustomize helmify
+	$(call go-install-tool,$(HELMIFY),github.com/arttor/helmify/cmd/helmify,$(HELMIFY_VERSION))
+
+helm-operator: manifests
 	$(KUSTOMIZE) build config/default | $(HELMIFY) config/charts/arubacloud-resource-operator
 
-helm-crd: manifests kustomize helmify
+helm-crd: manifests
 	$(KUSTOMIZE) build config/crd | $(HELMIFY) config/charts/arubacloud-resource-operator-crd
 
 .PHONY: _ensure_dynamic_env
@@ -233,21 +233,35 @@ CONTROLLER_TOOLS_VERSION ?= v0.18.0
 ENVTEST_VERSION ?= $(shell go list -m -f "{{ .Version }}" sigs.k8s.io/controller-runtime | awk -F'[v.]' '{printf "release-%d.%d", $$2, $$3}')
 #ENVTEST_K8S_VERSION is the version of Kubernetes to use for setting up ENVTEST binaries (i.e. 1.31)
 ENVTEST_K8S_VERSION ?= $(shell go list -m -f "{{ .Version }}" k8s.io/api | awk -F'[v.]' '{printf "1.%d", $$3}')
-GOLANGCI_LINT_VERSION ?= v1.61.0
+GOLANGCI_LINT_VERSION ?= v2.1.6
 MOCKERY_VERSION ?= v2.53.5
+HELMIFY_VERSION ?= v0.4.19
 
+# go-install-all-tools installs all development tools to $(LOCALBIN) using 'go install'.
+# Run this once to set up a host development environment.
+# In the containerized workflow (make <target>-ctzd) tools are pre-installed in the image.
+.PHONY: go-install-all-tools
+go-install-all-tools: $(LOCALBIN) ## Install all development tools to $(LOCALBIN) via go install.
+	$(call go-install-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen,$(CONTROLLER_TOOLS_VERSION))
+	$(call go-install-tool,$(MOCKERY),github.com/vektra/mockery/v2,$(MOCKERY_VERSION))
+	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
+	$(call go-install-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5,$(KUSTOMIZE_VERSION))
+	$(call go-install-tool,$(HELMIFY),github.com/arttor/helmify/cmd/helmify,$(HELMIFY_VERSION))
+	$(call go-install-tool,$(ENVTEST),sigs.k8s.io/controller-runtime/tools/setup-envtest,$(ENVTEST_VERSION))
+
+# Individual tool install targets (kept for convenience; also called by go-install-all-tools).
 .PHONY: kustomize
-kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
+kustomize: $(KUSTOMIZE) ## Install kustomize to $(LOCALBIN).
 $(KUSTOMIZE): $(LOCALBIN)
 	$(call go-install-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5,$(KUSTOMIZE_VERSION))
 
 .PHONY: controller-gen
-controller-gen: $(CONTROLLER_GEN) ## Download controller-gen locally if necessary.
+controller-gen: $(CONTROLLER_GEN) ## Install controller-gen to $(LOCALBIN).
 $(CONTROLLER_GEN): $(LOCALBIN)
 	$(call go-install-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen,$(CONTROLLER_TOOLS_VERSION))
 
 .PHONY: setup-envtest
-setup-envtest: envtest ## Download the binaries required for ENVTEST in the local bin directory.
+setup-envtest: envtest ## Download envtest K8s binaries to $(LOCALBIN).
 	@echo "Setting up envtest binaries for Kubernetes version $(ENVTEST_K8S_VERSION)..."
 	@$(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path || { \
 		echo "Error: Failed to set up envtest binaries for version $(ENVTEST_K8S_VERSION)."; \
@@ -255,17 +269,17 @@ setup-envtest: envtest ## Download the binaries required for ENVTEST in the loca
 	}
 
 .PHONY: envtest
-envtest: $(ENVTEST) ## Download setup-envtest locally if necessary.
+envtest: $(ENVTEST) ## Install setup-envtest to $(LOCALBIN).
 $(ENVTEST): $(LOCALBIN)
 	$(call go-install-tool,$(ENVTEST),sigs.k8s.io/controller-runtime/tools/setup-envtest,$(ENVTEST_VERSION))
 
 .PHONY: golangci-lint
-golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
+golangci-lint: $(GOLANGCI_LINT) ## Install golangci-lint to $(LOCALBIN).
 $(GOLANGCI_LINT): $(LOCALBIN)
-	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
+	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
 
 .PHONY: mockery
-mockery: $(MOCKERY) ## Download mockery locally if necessary.
+mockery: $(MOCKERY) ## Install mockery to $(LOCALBIN).
 $(MOCKERY): $(LOCALBIN)
 	$(call go-install-tool,$(MOCKERY),github.com/vektra/mockery/v2,$(MOCKERY_VERSION))
 
@@ -282,8 +296,66 @@ rm -f $(1) || true ;\
 GOBIN=$(LOCALBIN) go install $${package} ;\
 mv $(1) $(1)-$(3) ;\
 } ;\
-ln -sf $(1)-$(3) $(1)
+ln -sf $(1)-$(3) $(1) || true
 endef
+
+##@ Containerized Development
+
+DEVTOOLS_IMAGE      ?= arubacloud-resource-operator-devtools:local
+DEVTOOLS_DOCKERFILE := devex/build/Dockerfile
+DEVTOOLS_BIN        := /devtools/bin
+
+# Allocate a TTY when stdin is a terminal (needed for make sh-ctzd); use -i only in CI
+_CTZD_INTERACTIVE := $(shell [ -t 0 ] && echo "-it" || echo "-i")
+
+# Auto-detect podman-docker: if the docker command is actually podman, use --userns=keep-id
+# (rootless podman requires keep-id for bind mounts to be readable by the in-container process).
+# Real Docker does not support --userns=keep-id, so we use --user UID:GID there instead.
+_DOCKER_IS_PODMAN := $(shell docker --version 2>/dev/null | grep -qi podman && echo 1)
+ifdef _DOCKER_IS_PODMAN
+  _CTZD_USER_FLAGS := --userns=keep-id
+else
+  _CTZD_USER_FLAGS := --user $$(id -u):$$(id -g)
+endif
+
+# Stamp file: tracks whether the devtools image needs rebuilding when the Dockerfile changes
+_DEVTOOLS_STAMP := $(LOCALBIN)/.devtools-image.stamp
+
+$(_DEVTOOLS_STAMP): $(DEVTOOLS_DOCKERFILE)
+	@mkdir -p $(dir $@)
+	$(CONTAINER_TOOL) build -t $(DEVTOOLS_IMAGE) -f $(DEVTOOLS_DOCKERFILE) .
+	@touch $@
+
+.PHONY: devtools-image
+devtools-image: $(_DEVTOOLS_STAMP) ## Build the devtools container image.
+
+.PHONY: devtools-image-clean
+devtools-image-clean: ## Remove the devtools container image and its named caches.
+	$(CONTAINER_TOOL) rmi $(DEVTOOLS_IMAGE) 2>/dev/null || true
+	$(CONTAINER_TOOL) volume rm devtools-gomodcache devtools-gobuildcache devtools-lintcache 2>/dev/null || true
+	@rm -f $(_DEVTOOLS_STAMP)
+
+# Pattern rule: make <target>-ctzd runs make <target> inside the devtools container.
+# Example: make lint-ctzd  ->  docker run ... make lint
+# UID/GID mapping is auto-detected: --userns=keep-id for podman-docker, --user UID:GID for real Docker.
+%-ctzd: $(_DEVTOOLS_STAMP)
+	$(CONTAINER_TOOL) run --rm \
+		$(_CTZD_INTERACTIVE) \
+		$(_CTZD_USER_FLAGS) \
+		--security-opt label=disable \
+		-e HOME=/tmp \
+		-e LOCALBIN=$(DEVTOOLS_BIN) \
+		-v $(CURDIR):/workspace \
+		-v devtools-gomodcache:/go/pkg/mod \
+		-v devtools-gobuildcache:/tmp/.cache/go-build \
+		-v devtools-lintcache:/tmp/.cache/golangci-lint \
+		-w /workspace \
+		$(DEVTOOLS_IMAGE) \
+		make $*
+
+.PHONY: sh
+sh: ## Open an interactive shell (use as: make sh-ctzd).
+	bash
 
 # Local development targets
 .PHONY: dev-setup

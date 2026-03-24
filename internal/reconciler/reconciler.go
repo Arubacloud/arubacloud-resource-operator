@@ -209,8 +209,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request, resourceRe
 			}
 
 			logger.V(2).Info("finalizer added", "finalizer", resourceReconciler.Finalizer())
+
 			// The reconciliation is requeued after the finalizer have been set
 			result = ctrl.Result{RequeueAfter: 1 * time.Second}
+
 			return nil // TODO: better RequeueAfter management
 		}
 
@@ -224,12 +226,14 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request, resourceRe
 
 	// 2 - Call the specific resource reconciler to handle the details of the
 	//     reconciliation and the phase drifting
+	startTs := time.Now()
 	obj, err := r.getResource(ctx, req, resourceReconciler.Object())
 	if obj == nil || err != nil {
 		return ctrl.Result{}, err
 	}
 
 	result, err = resourceReconciler.HandleReconcile(ctx, obj)
+	captureMetrics(ctx, r, req, resourceReconciler.Object(), startTs, err)
 	if err != nil {
 		logger.Error(err, "reconcile failed")
 		return ctrl.Result{}, err

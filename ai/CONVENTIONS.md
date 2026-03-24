@@ -110,13 +110,64 @@ Always use `retry.RetryOnConflict(retry.DefaultRetry, ...)` with `.Status().Patc
 
 ## Logging
 
-Use `ctrl.Log` from controller-runtime with structured key-value pairs:
+### Framework
+
+The operator uses **logr** (via `sigs.k8s.io/controller-runtime/pkg/log`) backed by Go's `log/slog` with a JSON handler.
+The logger is initialized in `cmd/main.go` and set globally via `ctrl.SetLogger()`.
+
+### Getting a logger
+
+In reconcilers and any function that receives `ctx context.Context`:
 
 ```go
-log := ctrl.Log.WithValues("resource", obj.GetName(), "phase", obj.GetResourceStatus().Phase)
-log.Info("reconciling resource")
-log.Error(err, "failed to fetch CMP resource")
+logger := log.FromContext(ctx)
 ```
+
+In `HandleReconcile`, enrich the logger with tenant info and store it back in context so downstream code (transition engine, action helpers) inherits the fields:
+
+```go
+logger := log.FromContext(ctx).WithValues("tenant", kubeObj.Spec.Tenant)
+ctx = log.IntoContext(ctx, logger)
+```
+
+In code without context (startup, config validation):
+
+```go
+ctrl.Log.WithName("component").Info("message", "key", value)
+```
+
+### Log levels
+
+logr V-levels map to JSON `"level"` strings in the output as follows:
+
+| logr call | JSON `"level"` | Enabled by `--log-level` | When to use |
+|-----------|---------------|--------------------------|-------------|
+| `logger.Error(err, ...)` | `"ERROR"` | always | Failures requiring attention: CMP errors, K8s write failures |
+| `logger.Info(...)` | `"INFO"` | `info` (default) | Significant state changes: phase transitions, resource active, reconcile start |
+| `logger.V(1).Info(...)` | `"DEBUG"` | `debug` | Diagnostic: CMP resource state, transition completed, requeue reasons |
+| `logger.V(2).Info(...)` | `"TRACE"` | `trace` | Deep debugging: transition matched/no-match, condition evaluation (timeout check, generation check) |
+
+logr has no native Warn level. For warning-grade messages, use `Info` with a clear message (standard K8s operator convention).
+
+### Structured fields
+
+Always use key-value pairs. Standard operator-domain fields:
+
+| Field | When |
+|-------|------|
+| `"resource"` | namespace/name of the K8s object |
+| `"resourceKind"` | GVK kind (e.g. `"Project"`) |
+| `"resourceID"` | CMP resource ID |
+| `"phase"` | Current ResourcePhase |
+| `"transition"` | Transition name (in transition engine) |
+| `"tenant"` | Spec.Tenant |
+| `"cmpOperation"` | `"create"`, `"update"`, `"delete"` |
+
+Infrastructure fields (cluster, namespace, pod, etc.) are injected by the log pipeline — do NOT add them in code.
+
+### Security
+
+Never log secrets, tokens, or credentials — even at debug/trace levels.
 
 ## Comments
 

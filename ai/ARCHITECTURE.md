@@ -34,6 +34,19 @@ The core pattern is a **three-layer reconciliation**:
 - **`TransitionSet[K, A]`** — parameterized over the Kubernetes type (K) and CMP API response type (A)
 - Requeue constants: `ShortRequeueAfter` (1s), `LongRequeueAfter` (20s), `MaxPhaseTimeout` (10 min timeout for transitory phases)
 
+## Logging
+
+The operator uses **logr** backed by `log/slog` with a JSON handler (initialized in `cmd/main.go`). The standard pattern throughout the codebase is `log.FromContext(ctx)`.
+
+In `HandleReconcile`, each controller enriches the logger with `tenant` and stores it back in context before calling `ts.Run()`:
+
+```go
+logger := log.FromContext(ctx).WithValues("tenant", kubeObj.Spec.Tenant)
+ctx = log.IntoContext(ctx, logger)
+```
+
+This ensures the transition engine and action helpers downstream automatically inherit the `tenant` field via their own `log.FromContext(ctx)` calls. See `CONVENTIONS.md` for the full logging guide (levels, fields, security).
+
 ## Condition Reason State Machine
 
 Within each phase, the `Reason` field on the active condition acts as a sub-state:

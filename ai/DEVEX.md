@@ -56,7 +56,7 @@ make sh-ctzd
 make devtools-image-clean
 ```
 
-The devtools image (`devex/build/Dockerfile`) is based on `golang:1.24-bookworm` and includes all development tools at pinned versions:
+The devtools image (`ci/devtools/Dockerfile`) is based on `golang:1.24-bookworm` and includes all development tools at pinned versions:
 
 | Tool | Version | Install method |
 |------|---------|----------------|
@@ -72,7 +72,7 @@ The devtools image (`devex/build/Dockerfile`) is based on `golang:1.24-bookworm`
 - The repo is bind-mounted at `/workspace` inside the container; generated files (mocks, CRDs, binaries) are written directly to the host filesystem with the caller's UID/GID.
 - Tools are pre-installed in the image at `/devtools/bin` — they are never installed on the host. `LOCALBIN=/devtools/bin` is injected as a container environment variable so it applies to both the initial `make` call and any commands typed in `make sh-ctzd`.
 - Go module cache, build cache, and golangci-lint cache are stored in named Docker/Podman volumes and reused across runs.
-- The image is rebuilt automatically when `devex/build/Dockerfile` changes (tracked via a stamp file in `bin/`).
+- The image is rebuilt automatically when `ci/devtools/Dockerfile` changes (tracked via a stamp file in `bin/`).
 
 **Podman / podman-docker compatibility:** The Makefile auto-detects whether the `docker` command is actually podman-docker (by inspecting `docker --version`). When podman-docker is detected, `--userns=keep-id` is used (required for rootless podman bind mount access); otherwise `--user $(id -u):$(id -g)` is used for real Docker. `--security-opt label=disable` is always passed to prevent SELinux from blocking bind mount access on enforcing systems (e.g. Fedora). No manual configuration is needed.
 

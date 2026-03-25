@@ -57,11 +57,11 @@ help: ## Display this help.
 ##@ Development
 
 .PHONY: manifests
-manifests: ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
+manifests: $(CONTROLLER_GEN) ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
 	$(CONTROLLER_GEN) rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
 
 .PHONY: generate
-generate: ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
+generate: $(CONTROLLER_GEN) $(MOCKERY) ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./..."
 	$(MOCKERY)
 
@@ -74,7 +74,7 @@ vet: ## Run go vet against code.
 	go vet ./...
 
 .PHONY: test
-test: manifests generate fmt vet ## Run tests.
+test: manifests generate fmt vet $(ENVTEST) ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
 # TODO(user): To use a different vendor for e2e tests, modify the setup under 'tests/e2e'.
@@ -103,7 +103,7 @@ cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
 	@$(KIND) delete cluster --name $(KIND_CLUSTER) 2>/dev/null || true
 
 .PHONY: lint
-lint: ## Run golangci-lint linter
+lint: $(GOLANGCI_LINT) ## Run golangci-lint linter
 	$(GOLANGCI_LINT) run
 
 .PHONY: lint-fix
@@ -159,10 +159,10 @@ helmify: $(HELMIFY) ## Download helmify locally if necessary.
 $(HELMIFY): $(LOCALBIN)
 	$(call go-install-tool,$(HELMIFY),github.com/arttor/helmify/cmd/helmify,$(HELMIFY_VERSION))
 
-helm-operator: manifests
+helm-operator: manifests $(KUSTOMIZE) $(HELMIFY)
 	$(KUSTOMIZE) build config/default | $(HELMIFY) config/charts/arubacloud-resource-operator
 
-helm-crd: manifests
+helm-crd: manifests $(KUSTOMIZE) $(HELMIFY)
 	$(KUSTOMIZE) build config/crd | $(HELMIFY) config/charts/arubacloud-resource-operator-crd
 
 .PHONY: _ensure_dynamic_env
@@ -302,7 +302,7 @@ endef
 ##@ Containerized Development
 
 DEVTOOLS_IMAGE      ?= arubacloud-resource-operator-devtools:local
-DEVTOOLS_DOCKERFILE := devex/build/Dockerfile
+DEVTOOLS_DOCKERFILE := ci/devtools/Dockerfile
 DEVTOOLS_BIN        := /devtools/bin
 
 # Allocate a TTY when stdin is a terminal (needed for make sh-ctzd); use -i only in CI

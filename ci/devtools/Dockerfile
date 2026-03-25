@@ -50,6 +50,13 @@ RUN GOBIN=${DEVTOOLS_BIN} go install sigs.k8s.io/controller-runtime/tools/setup-
     ln -s setup-envtest-release-0.21 ${DEVTOOLS_BIN}/setup-envtest && \
     ${DEVTOOLS_BIN}/setup-envtest use 1.33 --bin-dir ${DEVTOOLS_BIN} -p path
 
+# Pre-create cache directories with world-writable permissions so that named
+# volumes mounted here are initialized with the correct mode. Without this,
+# Docker initializes the volumes as root:root 755, which breaks non-root users
+# (e.g. GitHub Actions runners using --user UID:GID with real Docker).
+RUN mkdir -p /tmp/.cache/go-build /tmp/.cache/golangci-lint && \
+    chmod -R 777 /tmp/.cache /go/pkg/mod
+
 # Mark /workspace as safe for git to avoid "dubious ownership" errors on bind mounts
 RUN git config --global --add safe.directory /workspace
 

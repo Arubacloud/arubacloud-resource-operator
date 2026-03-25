@@ -9,45 +9,74 @@ on:
       - main
 
 jobs:
-  lint:
-    name: Lint Code
+  devtools:
+    name: Build Devtools Image
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
 
-      - name: Set up Go
-        uses: actions/setup-go@v6
+      - name: Cache devtools image
+        id: cache-devtools
+        uses: actions/cache@v4
         with:
-          go-version-file: "go.mod"
-          cache: true
+          path: /tmp/devtools-image.tar
+          key: devtools-${{ hashFiles('ci/devtools/Dockerfile') }}
 
-      - name: Download dependencies
-        run: go mod download
+      - name: Build devtools image
+        if: steps.cache-devtools.outputs.cache-hit != 'true'
+        run: make devtools-image
 
-      - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v9
+      - name: Save devtools image to cache
+        if: steps.cache-devtools.outputs.cache-hit != 'true'
+        run: docker save arubacloud-resource-operator-devtools:local -o /tmp/devtools-image.tar
+
+  lint:
+    name: Lint Code
+    runs-on: ubuntu-latest
+    needs: [devtools]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Restore devtools image
+        uses: actions/cache@v4
         with:
-          version: latest
-          args: --timeout=5m
+          path: /tmp/devtools-image.tar
+          key: devtools-${{ hashFiles('ci/devtools/Dockerfile') }}
+
+      - name: Load devtools image
+        run: |
+          docker load -i /tmp/devtools-image.tar
+          mkdir -p bin && touch bin/.devtools-image.stamp
+
+      - name: Run linter
+        run: make lint-ctzd
 
   build:
     name: Build
     runs-on: ubuntu-latest
+    needs: [devtools]
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
 
-      - name: Set up Go
-        uses: actions/setup-go@v6
+      - name: Restore devtools image
+        uses: actions/cache@v4
         with:
-          go-version-file: "go.mod"
-          cache: true
+          path: /tmp/devtools-image.tar
+          key: devtools-${{ hashFiles('ci/devtools/Dockerfile') }}
+
+      - name: Load devtools image
+        run: |
+          docker load -i /tmp/devtools-image.tar
+          mkdir -p bin && touch bin/.devtools-image.stamp
 
       - name: Build manager binary
-        run: make build
+        run: make build-ctzd
 
       - name: Build Docker image
         run: make docker-build IMG=controller:test
@@ -55,33 +84,25 @@ jobs:
   test:
     name: Run Tests
     runs-on: ubuntu-latest
+    needs: [devtools]
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
 
-      - name: Set up Go
-        uses: actions/setup-go@v6
+      - name: Restore devtools image
+        uses: actions/cache@v4
         with:
-          go-version-file: "go.mod"
-          cache: true
+          path: /tmp/devtools-image.tar
+          key: devtools-${{ hashFiles('ci/devtools/Dockerfile') }}
 
-      - name: Install dependencies
-        run: go mod download
-
-      - name: Run go fmt
-        run: make fmt
-
-      - name: Run go vet
-        run: make vet
-
-      - name: Generate manifests
-        run: make manifests
-
-      - name: Generate code
-        run: make generate
+      - name: Load devtools image
+        run: |
+          docker load -i /tmp/devtools-image.tar
+          mkdir -p bin && touch bin/.devtools-image.stamp
 
       - name: Run tests
-        run: make test
+        run: make test-ctzd
 
       - name: Upload coverage reports
         uses: codecov/codecov-action@v4

@@ -24,10 +24,10 @@ const (
 	CSPResourceStateStopped      string = "Stopped"
 	CSPResourceStateRunning      string = "Running"
 
-	CSPResourceStateDisabling string = "Disabling" //after recharge credits is not succesfully applied, the resource is in "Disabling" state, and then it will be "Disabled"
-	CSPResourceStateEnabling  string = "Enabling"  // after recharge credits is not succesfully applied, the resource is in "Enabling" state, and then it will be "Active"
+	CSPResourceStateDisabling string = "Disabling" // after recharge credits is not successfully applied, the resource is in "Disabling" state, and then it will be "Disabled"
+	CSPResourceStateEnabling  string = "Enabling"  // after recharge credits is not successfully applied, the resource is in "Enabling" state, and then it will be "Active"
 
-	CSPResourceStateDisabled string = "Disabled" // final state after "Disabling"; customer cannot use the resource until is enabled agaim
+	CSPResourceStateDisabled string = "Disabled" // final state after "Disabling"; customer cannot use the resource until is enabled again
 	CSPResourceStateFailed   string = "Failed"   // final state when some error occurs during creation or update of the resource; customer cannot use the resource and need to delete it
 )
 

@@ -70,6 +70,7 @@ func (r *ElasticIpReconciler) Finalizer() string {
 	return elasticIpFinalizerName
 }
 
+//nolint:gocyclo // complexity is intentional to maintain locality of behavior
 func (r *ElasticIpReconciler) HandleReconcile(ctx context.Context, obj reconciler.ResourceObject) (ctrl.Result, error) {
 	kubeEip, ok := obj.(*v1alpha1.ElasticIp)
 	if !ok {
@@ -467,8 +468,8 @@ func cmpElasticIpIsFailed(_ *v1alpha1.ElasticIp, cmpEip *arubatypes.ElasticIPRes
 
 // Kube action methods
 
-func (r *ElasticIpReconciler) kubeSetPhaseAndCondition(ctx context.Context, kubeEip *v1alpha1.ElasticIp, phase v1alpha1.ResourcePhase, reason string, actionErr error) error {
-	return setPhaseAndCondition(r.Client, ctx, kubeEip, phase, reason, actionErr, func(eip *v1alpha1.ElasticIp) {
+func (r *ElasticIpReconciler) kubeSetPhaseAndCondition(ctx context.Context, kubeEip *v1alpha1.ElasticIp, phase v1alpha1.ResourcePhase, reason string, _ error) error {
+	return setPhaseAndCondition(r.Client, ctx, kubeEip, phase, reason, nil, func(eip *v1alpha1.ElasticIp) {
 		if prjID, ok := ctx.Value(projectIDKey).(string); ok && eip.Status.ProjectID == "" {
 			eip.Status.ProjectID = prjID
 		}

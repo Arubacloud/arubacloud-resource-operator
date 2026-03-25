@@ -391,8 +391,8 @@ func cmpProjectNotExists(_ *v1alpha1.Project, cmpProj *arubatypes.ProjectRespons
 
 // Kube action methods
 
-func (r *ProjectReconciler) kubeSetPhaseAndCondition(ctx context.Context, kubeProj *v1alpha1.Project, phase v1alpha1.ResourcePhase, reason string, actionErr error) error {
-	return setPhaseAndCondition(r.Client, ctx, kubeProj, phase, reason, actionErr)
+func (r *ProjectReconciler) kubeSetPhaseAndCondition(ctx context.Context, kubeProj *v1alpha1.Project, phase v1alpha1.ResourcePhase, reason string, _ error) error {
+	return setPhaseAndCondition(r.Client, ctx, kubeProj, phase, reason, nil)
 }
 
 func (r *ProjectReconciler) kubeSetFailedOnTimeout(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {

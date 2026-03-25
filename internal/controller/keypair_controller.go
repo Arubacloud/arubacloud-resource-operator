@@ -74,6 +74,7 @@ func (r *KeyPairReconciler) Finalizer() string {
 	return keyPairFinalizerName
 }
 
+//nolint:gocyclo // complexity is intentional to maintain locality of behavior
 func (r *KeyPairReconciler) HandleReconcile(ctx context.Context, obj reconciler.ResourceObject) (ctrl.Result, error) {
 	kubeKp, ok := obj.(*v1alpha1.KeyPair)
 	if !ok {
@@ -450,7 +451,7 @@ func (r *KeyPairReconciler) kubeRollbackSpecAndSetActive(ctx context.Context, ku
 	// Step 1: rollback spec to match CMP values (object patch, not status patch)
 	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		kpCopy := kubeKp.DeepCopy()
-		if err := r.Client.Get(ctx, client.ObjectKeyFromObject(kubeKp), kpCopy); err != nil {
+		if err := r.Get(ctx, client.ObjectKeyFromObject(kubeKp), kpCopy); err != nil {
 			return err
 		}
 
@@ -461,7 +462,7 @@ func (r *KeyPairReconciler) kubeRollbackSpecAndSetActive(ctx context.Context, ku
 		}
 		kpPatch.Spec.Value = cmpKp.Properties.Value
 
-		return r.Client.Patch(ctx, kpPatch, client.MergeFrom(kpCopy))
+		return r.Patch(ctx, kpPatch, client.MergeFrom(kpCopy))
 	}); err != nil {
 		return fmt.Errorf("failed to rollback keypair '%s' spec: %w", kubeKp.Name, err)
 	}

@@ -72,6 +72,7 @@ func (r *VpcReconciler) Finalizer() string {
 	return vpcFinalizerName
 }
 
+//nolint:gocyclo // complexity is intentional to maintain locality of behavior
 func (r *VpcReconciler) HandleReconcile(ctx context.Context, obj reconciler.ResourceObject) (ctrl.Result, error) {
 	kubeVpc, ok := obj.(*v1alpha1.Vpc)
 	if !ok {
@@ -463,8 +464,8 @@ func cmpVpcIsFailed(_ *v1alpha1.Vpc, cmpVpc *arubatypes.VPCResponse) bool {
 
 // Kube action methods
 
-func (r *VpcReconciler) kubeSetPhaseAndCondition(ctx context.Context, kubeVpc *v1alpha1.Vpc, phase v1alpha1.ResourcePhase, reason string, actionErr error) error {
-	return setPhaseAndCondition(r.Client, ctx, kubeVpc, phase, reason, actionErr, func(vpc *v1alpha1.Vpc) {
+func (r *VpcReconciler) kubeSetPhaseAndCondition(ctx context.Context, kubeVpc *v1alpha1.Vpc, phase v1alpha1.ResourcePhase, reason string, _ error) error {
+	return setPhaseAndCondition(r.Client, ctx, kubeVpc, phase, reason, nil, func(vpc *v1alpha1.Vpc) {
 		if prjID, ok := ctx.Value(projectIDKey).(string); ok && vpc.Status.ProjectID == "" {
 			vpc.Status.ProjectID = prjID
 		}

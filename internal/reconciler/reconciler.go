@@ -193,7 +193,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request, resourceRe
 	var result ctrl.Result
 
 	// 1 - Make sure that the finalizers are in place when resource is not
-	//     being deleteing
+	//     being deleted
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		obj, err := r.getResource(ctx, req, resourceReconciler.Object())
 		if obj == nil || err != nil {

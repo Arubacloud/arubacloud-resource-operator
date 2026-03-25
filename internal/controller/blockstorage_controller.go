@@ -471,8 +471,8 @@ func cmpBlockStorageIsFailed(_ *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockSt
 
 // Kube action methods
 
-func (r *BlockStorageReconciler) kubeSetPhaseAndCondition(ctx context.Context, kubeBS *v1alpha1.BlockStorage, phase v1alpha1.ResourcePhase, reason string, actionErr error) error {
-	return setPhaseAndCondition(r.Client, ctx, kubeBS, phase, reason, actionErr, func(bs *v1alpha1.BlockStorage) {
+func (r *BlockStorageReconciler) kubeSetPhaseAndCondition(ctx context.Context, kubeBS *v1alpha1.BlockStorage, phase v1alpha1.ResourcePhase, reason string, _ error) error {
+	return setPhaseAndCondition(r.Client, ctx, kubeBS, phase, reason, nil, func(bs *v1alpha1.BlockStorage) {
 		if prjID, ok := ctx.Value(projectIDKey).(string); ok && bs.Status.ProjectID == "" {
 			bs.Status.ProjectID = prjID
 		}
@@ -628,7 +628,7 @@ func kubeBlockStorageNeedsUpdate(kubeBS *v1alpha1.BlockStorage, cmpBS *arubatype
 	}
 	return kubeBS.Spec.BillingPeriod != cmpBS.Properties.BillingPeriod ||
 		kubeBS.Spec.DataCenter != cmpBS.Properties.Zone ||
-		kubeBS.Spec.SizeGb != int32(cmpBS.Properties.SizeGB) ||
+		kubeBS.Spec.SizeGb != int32(cmpBS.Properties.SizeGB) || //nolint:gosec // disk size in GB always fits int32
 		!tagsAreEqual(kubeBS.Spec.Tags, cmpBS.Metadata.Tags)
 }
 

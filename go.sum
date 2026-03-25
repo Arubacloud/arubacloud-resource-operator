@@ -1,5 +1,5 @@
-github.com/Arubacloud/sdk-go v0.1.22-alpha4 h1:bnu2P3pDfG0ibsFDniaNB2sHUb3SVf2MZgcF8ORFPoY=
-github.com/Arubacloud/sdk-go v0.1.22-alpha4/go.mod h1:4lXc0Dte8HqeKag8eMo0/TClwsgMqXW0KbKaQ2BYlXA=
+github.com/Arubacloud/sdk-go v0.1.23 h1:Id2mEnmBsuoTc2XzvvLbmkMEOTs4Hv/kl3VI0MByxVg=
+github.com/Arubacloud/sdk-go v0.1.23/go.mod h1:4lXc0Dte8HqeKag8eMo0/TClwsgMqXW0KbKaQ2BYlXA=
 github.com/Nerzal/gocloak/v13 v13.9.0 h1:YWsJsdM5b0yhM2Ba3MLydiOlujkBry4TtdzfIzSVZhw=
 github.com/Nerzal/gocloak/v13 v13.9.0/go.mod h1:YYuDcXZ7K2zKECyVP7pPqjKxx2AzYSpKDj8d6GuyM10=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=

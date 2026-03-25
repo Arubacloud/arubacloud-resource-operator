@@ -44,6 +44,10 @@ type SubnetSpec struct {
 	// +kubebuilder:validation:Optional
 	Tags []string `json:"tags,omitempty"`
 
+	// Location specifies the location for the subnet
+	// +kubebuilder:validation:Required
+	Location Location `json:"location"`
+
 	// Type specifies the type of subnet (e.g., "Advanced")
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Enum=Advanced;Basic

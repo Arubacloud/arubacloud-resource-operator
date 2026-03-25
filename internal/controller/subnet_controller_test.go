@@ -22,10 +22,12 @@ import (
 func buildSubnetResponse(id, name, state string) *arubatypes.SubnetResponse {
 	dhcp := &arubatypes.SubnetDHCP{Enabled: true}
 	network := &arubatypes.SubnetNetwork{Address: "192.168.1.0/24"}
+	location := &arubatypes.LocationResponse{Value: "ITBG-Bergamo"}
 	return &arubatypes.SubnetResponse{
 		Metadata: arubatypes.ResourceMetadataResponse{
-			ID:   &id,
-			Name: &name,
+			ID:               &id,
+			Name:             &name,
+			LocationResponse: location,
 		},
 		Properties: arubatypes.SubnetPropertiesResponse{
 			Type:    arubatypes.SubnetTypeAdvanced,
@@ -99,7 +101,10 @@ func defaultSubnetSpec(projectName, vpcName string) v1alpha1.SubnetSpec {
 	return v1alpha1.SubnetSpec{
 		Tenant: "test-tenant",
 		Tags:   []string{"tag1"},
-		Type:   "Advanced",
+		Location: v1alpha1.Location{
+			Value: "ITBG-Bergamo",
+		},
+		Type: "Advanced",
 		Network: v1alpha1.SubnetNetwork{
 			Address: "192.168.1.0/24",
 		},
@@ -353,6 +358,29 @@ var _ = Describe("SubnetReconciler", func() {
 	})
 
 	Describe("HasDeniedChanges", func() {
+		It("returns LongRequeue when immutable field (location) is changed", func() {
+			m := newSubnetReconcilerWithMocks(GinkgoT())
+			subnet = createTestSubnet(ctx, "test-subnet-denied-location", defaultSubnetSpec(subnetProjectName, subnetVpcName))
+			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "subnet-id-1", subnetProjectID, subnetVpcID, 1, time.Now())
+
+			// Force generation change with different location
+			sFetch := &v1alpha1.Subnet{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), sFetch)).To(Succeed())
+			sFetch.Spec.Location.Value = "ITMI-Milan"
+			Expect(k8sClient.Update(ctx, sFetch)).To(Succeed())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
+
+			// CMP still has original location ITBG-Bergamo
+			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-denied-location", CSPResourceStateActive)
+			m.expectProjectList(subnetProjectID, subnetProjectName)
+			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
+			m.expectSubnetList(subnetProjectID, subnetVpcID, cmpSubnet)
+
+			result, err := m.r.HandleReconcile(ctx, subnet)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
+		})
+
 		It("returns LongRequeue when immutable field (network.address) is changed", func() {
 			m := newSubnetReconcilerWithMocks(GinkgoT())
 			subnet = createTestSubnet(ctx, "test-subnet-denied-changes", defaultSubnetSpec(subnetProjectName, subnetVpcName))

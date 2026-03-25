@@ -935,6 +935,7 @@ func (in *SubnetSpec) DeepCopyInto(out *SubnetSpec) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	out.Location = in.Location
 	out.Network = in.Network
 	out.DHCP = in.DHCP
 	out.VpcReference = in.VpcReference

@@ -8,6 +8,8 @@ spec:
   tags:
     - tag-1
     - tag-2
+  location:
+    value: ITBG-Bergamo
   type: Advanced
   default: true
   network:

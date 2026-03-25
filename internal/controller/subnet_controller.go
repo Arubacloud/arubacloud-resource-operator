@@ -654,6 +654,14 @@ func checkSubnetDeniedChanges(kubeSubnet *v1alpha1.Subnet, cmpSubnet *arubatypes
 		return nil
 	}
 
+	locationValue := ""
+	if cmpSubnet.Metadata.LocationResponse != nil {
+		locationValue = cmpSubnet.Metadata.LocationResponse.Value
+	}
+	if kubeSubnet.Spec.Location.Value != locationValue {
+		return fmt.Errorf("%w: %w", ErrNotAllowedChanges, errors.New("change the 'location' is not allowed"))
+	}
+
 	if cmpSubnet.Properties.Network != nil && kubeSubnet.Spec.Network.Address != cmpSubnet.Properties.Network.Address {
 		return fmt.Errorf("%w: %w", ErrNotAllowedChanges, errors.New("change the 'network.address' is not allowed"))
 	}
@@ -709,12 +717,18 @@ func cmpSubnetRequestFromCMP(cmpSubnet *arubatypes.SubnetResponse) *arubatypes.S
 	tags := make([]string, len(cmpSubnet.Metadata.Tags))
 	copy(tags, cmpSubnet.Metadata.Tags)
 
+	location := arubatypes.LocationRequest{}
+	if cmpSubnet.Metadata.LocationResponse != nil {
+		location.Value = cmpSubnet.Metadata.LocationResponse.Value
+	}
+
 	req := &arubatypes.SubnetRequest{
 		Metadata: arubatypes.RegionalResourceMetadataRequest{
 			ResourceMetadataRequest: arubatypes.ResourceMetadataRequest{
 				Name: name,
 				Tags: tags,
 			},
+			Location: location,
 		},
 		Properties: arubatypes.SubnetPropertiesRequest{
 			Type:    cmpSubnet.Properties.Type,
@@ -743,6 +757,7 @@ func cmpSubnetRequestFromKube(kubeSubnet *v1alpha1.Subnet) *arubatypes.SubnetReq
 				Name: kubeSubnet.Name,
 				Tags: tags,
 			},
+			Location: arubatypes.LocationRequest(kubeSubnet.Spec.Location),
 		},
 		Properties: arubatypes.SubnetPropertiesRequest{
 			Type:    arubatypes.SubnetType(kubeSubnet.Spec.Type),

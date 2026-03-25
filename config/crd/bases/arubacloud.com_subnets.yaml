@@ -67,6 +67,15 @@ spec:
                 required:
                 - enabled
                 type: object
+              location:
+                description: Location specifies the location for the subnet
+                properties:
+                  value:
+                    description: Value is the location identifier (e.g., "ITBG-Bergamo")
+                    type: string
+                required:
+                - value
+                type: object
               network:
                 description: Network specifies the network configuration
                 properties:
@@ -120,6 +129,7 @@ spec:
                 type: object
             required:
             - dhcp
+            - location
             - network
             - projectReference
             - type

@@ -19,6 +19,7 @@ rules:
   - blockstorages
   - elasticips
   - keypairs
+  - securitygroups
   - subnets
   - vpcs
   verbs:
@@ -35,6 +36,7 @@ rules:
   - blockstorages/finalizers
   - elasticips/finalizers
   - keypairs/finalizers
+  - securitygroups/finalizers
   - subnets/finalizers
   - vpcs/finalizers
   verbs:
@@ -45,6 +47,7 @@ rules:
   - blockstorages/status
   - elasticips/status
   - keypairs/status
+  - securitygroups/status
   - subnets/status
   - vpcs/status
   verbs:

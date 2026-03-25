@@ -24,6 +24,7 @@ packages:
       ComputeClient:
       KeyPairsClient:
       SubnetsClient:
+      SecurityGroupsClient:
   github.com/Arubacloud/sdk-go/pkg/multitenant:
     config:
       dir: internal/mocks/aruba

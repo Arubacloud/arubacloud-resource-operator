@@ -253,12 +253,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	// // Setup SecurityGroup controller
-	// securityGroupReconciler := controller.NewSecurityGroupReconciler(baseReconciler)
-	// if err = securityGroupReconciler.SetupWithManager(mgr); err != nil {
-	// 	setupLog.Error(err, "unable to create controller", "controller", "SecurityGroup")
-	// 	os.Exit(1)
-	// }
+	// Setup SecurityGroup controller
+	securityGroupReconciler := controller.NewSecurityGroupReconciler(baseReconciler)
+	if err = securityGroupReconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "SecurityGroup")
+		os.Exit(1)
+	}
 
 	// // Setup SecurityRule controller
 	// securityRuleReconciler := controller.NewSecurityRuleReconciler(baseReconciler)

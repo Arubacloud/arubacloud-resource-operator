@@ -267,12 +267,12 @@ func main() {
 	// 	os.Exit(1)
 	// }
 
-	// // Setup Subnet controller
-	// subnetReconciler := controller.NewSubnetReconciler(baseReconciler)
-	// if err = subnetReconciler.SetupWithManager(mgr); err != nil {
-	// 	setupLog.Error(err, "unable to create controller", "controller", "Subnet")
-	// 	os.Exit(1)
-	// }
+	// Setup Subnet controller
+	subnetReconciler := controller.NewSubnetReconciler(baseReconciler)
+	if err = subnetReconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Subnet")
+		os.Exit(1)
+	}
 
 	// Setup Vpc controller
 	vpcReconciler := controller.NewVpcReconciler(baseReconciler)

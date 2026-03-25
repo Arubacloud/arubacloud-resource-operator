@@ -132,6 +132,7 @@ NN=1 QNT=01 ACTION=delete TENANT=my-tenant NAME=my-resource ./test_runner.sh
 | `Test9_00` | Test8_00 + CloudServer |
 | `Test10` | Full stack with data-volume CloudServer |
 | `Test11` | Full stack (different ordering — ElasticIP before SecurityGroup) |
+| `Test12_00` | Project + VPC + Subnet |
 
 ### Creating a new fixture file
 

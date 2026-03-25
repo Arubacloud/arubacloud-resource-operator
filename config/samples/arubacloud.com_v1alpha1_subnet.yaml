@@ -9,9 +9,9 @@ spec:
     - tag-1
     - tag-2
   type: Advanced
-  default: false
+  default: true
   network:
-    address: 192.168.1.0/25
+    address: 192.168.1.0/24
   dhcp:
     enabled: true
   vpcReference:

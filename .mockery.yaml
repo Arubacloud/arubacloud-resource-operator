@@ -23,6 +23,7 @@ packages:
       ElasticIPsClient:
       ComputeClient:
       KeyPairsClient:
+      SubnetsClient:
   github.com/Arubacloud/sdk-go/pkg/multitenant:
     config:
       dir: internal/mocks/aruba

@@ -20,6 +20,7 @@ rules:
   - elasticips
   - keypairs
   - securitygroups
+  - securityrules
   - subnets
   - vpcs
   verbs:
@@ -37,6 +38,7 @@ rules:
   - elasticips/finalizers
   - keypairs/finalizers
   - securitygroups/finalizers
+  - securityrules/finalizers
   - subnets/finalizers
   - vpcs/finalizers
   verbs:
@@ -48,6 +50,7 @@ rules:
   - elasticips/status
   - keypairs/status
   - securitygroups/status
+  - securityrules/status
   - subnets/status
   - vpcs/status
   verbs:

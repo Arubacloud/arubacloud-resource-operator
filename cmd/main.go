@@ -260,12 +260,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	// // Setup SecurityRule controller
-	// securityRuleReconciler := controller.NewSecurityRuleReconciler(baseReconciler)
-	// if err = securityRuleReconciler.SetupWithManager(mgr); err != nil {
-	// 	setupLog.Error(err, "unable to create controller", "controller", "SecurityRule")
-	// 	os.Exit(1)
-	// }
+	// Setup SecurityRule controller
+	securityRuleReconciler := controller.NewSecurityRuleReconciler(baseReconciler)
+	if err = securityRuleReconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "SecurityRule")
+		os.Exit(1)
+	}
 
 	// Setup Subnet controller
 	subnetReconciler := controller.NewSubnetReconciler(baseReconciler)

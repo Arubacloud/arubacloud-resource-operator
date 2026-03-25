@@ -1,139 +1,798 @@
-// /*
-// Copyright 2025.
+/*
+Copyright 2025.
 
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-//     http://www.apache.org/licenses/LICENSE-2.0
+    http://www.apache.org/licenses/LICENSE-2.0
 
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-// */
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package controller
 
-// import (
-// 	"context"
-// 	"io"
-// 	"net/http"
-// 	"strings"
+import (
+	"context"
+	"net/http"
+	"time"
 
-// 	"github.com/Arubacloud/arubacloud-resource-operator/internal/client"
-// 	"github.com/Arubacloud/arubacloud-resource-operator/internal/mocks"
-// 	. "github.com/onsi/ginkgo/v2"
-// 	. "github.com/onsi/gomega"
-// 	"github.com/stretchr/testify/mock"
-// 	"k8s.io/apimachinery/pkg/api/errors"
-// 	"k8s.io/apimachinery/pkg/types"
-// 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	"github.com/stretchr/testify/mock"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
-// 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
+	arubamocks "github.com/Arubacloud/arubacloud-resource-operator/internal/mocks/aruba"
+	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
+	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
+)
 
-// 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
-// 	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
-// )
+// --- Builder helpers ---
 
-// var _ = Describe("SecurityRule Controller", func() {
-// 	Context("When reconciling a resource", func() {
-// 		const resourceName = "test-resource"
+func buildSecurityRuleResponse(id, name, state string) *arubatypes.SecurityRuleResponse {
+	return &arubatypes.SecurityRuleResponse{
+		Metadata: arubatypes.ResourceMetadataResponse{
+			ID:   &id,
+			Name: &name,
+		},
+		Properties: arubatypes.SecurityRulePropertiesResponse{
+			Protocol:  "TCP",
+			Port:      "80",
+			Direction: arubatypes.RuleDirection("Ingress"),
+			Target: &arubatypes.RuleTarget{
+				Kind:  arubatypes.EndpointTypeDto("Ip"),
+				Value: "0.0.0.0/0",
+			},
+		},
+		Status: arubatypes.ResourceStatus{
+			State: &state,
+		},
+	}
+}
 
-// 		ctx := context.Background()
+func buildSecurityRuleList(responses ...*arubatypes.SecurityRuleResponse) *arubatypes.Response[arubatypes.SecurityRuleList] {
+	list := &arubatypes.SecurityRuleList{}
+	for _, r := range responses {
+		list.Values = append(list.Values, *r)
+		list.Total++
+	}
+	return &arubatypes.Response[arubatypes.SecurityRuleList]{
+		Data:       list,
+		StatusCode: http.StatusOK,
+	}
+}
 
-// 		typeNamespacedName := types.NamespacedName{
-// 			Name:      resourceName,
-// 			Namespace: "default", // TODO(user):Modify as needed
-// 		}
-// 		arubasecurityrule := &v1alpha1.SecurityRule{}
+func buildSRCRUDResponse(statusCode int) *arubatypes.Response[arubatypes.SecurityRuleResponse] {
+	return &arubatypes.Response[arubatypes.SecurityRuleResponse]{
+		StatusCode: statusCode,
+	}
+}
 
-// 		BeforeEach(func() {
-// 			By("creating the custom resource for the Kind SecurityRule")
-// 			err := k8sClient.Get(ctx, typeNamespacedName, arubasecurityrule)
-// 			if err != nil && errors.IsNotFound(err) {
-// 				resource := &v1alpha1.SecurityRule{
-// 					ObjectMeta: metav1.ObjectMeta{
-// 						Name:      resourceName,
-// 						Namespace: "default",
-// 					},
-// 					Spec: v1alpha1.SecurityRuleSpec{
-// 						Tenant: "test-tenant",
-// 						Tags:   []string{"test", "security-rule"},
-// 						Location: v1alpha1.Location{
-// 							Value: "ITBG-Bergamo",
-// 						},
-// 						Protocol:  "TCP",
-// 						Port:      "80",
-// 						Direction: "Ingress",
-// 						Target: v1alpha1.SecurityRuleTarget{
-// 							Kind:  "Ip",
-// 							Value: "0.0.0.0/0",
-// 						},
-// 						SecurityGroupReference: v1alpha1.ResourceReference{
-// 							Name:      "test-security-group",
-// 							Namespace: "default",
-// 						},
-// 						VpcReference: v1alpha1.ResourceReference{
-// 							Name:      "test-vpc",
-// 							Namespace: "default",
-// 						},
-// 						ProjectReference: v1alpha1.ResourceReference{
-// 							Name:      "test-project",
-// 							Namespace: "default",
-// 						},
-// 					},
-// 				}
-// 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
-// 			}
-// 		})
+func buildSGListForSR(sgID, sgName string) *arubatypes.Response[arubatypes.SecurityGroupList] {
+	defaultVal := false
+	state := CSPResourceStateActive
+	sg := arubatypes.SecurityGroupResponse{
+		Metadata: arubatypes.ResourceMetadataResponse{
+			ID:   &sgID,
+			Name: &sgName,
+		},
+		Properties: arubatypes.SecurityGroupPropertiesResponse{
+			Default: defaultVal,
+		},
+		Status: arubatypes.ResourceStatus{
+			State: &state,
+		},
+	}
+	list := &arubatypes.SecurityGroupList{}
+	list.Values = append(list.Values, sg)
+	list.Total = 1
+	return &arubatypes.Response[arubatypes.SecurityGroupList]{
+		Data:       list,
+		StatusCode: http.StatusOK,
+	}
+}
 
-// 		AfterEach(func() {
-// 			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-// 			resource := &v1alpha1.SecurityRule{}
-// 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
-// 			Expect(err).NotTo(HaveOccurred())
+// --- Test fixture helpers ---
 
-// 			By("Cleanup the specific resource instance SecurityRule")
-// 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
-// 		})
-// 		It("should successfully reconcile the resource", func() {
-// 			By("Reconciling the created resource")
-// 			auth := new(mocks.MockITokenManager)
-// 			auth.On("GetActiveToken", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return("token 123", nil)
-// 			auth.On("SetClientIdAndSecret", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-// 			auth.On("SetClientIdAndSecret", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+func defaultSecurityRuleSpec(projectName, vpcName, sgName string) v1alpha1.SecurityRuleSpec {
+	return v1alpha1.SecurityRuleSpec{
+		Tenant: "test-tenant",
+		Tags:   []string{"tag1"},
+		Location: v1alpha1.Location{
+			Value: "ITBG-Bergamo",
+		},
+		Protocol:  "TCP",
+		Port:      "80",
+		Direction: "Ingress",
+		Target: v1alpha1.SecurityRuleTarget{
+			Kind:  "Ip",
+			Value: "0.0.0.0/0",
+		},
+		ProjectReference: v1alpha1.ResourceReference{
+			Name:      projectName,
+			Namespace: "default",
+		},
+		VpcReference: v1alpha1.ResourceReference{
+			Name:      vpcName,
+			Namespace: "default",
+		},
+		SecurityGroupReference: v1alpha1.ResourceReference{
+			Name:      sgName,
+			Namespace: "default",
+		},
+	}
+}
 
-// 			// Create mock HTTP client that returns 200 for all requests
-// 			mockHTTPClient := new(mocks.MockHTTPClient)
-// 			mockHTTPClient.On("Do", mock.AnythingOfType("*http.Request")).Return(
-// 				&http.Response{
-// 					StatusCode: 200,
-// 					Body:       io.NopCloser(strings.NewReader(`{"success": true}`)),
-// 					Header:     make(http.Header),
-// 				}, nil)
+func createTestSecurityRule(ctx context.Context, name string, spec v1alpha1.SecurityRuleSpec) *v1alpha1.SecurityRule {
+	sr := &v1alpha1.SecurityRule{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "default",
+		},
+		Spec: spec,
+	}
+	ExpectWithOffset(1, k8sClient.Create(ctx, sr)).To(Succeed())
+	return sr
+}
 
-// 			// Create HelperClient with mocked HTTP client
-// 			helperClient := client.NewHelperClient(k8sClient, mockHTTPClient, "https://api.example.com")
+func setSecurityRuleStatus(ctx context.Context, sr *v1alpha1.SecurityRule, phase v1alpha1.ResourcePhase, reason string, resourceID string, projectID string, vpcID string, sgID string, observedGen int64, conditionTime time.Time) {
+	s := sr.DeepCopy()
+	Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), s)).To(Succeed())
+	s.Status.Phase = phase
+	s.Status.ResourceID = resourceID
+	s.Status.ProjectID = projectID
+	s.Status.VpcID = vpcID
+	s.Status.SecurityGroupID = sgID
+	s.Status.ObservedGeneration = observedGen
+	if phase != "" {
+		s.Status.Conditions = []metav1.Condition{
+			{
+				Type:               string(phase),
+				Status:             metav1.ConditionTrue,
+				Reason:             reason,
+				LastTransitionTime: metav1.NewTime(conditionTime),
+				Message:            string(phase) + " " + reason + " - OK",
+			},
+		}
+	}
+	ExpectWithOffset(1, k8sClient.Status().Update(ctx, s)).To(Succeed())
+	ExpectWithOffset(1, k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), sr)).To(Succeed())
+}
 
-// 			baseResourceReconciler := &reconciler.Reconciler{
-// 				Client:       k8sClient,
-// 				Scheme:       k8sClient.Scheme(),
-// 				HelperClient: helperClient,
-// 				TokenManager: auth,
-// 			}
+// --- Mock setup ---
 
-// 			resourceReconciler := &SecurityRuleReconciler{
-// 				Reconciler: baseResourceReconciler,
-// 			}
+type srMocks struct {
+	r           *SecurityRuleReconciler
+	mockAruba   *arubamocks.MockClient
+	mockProject *arubamocks.MockProjectClient
+	mockNetwork *arubamocks.MockNetworkClient
+	mockVPCs    *arubamocks.MockVPCsClient
+	mockSecGrps *arubamocks.MockSecurityGroupsClient
+	mockSRules  *arubamocks.MockSecurityGroupRulesClient
+}
 
-// 			_, err := resourceReconciler.Reconcile(ctx, reconcile.Request{
-// 				NamespacedName: typeNamespacedName,
-// 			})
-// 			Expect(err).NotTo(HaveOccurred())
-// 			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-// 			// Example: If you expect a certain status condition after reconciliation, verify it here.
-// 		})
-// 	})
-// })
+func newSRReconcilerWithMocks(t GinkgoTInterface) *srMocks {
+	mockAruba := arubamocks.NewMockClient(t)
+	mockProject := arubamocks.NewMockProjectClient(t)
+	mockNetwork := arubamocks.NewMockNetworkClient(t)
+	mockVPCs := arubamocks.NewMockVPCsClient(t)
+	mockSecGrps := arubamocks.NewMockSecurityGroupsClient(t)
+	mockSRules := arubamocks.NewMockSecurityGroupRulesClient(t)
+
+	r := NewSecurityRuleReconciler(newTestReconciler(t, mockAruba))
+
+	return &srMocks{
+		r:           r,
+		mockAruba:   mockAruba,
+		mockProject: mockProject,
+		mockNetwork: mockNetwork,
+		mockVPCs:    mockVPCs,
+		mockSecGrps: mockSecGrps,
+		mockSRules:  mockSRules,
+	}
+}
+
+func (m *srMocks) expectProjectList(projectID, projectName string) {
+	m.mockAruba.EXPECT().FromProject().Return(m.mockProject)
+	m.mockProject.EXPECT().List(mock.Anything, mock.Anything).Return(buildProjectListForSG(projectID, projectName), nil)
+}
+
+func (m *srMocks) expectVpcList(projectID, vpcID, vpcName string) {
+	m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
+	m.mockNetwork.EXPECT().VPCs().Return(m.mockVPCs)
+	m.mockVPCs.EXPECT().List(mock.Anything, projectID, mock.Anything).Return(buildVpcListForSG(vpcID, vpcName), nil)
+}
+
+func (m *srMocks) expectSGList(projectID, vpcID, sgID, sgName string) {
+	m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
+	m.mockNetwork.EXPECT().SecurityGroups().Return(m.mockSecGrps)
+	m.mockSecGrps.EXPECT().List(mock.Anything, projectID, vpcID, mock.Anything).Return(buildSGListForSR(sgID, sgName), nil)
+}
+
+func (m *srMocks) expectSRList(projectID, vpcID, sgID string, responses ...*arubatypes.SecurityRuleResponse) {
+	m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
+	m.mockNetwork.EXPECT().SecurityGroupRules().Return(m.mockSRules)
+	m.mockSRules.EXPECT().List(mock.Anything, projectID, vpcID, sgID, mock.Anything).Return(buildSecurityRuleList(responses...), nil)
+}
+
+// --- Tests ---
+
+var _ = Describe("SecurityRuleReconciler", func() {
+	const (
+		srProjectName = "test-sr-project-ref"
+		srProjectID   = "sr-proj-id-1"
+		srVpcName     = "test-sr-vpc-ref"
+		srVpcID       = "sr-vpc-id-1"
+		srSGName      = "test-sr-sg-ref"
+		srSGID        = "sr-sg-id-1"
+	)
+
+	var (
+		ctx context.Context
+		sr  *v1alpha1.SecurityRule
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+	})
+
+	AfterEach(func() {
+		if sr != nil {
+			s := &v1alpha1.SecurityRule{}
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), s); err == nil {
+				s.Finalizers = nil
+				_ = k8sClient.Update(ctx, s)
+				_ = k8sClient.Delete(ctx, s)
+			}
+			sr = nil
+		}
+	})
+
+	Describe("First reconciliation", func() {
+		It("transitions to Creating+ShallSynchronize when CMP has no SecurityRule", func() {
+			m := newSRReconcilerWithMocks(GinkgoT())
+			sr = createTestSecurityRule(ctx, "test-sr-first", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
+
+			m.expectProjectList(srProjectID, srProjectName)
+			m.expectVpcList(srProjectID, srVpcID, srVpcName)
+			m.expectSGList(srProjectID, srVpcID, srSGID, srSGName)
+			m.expectSRList(srProjectID, srVpcID, srSGID)
+
+			_, err := m.r.HandleReconcile(ctx, sr)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.SecurityRule{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
+		})
+	})
+
+	Describe("Create on CMP", func() {
+		It("transitions to Creating+Synchronizing after successful CMP create", func() {
+			m := newSRReconcilerWithMocks(GinkgoT())
+			sr = createTestSecurityRule(ctx, "test-sr-create-cmp", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
+			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, "", "", "", "", 0, time.Now())
+
+			m.expectProjectList(srProjectID, srProjectName)
+			m.expectVpcList(srProjectID, srVpcID, srVpcName)
+			m.expectSGList(srProjectID, srVpcID, srSGID, srSGName)
+			m.expectSRList(srProjectID, srVpcID, srSGID)
+			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
+			m.mockNetwork.EXPECT().SecurityGroupRules().Return(m.mockSRules)
+			m.mockSRules.EXPECT().Create(mock.Anything, srProjectID, srVpcID, srSGID, mock.Anything, mock.Anything).Return(buildSRCRUDResponse(http.StatusCreated), nil)
+
+			_, err := m.r.HandleReconcile(ctx, sr)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.SecurityRule{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronizing))
+		})
+	})
+
+	Describe("Waiting creation (SecurityRule not yet in CMP)", func() {
+		It("returns LongRequeue when CMP has no SecurityRule", func() {
+			m := newSRReconcilerWithMocks(GinkgoT())
+			sr = createTestSecurityRule(ctx, "test-sr-wait-create", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
+			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "", "", "", "", 0, time.Now())
+
+			m.expectProjectList(srProjectID, srProjectName)
+			m.expectVpcList(srProjectID, srVpcID, srVpcName)
+			m.expectSGList(srProjectID, srVpcID, srSGID, srSGName)
+			m.expectSRList(srProjectID, srVpcID, srSGID)
+
+			result, err := m.r.HandleReconcile(ctx, sr)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
+		})
+	})
+
+	Describe("Waiting creation (SecurityRule in transitory CMP state)", func() {
+		It("returns LongRequeue when CMP state is Creating", func() {
+			m := newSRReconcilerWithMocks(GinkgoT())
+			sr = createTestSecurityRule(ctx, "test-sr-wait-create-transitory", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
+			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "", "", "", "", 0, time.Now())
+
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-wait-create-transitory", CSPResourceStateCreating)
+			m.expectProjectList(srProjectID, srProjectName)
+			m.expectVpcList(srProjectID, srVpcID, srVpcName)
+			m.expectSGList(srProjectID, srVpcID, srSGID, srSGName)
+			m.expectSRList(srProjectID, srVpcID, srSGID, cmpSR)
+
+			result, err := m.r.HandleReconcile(ctx, sr)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
+		})
+	})
+
+	Describe("Creation confirmed on CMP", func() {
+		It("transitions to Creating+Synchronized when CMP SecurityRule is active", func() {
+			m := newSRReconcilerWithMocks(GinkgoT())
+			sr = createTestSecurityRule(ctx, "test-sr-creation-confirmed", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
+			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "", "", "", "", 0, time.Now())
+
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-creation-confirmed", CSPResourceStateActive)
+			m.expectProjectList(srProjectID, srProjectName)
+			m.expectVpcList(srProjectID, srVpcID, srVpcName)
+			m.expectSGList(srProjectID, srVpcID, srSGID, srSGName)
+			m.expectSRList(srProjectID, srVpcID, srSGID, cmpSR)
+
+			_, err := m.r.HandleReconcile(ctx, sr)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.SecurityRule{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
+		})
+	})
+
+	Describe("Creation accomplished", func() {
+		It("transitions to Active+Synchronized and sets ResourceID", func() {
+			m := newSRReconcilerWithMocks(GinkgoT())
+			sr = createTestSecurityRule(ctx, "test-sr-creation-accomplished", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
+			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronized, "", "", "", "", 0, time.Now())
+
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-creation-accomplished", CSPResourceStateActive)
+			m.expectProjectList(srProjectID, srProjectName)
+			m.expectVpcList(srProjectID, srVpcID, srVpcName)
+			m.expectSGList(srProjectID, srVpcID, srSGID, srSGName)
+			m.expectSRList(srProjectID, srVpcID, srSGID, cmpSR)
+
+			_, err := m.r.HandleReconcile(ctx, sr)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.SecurityRule{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseActive))
+			Expect(updated.Status.ResourceID).To(Equal("sr-id-1"))
+		})
+	})
+
+	Describe("HasDeniedChanges", func() {
+		It("returns LongRequeue when immutable field (location) is changed", func() {
+			m := newSRReconcilerWithMocks(GinkgoT())
+			sr = createTestSecurityRule(ctx, "test-sr-denied-changes", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
+			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "sr-id-1", srProjectID, srVpcID, srSGID, 1, time.Now())
+
+			// Force generation change with different location
+			srFetch := &v1alpha1.SecurityRule{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), srFetch)).To(Succeed())
+			srFetch.Spec.Location.Value = "IT-MILAN"
+			Expect(k8sClient.Update(ctx, srFetch)).To(Succeed())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), sr)).To(Succeed())
+
+			// CMP still has original location
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-denied-changes", CSPResourceStateActive)
+			cmpSR.Metadata.LocationResponse = &arubatypes.LocationResponse{Value: "ITBG-Bergamo"}
+			m.expectProjectList(srProjectID, srProjectName)
+			m.expectVpcList(srProjectID, srVpcID, srVpcName)
+			m.expectSGList(srProjectID, srVpcID, srSGID, srSGName)
+			m.expectSRList(srProjectID, srVpcID, srSGID, cmpSR)
+
+			result, err := m.r.HandleReconcile(ctx, sr)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
+		})
+	})
+
+	Describe("SpecAlreadyInSyncWithCMP", func() {
+		It("re-stamps ObservedGeneration when spec hasn't actually changed", func() {
+			m := newSRReconcilerWithMocks(GinkgoT())
+			sr = createTestSecurityRule(ctx, "test-sr-spec-in-sync", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
+			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "sr-id-1", srProjectID, srVpcID, srSGID, 1, time.Now())
+
+			// Trigger generation bump with same tags
+			srFetch := &v1alpha1.SecurityRule{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), srFetch)).To(Succeed())
+			srFetch.Spec.Tags = []string{"tag1"}
+			Expect(k8sClient.Update(ctx, srFetch)).To(Succeed())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), sr)).To(Succeed())
+
+			// CMP matches: same tags, same protocol/port/direction/target
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-spec-in-sync", CSPResourceStateActive)
+			cmpSR.Metadata.Tags = []string{"tag1"}
+			cmpSR.Metadata.LocationResponse = &arubatypes.LocationResponse{Value: "ITBG-Bergamo"}
+			m.expectProjectList(srProjectID, srProjectName)
+			m.expectVpcList(srProjectID, srVpcID, srVpcName)
+			m.expectSGList(srProjectID, srVpcID, srSGID, srSGName)
+			m.expectSRList(srProjectID, srVpcID, srSGID, cmpSR)
+
+			_, err := m.r.HandleReconcile(ctx, sr)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.SecurityRule{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseActive))
+			Expect(updated.Status.ObservedGeneration).To(Equal(sr.Generation))
+		})
+	})
+
+	Describe("ShouldBeUpdated", func() {
+		It("transitions to Updating+ShallSynchronize when tags differ", func() {
+			m := newSRReconcilerWithMocks(GinkgoT())
+			sr = createTestSecurityRule(ctx, "test-sr-should-update", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
+			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "sr-id-1", srProjectID, srVpcID, srSGID, 1, time.Now())
+
+			// Change tags to trigger update
+			srFetch := &v1alpha1.SecurityRule{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), srFetch)).To(Succeed())
+			srFetch.Spec.Tags = []string{"tag1", "tag2"}
+			Expect(k8sClient.Update(ctx, srFetch)).To(Succeed())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), sr)).To(Succeed())
+
+			// CMP has old tags
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-should-update", CSPResourceStateActive)
+			cmpSR.Metadata.Tags = []string{"tag1"}
+			cmpSR.Metadata.LocationResponse = &arubatypes.LocationResponse{Value: "ITBG-Bergamo"}
+			m.expectProjectList(srProjectID, srProjectName)
+			m.expectVpcList(srProjectID, srVpcID, srVpcName)
+			m.expectSGList(srProjectID, srVpcID, srSGID, srSGName)
+			m.expectSRList(srProjectID, srVpcID, srSGID, cmpSR)
+
+			_, err := m.r.HandleReconcile(ctx, sr)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.SecurityRule{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseUpdating))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseUpdating))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
+		})
+	})
+
+	Describe("Update on CMP", func() {
+		It("transitions to Updating+Synchronizing after successful CMP update", func() {
+			m := newSRReconcilerWithMocks(GinkgoT())
+			sr = createTestSecurityRule(ctx, "test-sr-update-cmp", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
+			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, "sr-id-1", srProjectID, srVpcID, srSGID, 1, time.Now())
+
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-update-cmp", CSPResourceStateActive)
+			cmpSR.Metadata.LocationResponse = &arubatypes.LocationResponse{Value: "ITBG-Bergamo"}
+
+			m.mockAruba.EXPECT().FromProject().Return(m.mockProject)
+			m.mockProject.EXPECT().List(mock.Anything, mock.Anything).Return(buildProjectListForSG(srProjectID, srProjectName), nil)
+			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
+			m.mockNetwork.EXPECT().VPCs().Return(m.mockVPCs)
+			m.mockVPCs.EXPECT().List(mock.Anything, srProjectID, mock.Anything).Return(buildVpcListForSG(srVpcID, srVpcName), nil)
+			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
+			m.mockNetwork.EXPECT().SecurityGroups().Return(m.mockSecGrps)
+			m.mockSecGrps.EXPECT().List(mock.Anything, srProjectID, srVpcID, mock.Anything).Return(buildSGListForSR(srSGID, srSGName), nil)
+			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
+			m.mockNetwork.EXPECT().SecurityGroupRules().Return(m.mockSRules)
+			m.mockSRules.EXPECT().List(mock.Anything, srProjectID, srVpcID, srSGID, mock.Anything).Return(buildSecurityRuleList(cmpSR), nil)
+			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
+			m.mockNetwork.EXPECT().SecurityGroupRules().Return(m.mockSRules)
+			m.mockSRules.EXPECT().Update(mock.Anything, srProjectID, srVpcID, srSGID, "sr-id-1", mock.Anything, mock.Anything).Return(buildSRCRUDResponse(http.StatusOK), nil)
+
+			_, err := m.r.HandleReconcile(ctx, sr)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.SecurityRule{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseUpdating))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseUpdating))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronizing))
+		})
+	})
+
+	Describe("Should delete", func() {
+		It("transitions to Deleting+ShallSynchronize when deletion is requested on Active SecurityRule", func() {
+			m := newSRReconcilerWithMocks(GinkgoT())
+			sr = createTestSecurityRule(ctx, "test-sr-should-delete", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
+			srFetch := &v1alpha1.SecurityRule{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), srFetch)).To(Succeed())
+			srFetch.Finalizers = []string{securityRuleFinalizerName}
+			Expect(k8sClient.Update(ctx, srFetch)).To(Succeed())
+			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "sr-id-1", srProjectID, srVpcID, srSGID, 1, time.Now())
+			Expect(k8sClient.Delete(ctx, sr)).To(Succeed())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), sr)).To(Succeed())
+
+			// All 3 parent IDs cached → only SR list called
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-should-delete", CSPResourceStateActive)
+			m.expectSRList(srProjectID, srVpcID, srSGID, cmpSR)
+
+			_, err := m.r.HandleReconcile(ctx, sr)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.SecurityRule{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleting))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
+		})
+	})
+
+	Describe("Delete on CMP", func() {
+		It("transitions to Deleting+Synchronizing after successful CMP delete", func() {
+			m := newSRReconcilerWithMocks(GinkgoT())
+			sr = createTestSecurityRule(ctx, "test-sr-delete-cmp", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
+			srFetch := &v1alpha1.SecurityRule{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), srFetch)).To(Succeed())
+			srFetch.Finalizers = []string{securityRuleFinalizerName}
+			Expect(k8sClient.Update(ctx, srFetch)).To(Succeed())
+			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize, "sr-id-1", srProjectID, srVpcID, srSGID, 1, time.Now())
+			Expect(k8sClient.Delete(ctx, sr)).To(Succeed())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), sr)).To(Succeed())
+
+			// All 3 parent IDs cached → only SR list called, then delete
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-delete-cmp", CSPResourceStateActive)
+			m.expectSRList(srProjectID, srVpcID, srSGID, cmpSR)
+			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
+			m.mockNetwork.EXPECT().SecurityGroupRules().Return(m.mockSRules)
+			m.mockSRules.EXPECT().Delete(mock.Anything, srProjectID, srVpcID, srSGID, "sr-id-1", mock.Anything).Return(buildDeleteResponse(http.StatusOK), nil)
+
+			_, err := m.r.HandleReconcile(ctx, sr)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.SecurityRule{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleting))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronizing))
+		})
+	})
+
+	Describe("DeletionOnCMPNotNeeded", func() {
+		It("advances to Deleting+Synchronized when CMP SecurityRule is already gone", func() {
+			m := newSRReconcilerWithMocks(GinkgoT())
+			sr = createTestSecurityRule(ctx, "test-sr-delete-not-needed", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
+			srFetch := &v1alpha1.SecurityRule{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), srFetch)).To(Succeed())
+			srFetch.Finalizers = []string{securityRuleFinalizerName}
+			Expect(k8sClient.Update(ctx, srFetch)).To(Succeed())
+			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize, "sr-id-1", srProjectID, srVpcID, srSGID, 1, time.Now())
+			Expect(k8sClient.Delete(ctx, sr)).To(Succeed())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), sr)).To(Succeed())
+
+			m.expectSRList(srProjectID, srVpcID, srSGID)
+
+			_, err := m.r.HandleReconcile(ctx, sr)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.SecurityRule{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleting))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
+		})
+	})
+
+	Describe("CMP transitory during deletion", func() {
+		It("returns LongRequeue when CMP state is Deleting", func() {
+			m := newSRReconcilerWithMocks(GinkgoT())
+			sr = createTestSecurityRule(ctx, "test-sr-deleting-transitory", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
+			srFetch := &v1alpha1.SecurityRule{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), srFetch)).To(Succeed())
+			srFetch.Finalizers = []string{securityRuleFinalizerName}
+			Expect(k8sClient.Update(ctx, srFetch)).To(Succeed())
+			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronizing, "sr-id-1", srProjectID, srVpcID, srSGID, 1, time.Now())
+			Expect(k8sClient.Delete(ctx, sr)).To(Succeed())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), sr)).To(Succeed())
+
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-deleting-transitory", CSPResourceStateDeleting)
+			m.expectSRList(srProjectID, srVpcID, srSGID, cmpSR)
+
+			result, err := m.r.HandleReconcile(ctx, sr)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
+		})
+	})
+
+	Describe("Deletion accomplished", func() {
+		It("transitions to Deleted phase when CMP SecurityRule is gone", func() {
+			m := newSRReconcilerWithMocks(GinkgoT())
+			sr = createTestSecurityRule(ctx, "test-sr-deletion-accomplished", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
+			srFetch := &v1alpha1.SecurityRule{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), srFetch)).To(Succeed())
+			srFetch.Finalizers = []string{securityRuleFinalizerName}
+			Expect(k8sClient.Update(ctx, srFetch)).To(Succeed())
+			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronized, "sr-id-1", srProjectID, srVpcID, srSGID, 1, time.Now())
+			Expect(k8sClient.Delete(ctx, sr)).To(Succeed())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), sr)).To(Succeed())
+
+			m.expectSRList(srProjectID, srVpcID, srSGID)
+
+			_, err := m.r.HandleReconcile(ctx, sr)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.SecurityRule{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleted))
+		})
+	})
+
+	Describe("IsInError", func() {
+		It("transitions to Failed+Synchronized when CMP state is Failed", func() {
+			m := newSRReconcilerWithMocks(GinkgoT())
+			sr = createTestSecurityRule(ctx, "test-sr-in-error", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
+			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "sr-id-1", srProjectID, srVpcID, srSGID, 1, time.Now())
+
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-in-error", CSPResourceStateFailed)
+			m.expectProjectList(srProjectID, srProjectName)
+			m.expectVpcList(srProjectID, srVpcID, srVpcName)
+			m.expectSGList(srProjectID, srVpcID, srSGID, srSGName)
+			m.expectSRList(srProjectID, srVpcID, srSGID, cmpSR)
+
+			_, err := m.r.HandleReconcile(ctx, sr)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.SecurityRule{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
+		})
+	})
+
+	Describe("Phase timeout", func() {
+		It("transitions to Failed when stuck in transitory phase too long", func() {
+			m := newSRReconcilerWithMocks(GinkgoT())
+			sr = createTestSecurityRule(ctx, "test-sr-timeout", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
+			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, "", srProjectID, srVpcID, srSGID,
+				0, time.Now().Add(-(reconciler.MaxPhaseTimeout + time.Minute)))
+
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-timeout", CSPResourceStateActive)
+			m.expectProjectList(srProjectID, srProjectName)
+			m.expectVpcList(srProjectID, srVpcID, srVpcName)
+			m.expectSGList(srProjectID, srVpcID, srSGID, srSGName)
+			m.expectSRList(srProjectID, srVpcID, srSGID, cmpSR)
+
+			_, err := m.r.HandleReconcile(ctx, sr)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.SecurityRule{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+		})
+	})
+
+	Describe("Project not found yet", func() {
+		It("returns LongRequeue when project doesn't exist in CMP yet", func() {
+			m := newSRReconcilerWithMocks(GinkgoT())
+			sr = createTestSecurityRule(ctx, "test-sr-no-project", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
+
+			m.mockAruba.EXPECT().FromProject().Return(m.mockProject)
+			m.mockProject.EXPECT().List(mock.Anything, mock.Anything).Return(buildProjectList(), nil)
+
+			result, err := m.r.HandleReconcile(ctx, sr)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
+		})
+	})
+
+	Describe("VPC not found yet", func() {
+		It("returns LongRequeue when VPC doesn't exist in CMP yet", func() {
+			m := newSRReconcilerWithMocks(GinkgoT())
+			sr = createTestSecurityRule(ctx, "test-sr-no-vpc", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
+
+			m.expectProjectList(srProjectID, srProjectName)
+
+			emptyVpcList := &arubatypes.Response[arubatypes.VPCList]{
+				Data:       &arubatypes.VPCList{},
+				StatusCode: http.StatusOK,
+			}
+			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
+			m.mockNetwork.EXPECT().VPCs().Return(m.mockVPCs)
+			m.mockVPCs.EXPECT().List(mock.Anything, srProjectID, mock.Anything).Return(emptyVpcList, nil)
+
+			result, err := m.r.HandleReconcile(ctx, sr)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
+		})
+	})
+
+	Describe("SecurityGroup not found yet", func() {
+		It("returns LongRequeue when SecurityGroup doesn't exist in CMP yet", func() {
+			m := newSRReconcilerWithMocks(GinkgoT())
+			sr = createTestSecurityRule(ctx, "test-sr-no-sg", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
+
+			m.expectProjectList(srProjectID, srProjectName)
+			m.expectVpcList(srProjectID, srVpcID, srVpcName)
+
+			emptySGList := &arubatypes.Response[arubatypes.SecurityGroupList]{
+				Data:       &arubatypes.SecurityGroupList{},
+				StatusCode: http.StatusOK,
+			}
+			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
+			m.mockNetwork.EXPECT().SecurityGroups().Return(m.mockSecGrps)
+			m.mockSecGrps.EXPECT().List(mock.Anything, srProjectID, srVpcID, mock.Anything).Return(emptySGList, nil)
+
+			result, err := m.r.HandleReconcile(ctx, sr)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
+		})
+	})
+
+	Describe("ProjectID, VpcID, and SecurityGroupID stamped in status", func() {
+		It("stamps all three parent IDs on status when first transitioning", func() {
+			m := newSRReconcilerWithMocks(GinkgoT())
+			sr = createTestSecurityRule(ctx, "test-sr-ids-stamped", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
+
+			m.expectProjectList(srProjectID, srProjectName)
+			m.expectVpcList(srProjectID, srVpcID, srVpcName)
+			m.expectSGList(srProjectID, srVpcID, srSGID, srSGName)
+			m.expectSRList(srProjectID, srVpcID, srSGID)
+
+			_, err := m.r.HandleReconcile(ctx, sr)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.SecurityRule{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), updated)).To(Succeed())
+			Expect(updated.Status.ProjectID).To(Equal(srProjectID))
+			Expect(updated.Status.VpcID).To(Equal(srVpcID))
+			Expect(updated.Status.SecurityGroupID).To(Equal(srSGID))
+		})
+	})
+
+	Describe("CMP error handling", func() {
+		DescribeTable("CMP create fails — preserves Creating+ShallSynchronize, surfaces error in condition",
+			func(name string, statusCode int, expectedRequeue time.Duration) {
+				m := newSRReconcilerWithMocks(GinkgoT())
+				sr = createTestSecurityRule(ctx, name, defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
+				setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, "", "", "", "", 0, time.Now())
+
+				m.expectProjectList(srProjectID, srProjectName)
+				m.expectVpcList(srProjectID, srVpcID, srVpcName)
+				m.expectSGList(srProjectID, srVpcID, srSGID, srSGName)
+				m.expectSRList(srProjectID, srVpcID, srSGID)
+				m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
+				m.mockNetwork.EXPECT().SecurityGroupRules().Return(m.mockSRules)
+				m.mockSRules.EXPECT().Create(mock.Anything, srProjectID, srVpcID, srSGID, mock.Anything, mock.Anything).Return(buildSRCRUDResponse(statusCode), nil)
+
+				result, err := m.r.HandleReconcile(ctx, sr)
+				Expect(err).To(Succeed())
+				Expect(result.RequeueAfter).To(Equal(expectedRequeue))
+
+				updated := &v1alpha1.SecurityRule{}
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), updated)).To(Succeed())
+				Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
+				cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
+				Expect(cond).NotTo(BeNil())
+				Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
+				Expect(cond.Message).To(ContainSubstring("ERROR"))
+			},
+			Entry("4xx → LongRequeueAfter, no phase change", "sr-cmp-err-create-400", http.StatusBadRequest, reconciler.LongRequeueAfter),
+			Entry("5xx → ShortRequeueAfter, no phase change", "sr-cmp-err-create-500", http.StatusInternalServerError, reconciler.ShortRequeueAfter),
+		)
+	})
+})

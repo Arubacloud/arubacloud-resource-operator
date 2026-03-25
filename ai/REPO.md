@@ -8,7 +8,6 @@
 | `cmd/main.go` | Operator entry point and manager setup |
 | `internal/reconciler/` | Base reconciliation loop |
 | `internal/controller/` | Resource-specific controllers and transition system |
-| `internal/client/` | Aruba CMP API client wrappers |
 | `internal/config/` | Config loading from ConfigMap + Secret |
 | `internal/mocks/` | Mockery-generated mocks (do not edit manually) |
 | `internal/util/` | Shared utilities |
@@ -48,13 +47,6 @@ One file per concern:
 - `transition_actions.go` — all reusable status-patch helpers: `setPhaseAndCondition`, `setActiveAndSetID`, `setFailedOnTimeout`, and `kubeSetErrorMessageOnCMPError`. These use `retry.RetryOnConflict` internally and are the canonical way to write back Kubernetes status.
 - `cmp_error.go` — CMP error types: `CMPError` struct, `CMPErrorCategory` enum (Semantic/Technical), `cmpTransportError` and `cmpResponseError` constructors, `cmpCheckResponse[T]` generic response checker, and `CMPErrorIsSemantic`/`CMPErrorIsTechnical` helpers.
 - `common.go` — CMP (Aruba-side) state constants (`CSPResourceState*`) and `AssesCSPResourceStateNature` for classifying CMP states as Transitory/Final.
-
-### `internal/client/`
-
-Thin wrappers around the `github.com/Arubacloud/sdk-go` Aruba client, one file per resource type (`arubaproject_client.go`, `arubablockstorage_client.go`, etc.).
-
-- `helper.go` — `HelperClient` (holds HTTP client + K8s client + gateway URL + bearer token) and `DoAPIRequest`, which handles serialisation, auth headers, expected-status logic, and `ApiError` extraction. DELETE treats 404/405 as success (CMP quirk).
-- `oauth_client.go` / `vault_client.go` — authentication implementations for single-tenant (OAuth2 client credentials) and multi-tenant (Vault AppRole) modes.
 
 ### `internal/config/`
 

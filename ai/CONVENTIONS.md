@@ -269,18 +269,3 @@ func withPhase(p v1alpha1.ResourcePhase) projectOpt { ... }
 func newTestProject(opts ...projectOpt) *v1alpha1.Project { ... }
 ```
 
-## CMP client patterns
-
-One client file per resource type in `internal/client/`. Methods follow:
-
-```go
-func (c *HelperClient) Create<Resource>(ctx context.Context, req <Resource>Request) (*<Resource>Response, error) {
-    var resp <Resource>Response
-    if err := c.DoAPIRequest(ctx, "POST", "/<endpoint>", req, &resp); err != nil {
-        return nil, err
-    }
-    return &resp, nil
-}
-```
-
-All HTTP details (auth headers, JSON marshalling, error extraction) are handled by `DoAPIRequest` — never bypass it.

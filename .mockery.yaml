@@ -22,6 +22,7 @@ packages:
       VPCsClient:
       ElasticIPsClient:
       ComputeClient:
+      CloudServersClient:
       KeyPairsClient:
       SubnetsClient:
       SecurityGroupsClient:

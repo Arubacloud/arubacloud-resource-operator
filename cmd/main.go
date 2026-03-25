@@ -239,12 +239,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	// // Setup CloudServer controller
-	// cloudServerReconciler := controller.NewCloudServerReconciler(baseReconciler)
-	// if err = cloudServerReconciler.SetupWithManager(mgr); err != nil {
-	// 	setupLog.Error(err, "unable to create controller", "controller", "CloudServer")
-	// 	os.Exit(1)
-	// }
+	// Setup CloudServer controller
+	cloudServerReconciler := controller.NewCloudServerReconciler(baseReconciler)
+	if err = cloudServerReconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "CloudServer")
+		os.Exit(1)
+	}
 
 	// Setup KeyPair controller
 	keyPairReconciler := controller.NewKeyPairReconciler(baseReconciler)

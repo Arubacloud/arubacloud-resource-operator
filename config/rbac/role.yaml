@@ -17,6 +17,7 @@ rules:
   - arubacloud.com
   resources:
   - blockstorages
+  - cloudservers
   - elasticips
   - keypairs
   - securitygroups
@@ -35,6 +36,7 @@ rules:
   - arubacloud.com
   resources:
   - blockstorages/finalizers
+  - cloudservers/finalizers
   - elasticips/finalizers
   - keypairs/finalizers
   - securitygroups/finalizers
@@ -47,6 +49,7 @@ rules:
   - arubacloud.com
   resources:
   - blockstorages/status
+  - cloudservers/status
   - elasticips/status
   - keypairs/status
   - securitygroups/status

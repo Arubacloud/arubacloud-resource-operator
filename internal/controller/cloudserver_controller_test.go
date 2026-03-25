@@ -1,578 +1,963 @@
-// /*
-// Copyright 2025.
+/*
+Copyright 2025.
 
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-//     http://www.apache.org/licenses/LICENSE-2.0
+    http://www.apache.org/licenses/LICENSE-2.0
 
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-// */
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package controller
 
-// import (
-// 	"context"
-// 	"fmt"
-// 	"io"
-// 	"net/http"
-// 	"strings"
+import (
+	"context"
+	"net/http"
+	"time"
 
-// 	"github.com/Arubacloud/arubacloud-resource-operator/internal/client"
-// 	"github.com/Arubacloud/arubacloud-resource-operator/internal/mocks"
-// 	. "github.com/onsi/ginkgo/v2"
-// 	. "github.com/onsi/gomega"
-// 	"github.com/stretchr/testify/mock"
-// 	"k8s.io/apimachinery/pkg/api/errors"
-// 	"k8s.io/apimachinery/pkg/types"
-// 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	"github.com/stretchr/testify/mock"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
-// 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
+	arubamocks "github.com/Arubacloud/arubacloud-resource-operator/internal/mocks/aruba"
+	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
+	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
+)
 
-// 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
-// 	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
-// )
+// --- Builder helpers ---
 
-// var _ = Describe("CloudServer Controller", func() {
-// 	Context("When reconciling a resource", func() {
-// 		const resourceName = "test-cloud-server"
+func buildCSResponse(id, name, state string) *arubatypes.CloudServerResponse {
+	flavorName := "gp1.small"
+	return &arubatypes.CloudServerResponse{
+		Metadata: arubatypes.ResourceMetadataResponse{
+			ID:   &id,
+			Name: &name,
+		},
+		Properties: arubatypes.CloudServerPropertiesResult{
+			Zone:   "ITBG",
+			Flavor: arubatypes.CloudServerFlavorResponse{Name: flavorName},
+		},
+		Status: arubatypes.ResourceStatus{
+			State: &state,
+		},
+	}
+}
 
-// 		ctx := context.Background()
+func buildCSList(responses ...*arubatypes.CloudServerResponse) *arubatypes.Response[arubatypes.CloudServerList] {
+	list := &arubatypes.CloudServerList{}
+	for _, r := range responses {
+		list.Values = append(list.Values, *r)
+		list.Total++
+	}
+	return &arubatypes.Response[arubatypes.CloudServerList]{
+		Data:       list,
+		StatusCode: http.StatusOK,
+	}
+}
 
-// 		typeNamespacedName := types.NamespacedName{
-// 			Name:      resourceName,
-// 			Namespace: "default",
-// 		}
-// 		arubaCloudServer := &v1alpha1.CloudServer{}
+func buildCSCRUDResponse(statusCode int) *arubatypes.Response[arubatypes.CloudServerResponse] {
+	return &arubatypes.Response[arubatypes.CloudServerResponse]{
+		StatusCode: statusCode,
+	}
+}
 
-// 		BeforeEach(func() {
-// 			By("creating the custom resource for the Kind CloudServer")
-// 			err := k8sClient.Get(ctx, typeNamespacedName, arubaCloudServer)
-// 			if err != nil && errors.IsNotFound(err) {
-// 				resource := &v1alpha1.CloudServer{
-// 					ObjectMeta: metav1.ObjectMeta{
-// 						Name:      resourceName,
-// 						Namespace: "default",
-// 					},
-// 					Spec: v1alpha1.CloudServerSpec{
-// 						Tenant: "test-tenant",
-// 						Tags:   []string{"sample-tag"},
-// 						Location: v1alpha1.Location{
-// 							Value: "ITBG-Bergamo",
-// 						},
-// 						DataCenter: "ITBG-1",
-// 						VpcReference: v1alpha1.ResourceReference{
-// 							Name:      "aruba-resource-v5",
-// 							Namespace: "default",
-// 						},
-// 						VpcPreset:  false,
-// 						FlavorName: "CSO4A8",
-// 						SubnetReferences: []v1alpha1.ResourceReference{
-// 							{Namespace: "default"},
-// 						},
-// 						SecurityGroupReferences: []v1alpha1.ResourceReference{
-// 							{Namespace: "default"},
-// 						},
-// 						KeyPairReference: v1alpha1.ResourceReference{
-// 							Name:      "aruba-resource-v5",
-// 							Namespace: "default",
-// 						},
-// 						BootVolumeReference: v1alpha1.ResourceReference{
-// 							Name:      "aruba-resource-v5",
-// 							Namespace: "default",
-// 						},
-// 						ProjectReference: v1alpha1.ResourceReference{
-// 							Name:      "aruba-resource-v5",
-// 							Namespace: "default",
-// 						},
-// 					},
-// 				}
-// 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
-// 			}
-// 		})
+func buildProjectListForCS(projectID, projectName string) *arubatypes.Response[arubatypes.ProjectList] {
+	id := projectID
+	name := projectName
+	proj := arubatypes.ProjectResponse{
+		Metadata: arubatypes.ResourceMetadataResponse{
+			ID:   &id,
+			Name: &name,
+		},
+	}
+	list := &arubatypes.ProjectList{}
+	list.Values = append(list.Values, proj)
+	list.Total = 1
+	return &arubatypes.Response[arubatypes.ProjectList]{
+		Data:       list,
+		StatusCode: http.StatusOK,
+	}
+}
 
-// 		AfterEach(func() {
-// 			resource := &v1alpha1.CloudServer{}
-// 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
-// 			Expect(err).NotTo(HaveOccurred())
+func buildVpcListForCS(vpcID, vpcName string) *arubatypes.Response[arubatypes.VPCList] {
+	id := vpcID
+	name := vpcName
+	v := arubatypes.VPCResponse{
+		Metadata: arubatypes.ResourceMetadataResponse{
+			ID:   &id,
+			Name: &name,
+		},
+	}
+	list := &arubatypes.VPCList{}
+	list.Values = append(list.Values, v)
+	list.Total = 1
+	return &arubatypes.Response[arubatypes.VPCList]{
+		Data:       list,
+		StatusCode: http.StatusOK,
+	}
+}
 
-// 			By("Cleanup the specific resource instance CloudServer")
-// 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
-// 		})
+func buildBootVolumeListForCS(volID, volName string) *arubatypes.Response[arubatypes.BlockStorageList] {
+	id := volID
+	name := volName
+	vol := arubatypes.BlockStorageResponse{
+		Metadata: arubatypes.ResourceMetadataResponse{
+			ID:   &id,
+			Name: &name,
+		},
+	}
+	list := &arubatypes.BlockStorageList{}
+	list.Values = append(list.Values, vol)
+	list.Total = 1
+	return &arubatypes.Response[arubatypes.BlockStorageList]{
+		Data:       list,
+		StatusCode: http.StatusOK,
+	}
+}
 
-// 	})
-// })
+func buildSubnetListForCS(subnetID, subnetName string) *arubatypes.Response[arubatypes.SubnetList] {
+	id := subnetID
+	name := subnetName
+	subnet := arubatypes.SubnetResponse{
+		Metadata: arubatypes.ResourceMetadataResponse{
+			ID:   &id,
+			Name: &name,
+		},
+	}
+	list := &arubatypes.SubnetList{}
+	list.Values = append(list.Values, subnet)
+	list.Total = 1
+	return &arubatypes.Response[arubatypes.SubnetList]{
+		Data:       list,
+		StatusCode: http.StatusOK,
+	}
+}
 
-// var _ = Describe("CloudServer Controller Reconcile Method", func() {
-// 	Context("When testing reconcile phases", func() {
-// 		var (
-// 			ctx                   context.Context
-// 			cloudServerReconciler *CloudServerReconciler
-// 			arubaCloudServer      *v1alpha1.CloudServer
-// 			typeNamespacedName    types.NamespacedName
-// 		)
+func buildSGListForCS(sgID, sgName string) *arubatypes.Response[arubatypes.SecurityGroupList] {
+	id := sgID
+	name := sgName
+	sg := arubatypes.SecurityGroupResponse{
+		Metadata: arubatypes.ResourceMetadataResponse{
+			ID:   &id,
+			Name: &name,
+		},
+	}
+	list := &arubatypes.SecurityGroupList{}
+	list.Values = append(list.Values, sg)
+	list.Total = 1
+	return &arubatypes.Response[arubatypes.SecurityGroupList]{
+		Data:       list,
+		StatusCode: http.StatusOK,
+	}
+}
 
-// 		BeforeEach(func() {
-// 			ctx = context.Background()
-// 			auth := new(mocks.MockITokenManager)
-// 			auth.On("GetActiveToken", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return("token 123", nil)
-// 			auth.On("SetClientIdAndSecret", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-// 			auth.On("SetClientIdAndSecret", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+func buildKeyPairListForCS(kpID, kpName string) *arubatypes.Response[arubatypes.KeyPairListResponse] {
+	id := kpID
+	name := kpName
+	kp := arubatypes.KeyPairResponse{
+		Metadata: arubatypes.ResourceMetadataResponse{
+			ID:   &id,
+			Name: &name,
+		},
+	}
+	list := &arubatypes.KeyPairListResponse{}
+	list.Values = append(list.Values, kp)
+	list.Total = 1
+	return &arubatypes.Response[arubatypes.KeyPairListResponse]{
+		Data:       list,
+		StatusCode: http.StatusOK,
+	}
+}
 
-// 			// Create mock HTTP client that returns 200 for all requests
-// 			mockHTTPClient := new(mocks.MockHTTPClient)
-// 			mockHTTPClient.On("Do", mock.AnythingOfType("*http.Request")).Return(
-// 				&http.Response{
-// 					StatusCode: 200,
-// 					Body:       io.NopCloser(strings.NewReader(`{"success": true}`)),
-// 					Header:     make(http.Header),
-// 				}, nil)
+// --- Test fixture helpers ---
 
-// 			// Create HelperClient with mocked HTTP client
-// 			helperClient := client.NewHelperClient(k8sClient, mockHTTPClient, "https://api.example.com")
+func defaultCSSpec(projectName, vpcName, bootVolName, subnetName, sgName string) v1alpha1.CloudServerSpec {
+	return v1alpha1.CloudServerSpec{
+		Tenant:     "test-tenant",
+		Tags:       []string{"tag1"},
+		DataCenter: "ITBG",
+		FlavorName: "gp1.small",
+		Location:   v1alpha1.Location{Value: "ITBG-Bergamo"},
+		ProjectReference: v1alpha1.ResourceReference{
+			Name:      projectName,
+			Namespace: "default",
+		},
+		VpcReference: v1alpha1.ResourceReference{
+			Name:      vpcName,
+			Namespace: "default",
+		},
+		BootVolumeReference: v1alpha1.ResourceReference{
+			Name:      bootVolName,
+			Namespace: "default",
+		},
+		KeyPairReference: v1alpha1.ResourceReference{
+			Name:      csKPName,
+			Namespace: "default",
+		},
+		SubnetReferences: []v1alpha1.ResourceReference{
+			{Name: subnetName, Namespace: "default"},
+		},
+		SecurityGroupReferences: []v1alpha1.ResourceReference{
+			{Name: sgName, Namespace: "default"},
+		},
+	}
+}
 
-// 			// Create base reconciler with mock client
-// 			baseResourceReconciler := &reconciler.Reconciler{
-// 				Client:       k8sClient,
-// 				Scheme:       k8sClient.Scheme(),
-// 				TokenManager: auth,
-// 				HelperClient: helperClient,
-// 			}
+func createTestCS(ctx context.Context, name string, spec v1alpha1.CloudServerSpec) *v1alpha1.CloudServer {
+	cs := &v1alpha1.CloudServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "default",
+		},
+		Spec: spec,
+	}
+	ExpectWithOffset(1, k8sClient.Create(ctx, cs)).To(Succeed())
+	return cs
+}
 
-// 			cloudServerReconciler = &CloudServerReconciler{
-// 				Reconciler: baseResourceReconciler,
-// 			}
+func setCSStatus(
+	ctx context.Context,
+	cs *v1alpha1.CloudServer,
+	phase v1alpha1.ResourcePhase,
+	reason string,
+	resourceID, projectID, vpcID, bootVolumeID, keyPairID string,
+	subnetIDs, sgIDs []string,
+	observedGen int64,
+	conditionTime time.Time,
+) {
+	s := cs.DeepCopy()
+	Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), s)).To(Succeed())
+	s.Status.Phase = phase
+	s.Status.ResourceID = resourceID
+	s.Status.ProjectID = projectID
+	s.Status.VpcID = vpcID
+	s.Status.BootVolumeID = bootVolumeID
+	s.Status.KeyPairID = keyPairID
+	s.Status.SubnetIDs = subnetIDs
+	s.Status.SecurityGroupIDs = sgIDs
+	s.Status.ObservedGeneration = observedGen
+	if phase != "" {
+		s.Status.Conditions = []metav1.Condition{
+			{
+				Type:               string(phase),
+				Status:             metav1.ConditionTrue,
+				Reason:             reason,
+				LastTransitionTime: metav1.NewTime(conditionTime),
+				Message:            string(phase) + " " + reason + " - OK",
+			},
+		}
+	}
+	ExpectWithOffset(1, k8sClient.Status().Update(ctx, s)).To(Succeed())
+	ExpectWithOffset(1, k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
+}
 
-// 			typeNamespacedName = types.NamespacedName{
-// 				Name:      "test-reconcile-cloud-server",
-// 				Namespace: "default",
-// 			}
-// 		})
+// --- Mock setup ---
 
-// 		It("should handle object not found gracefully", func() {
-// 			By("Reconciling a non-existent resource")
-// 			result, err := cloudServerReconciler.Reconcile(ctx, reconcile.Request{
-// 				NamespacedName: types.NamespacedName{
-// 					Name:      "non-existent",
-// 					Namespace: "default",
-// 				},
-// 			})
-// 			Expect(err).NotTo(HaveOccurred())
-// 			Expect(result).To(Equal(reconcile.Result{}))
-// 		})
+type csMocks struct {
+	r              *CloudServerReconciler
+	mockAruba      *arubamocks.MockClient
+	mockProject    *arubamocks.MockProjectClient
+	mockNetwork    *arubamocks.MockNetworkClient
+	mockVPCs       *arubamocks.MockVPCsClient
+	mockSubnets    *arubamocks.MockSubnetsClient
+	mockSGs        *arubamocks.MockSecurityGroupsClient
+	mockCompute    *arubamocks.MockComputeClient
+	mockCSs        *arubamocks.MockCloudServersClient
+	mockKPs        *arubamocks.MockKeyPairsClient
+	mockStorage    *arubamocks.MockStorageClient
+	mockVolumes    *arubamocks.MockVolumesClient
+	mockElasticIPs *arubamocks.MockElasticIPsClient
+}
 
-// 		It("should initialize phase when empty", func() {
-// 			By("Creating resource with empty phase")
-// 			arubaCloudServer = &v1alpha1.CloudServer{
-// 				ObjectMeta: metav1.ObjectMeta{
-// 					Name:      typeNamespacedName.Name,
-// 					Namespace: typeNamespacedName.Namespace,
-// 				},
-// 				Spec: v1alpha1.CloudServerSpec{
-// 					Tenant: "test-tenant",
-// 					Tags:   []string{"test", "reconciliation"},
-// 					Location: v1alpha1.Location{
-// 						Value: "ITBG-Bergamo",
-// 					},
-// 					DataCenter: "ITBG-1",
-// 					VpcReference: v1alpha1.ResourceReference{
-// 						Name:      "test-vpc",
-// 						Namespace: "default",
-// 					},
-// 					VpcPreset: false,
+func newCSReconcilerWithMocks(t GinkgoTInterface) *csMocks {
+	mockAruba := arubamocks.NewMockClient(t)
+	mockProject := arubamocks.NewMockProjectClient(t)
+	mockNetwork := arubamocks.NewMockNetworkClient(t)
+	mockVPCs := arubamocks.NewMockVPCsClient(t)
+	mockSubnets := arubamocks.NewMockSubnetsClient(t)
+	mockSGs := arubamocks.NewMockSecurityGroupsClient(t)
+	mockCompute := arubamocks.NewMockComputeClient(t)
+	mockCSs := arubamocks.NewMockCloudServersClient(t)
+	mockKPs := arubamocks.NewMockKeyPairsClient(t)
+	mockStorage := arubamocks.NewMockStorageClient(t)
+	mockVolumes := arubamocks.NewMockVolumesClient(t)
+	mockElasticIPs := arubamocks.NewMockElasticIPsClient(t)
 
-// 					SubnetReferences: []v1alpha1.ResourceReference{
-// 						{Name: "test-subnet", Namespace: "default"},
-// 					},
-// 					SecurityGroupReferences: []v1alpha1.ResourceReference{
-// 						{Name: "test-sg", Namespace: "default"},
-// 					},
-// 					KeyPairReference: v1alpha1.ResourceReference{
-// 						Name:      "test-keypair",
-// 						Namespace: "default",
-// 					},
-// 					BootVolumeReference: v1alpha1.ResourceReference{
-// 						Name:      "test-boot-volume",
-// 						Namespace: "default",
-// 					},
-// 					ProjectReference: v1alpha1.ResourceReference{
-// 						Name:      "test-project",
-// 						Namespace: "default",
-// 					},
-// 				},
-// 				Status: v1alpha1.CloudServerStatus{
-// 					ResourceStatus: v1alpha1.ResourceStatus{
-// 						Phase: "",
-// 					},
-// 				},
-// 			}
-// 			Expect(k8sClient.Create(ctx, arubaCloudServer)).To(Succeed())
+	r := NewCloudServerReconciler(newTestReconciler(t, mockAruba))
 
-// 			By("Reconciling the resource")
-// 			_, err := cloudServerReconciler.Reconcile(ctx, reconcile.Request{
-// 				NamespacedName: typeNamespacedName,
-// 			})
-// 			Expect(err).NotTo(HaveOccurred())
+	return &csMocks{
+		r:              r,
+		mockAruba:      mockAruba,
+		mockProject:    mockProject,
+		mockNetwork:    mockNetwork,
+		mockVPCs:       mockVPCs,
+		mockSubnets:    mockSubnets,
+		mockSGs:        mockSGs,
+		mockCompute:    mockCompute,
+		mockCSs:        mockCSs,
+		mockKPs:        mockKPs,
+		mockStorage:    mockStorage,
+		mockVolumes:    mockVolumes,
+		mockElasticIPs: mockElasticIPs,
+	}
+}
 
-// 			By("Cleanup")
-// 			Expect(k8sClient.Delete(ctx, arubaCloudServer)).To(Succeed())
-// 		})
+// expectFullDependencies sets up all 7 dependency mock expectations plus the CloudServer list.
+// This covers the standard non-delete reconciliation for the default spec (1 subnet, 1 SG, no keypair, no elasticIP).
+func (m *csMocks) expectFullDependencies(
+	projectID, vpcID, bootVolID, subnetID, sgID, csName string,
+	cmpCSResponses ...*arubatypes.CloudServerResponse,
+) {
+	m.expectProjectList(projectID, "test-cs-project")
+	m.expectVpcList(projectID, vpcID, "test-cs-vpc")
+	m.expectBootVolumeList(projectID, bootVolID, "test-cs-bootvol")
+	m.expectSubnetList(projectID, vpcID, subnetID, "test-cs-subnet")
+	m.expectSGList(projectID, vpcID, sgID, "test-cs-sg")
+	m.expectKeyPairList(projectID, csKPID, csKPName)
+	m.expectCSList(projectID, cmpCSResponses...)
+}
 
-// 		It("should trigger delete phase when DeletionTimestamp is set", func() {
-// 			By("Creating resource in Created phase")
-// 			testName := fmt.Sprintf("test-delete-phase-cs-%d", GinkgoRandomSeed())
-// 			arubaCloudServer = &v1alpha1.CloudServer{
-// 				ObjectMeta: metav1.ObjectMeta{
-// 					Name:      testName,
-// 					Namespace: "default",
-// 				},
-// 				Spec: v1alpha1.CloudServerSpec{
-// 					Tenant: "test-tenant",
-// 					Tags:   []string{"test", "deletion"},
-// 					Location: v1alpha1.Location{
-// 						Value: "ITBG-Bergamo",
-// 					},
-// 					DataCenter: "ITBG-1",
-// 					VpcReference: v1alpha1.ResourceReference{
-// 						Name:      "test-vpc",
-// 						Namespace: "default",
-// 					},
-// 					VpcPreset: false,
-// 					SubnetReferences: []v1alpha1.ResourceReference{
-// 						{Name: "test-subnet", Namespace: "default"},
-// 					},
-// 					SecurityGroupReferences: []v1alpha1.ResourceReference{
-// 						{Name: "test-sg", Namespace: "default"},
-// 					},
-// 					KeyPairReference: v1alpha1.ResourceReference{
-// 						Name:      "test-keypair",
-// 						Namespace: "default",
-// 					},
-// 					BootVolumeReference: v1alpha1.ResourceReference{
-// 						Name:      "test-boot-volume",
-// 						Namespace: "default",
-// 					},
-// 					ProjectReference: v1alpha1.ResourceReference{
-// 						Name:      "test-project",
-// 						Namespace: "default",
-// 					},
-// 				},
-// 				Status: v1alpha1.CloudServerStatus{
-// 					ResourceStatus: v1alpha1.ResourceStatus{
-// 						Phase: v1alpha1.ResourcePhaseActive,
-// 					},
-// 				},
-// 			}
-// 			Expect(k8sClient.Create(ctx, arubaCloudServer)).To(Succeed())
+func (m *csMocks) expectProjectList(projectID, projectName string) {
+	m.mockAruba.EXPECT().FromProject().Return(m.mockProject)
+	m.mockProject.EXPECT().List(mock.Anything, mock.Anything).Return(buildProjectListForCS(projectID, projectName), nil)
+}
 
-// 			By("Setting deletion timestamp by deleting the resource")
-// 			Expect(k8sClient.Delete(ctx, arubaCloudServer)).To(Succeed())
+func (m *csMocks) expectVpcList(projectID, vpcID, vpcName string) {
+	m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
+	m.mockNetwork.EXPECT().VPCs().Return(m.mockVPCs)
+	m.mockVPCs.EXPECT().List(mock.Anything, projectID, mock.Anything).Return(buildVpcListForCS(vpcID, vpcName), nil)
+}
 
-// 			By("Reconciling the resource")
-// 			result, err := cloudServerReconciler.Reconcile(ctx, reconcile.Request{
-// 				NamespacedName: types.NamespacedName{
-// 					Name:      testName,
-// 					Namespace: "default",
-// 				},
-// 			})
+func (m *csMocks) expectBootVolumeList(projectID, volID, volName string) {
+	m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
+	m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
+	m.mockVolumes.EXPECT().List(mock.Anything, projectID, mock.Anything).Return(buildBootVolumeListForCS(volID, volName), nil)
+}
 
-// 			Expect(err).NotTo(HaveOccurred())
-// 			Expect(result).To(Equal(reconcile.Result{}))
+func (m *csMocks) expectSubnetList(projectID, vpcID, subnetID, subnetName string) {
+	m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
+	m.mockNetwork.EXPECT().Subnets().Return(m.mockSubnets)
+	m.mockSubnets.EXPECT().List(mock.Anything, projectID, vpcID, mock.Anything).Return(buildSubnetListForCS(subnetID, subnetName), nil)
+}
 
-// 			By("Verifying phase changed to Delete")
-// 			updatedCloudServer := &v1alpha1.CloudServer{}
-// 			err = k8sClient.Get(ctx, types.NamespacedName{
-// 				Name:      testName,
-// 				Namespace: "default",
-// 			}, updatedCloudServer)
-// 			if err == nil {
-// 				Expect(updatedCloudServer.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleting))
-// 			}
-// 		})
+func (m *csMocks) expectSGList(projectID, vpcID, sgID, sgName string) {
+	m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
+	m.mockNetwork.EXPECT().SecurityGroups().Return(m.mockSGs)
+	m.mockSGs.EXPECT().List(mock.Anything, projectID, vpcID, mock.Anything).Return(buildSGListForCS(sgID, sgName), nil)
+}
 
-// 		It("should not trigger delete phase when already in delete phases", func() {
-// 			deletePhases := []v1alpha1.ResourcePhase{
-// 				v1alpha1.ResourcePhaseDeleting,
-// 			}
+func (m *csMocks) expectKeyPairList(projectID, kpID, kpName string) {
+	m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
+	m.mockCompute.EXPECT().KeyPairs().Return(m.mockKPs)
+	m.mockKPs.EXPECT().List(mock.Anything, projectID, mock.Anything).Return(buildKeyPairListForCS(kpID, kpName), nil)
+}
 
-// 			for i, phase := range deletePhases {
-// 				By(fmt.Sprintf("Testing phase %s", phase))
-// 				resourceName := fmt.Sprintf("test-delete-cs-%d", i)
-// 				namespacedName := types.NamespacedName{
-// 					Name:      resourceName,
-// 					Namespace: "default",
-// 				}
+func (m *csMocks) expectCSList(projectID string, responses ...*arubatypes.CloudServerResponse) {
+	m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
+	m.mockCompute.EXPECT().CloudServers().Return(m.mockCSs)
+	m.mockCSs.EXPECT().List(mock.Anything, projectID, mock.Anything).Return(buildCSList(responses...), nil)
+}
 
-// 				arubaCloudServer = &v1alpha1.CloudServer{
-// 					ObjectMeta: metav1.ObjectMeta{
-// 						Name:      resourceName,
-// 						Namespace: "default",
-// 					},
-// 					Spec: v1alpha1.CloudServerSpec{
-// 						Tenant: "test-tenant",
-// 						Tags:   []string{"test", "deletion"},
-// 						Location: v1alpha1.Location{
-// 							Value: "ITBG-Bergamo",
-// 						},
-// 						DataCenter: "ITBG-1",
-// 						VpcReference: v1alpha1.ResourceReference{
-// 							Name:      "test-vpc",
-// 							Namespace: "default",
-// 						},
-// 						VpcPreset:  false,
-// 						FlavorName: "b5052a43-60d0-4041-9d5d-448d30c48f0c",
-// 						SubnetReferences: []v1alpha1.ResourceReference{
-// 							{Name: "test-subnet", Namespace: "default"},
-// 						},
-// 						SecurityGroupReferences: []v1alpha1.ResourceReference{
-// 							{Name: "test-sg", Namespace: "default"},
-// 						},
-// 						KeyPairReference: v1alpha1.ResourceReference{
-// 							Name:      "test-keypair",
-// 							Namespace: "default",
-// 						},
-// 						BootVolumeReference: v1alpha1.ResourceReference{
-// 							Name:      "test-boot-volume",
-// 							Namespace: "default",
-// 						},
-// 						ProjectReference: v1alpha1.ResourceReference{
-// 							Name:      "test-project",
-// 							Namespace: "default",
-// 						},
-// 					},
-// 					Status: v1alpha1.CloudServerStatus{
-// 						ResourceStatus: v1alpha1.ResourceStatus{
-// 							Phase: phase,
-// 						},
-// 					},
-// 				}
-// 				Expect(k8sClient.Create(ctx, arubaCloudServer)).To(Succeed())
+// --- Tests ---
 
-// 				By("Setting deletion timestamp")
-// 				Expect(k8sClient.Delete(ctx, arubaCloudServer)).To(Succeed())
+const (
+	csProjectName = "test-cs-project"
+	csProjectID   = "cs-proj-id-1"
+	csVpcName     = "test-cs-vpc"
+	csVpcID       = "cs-vpc-id-1"
+	csBootVolName = "test-cs-bootvol"
+	csBootVolID   = "cs-bootvol-id-1"
+	csSubnetName  = "test-cs-subnet"
+	csSubnetID    = "cs-subnet-id-1"
+	csSGName      = "test-cs-sg"
+	csSGID        = "cs-sg-id-1"
+	csKPName      = "test-cs-keypair"
+	csKPID        = "cs-kp-id-1"
+)
 
-// 				By("Reconciling should handle the specific delete phase")
-// 				_, err := cloudServerReconciler.Reconcile(ctx, reconcile.Request{
-// 					NamespacedName: namespacedName,
-// 				})
-// 				Expect(err).NotTo(HaveOccurred())
-// 			}
-// 		})
+var _ = Describe("CloudServerReconciler", func() {
+	var (
+		ctx context.Context
+		cs  *v1alpha1.CloudServer
+	)
 
-// 		It("should handle different phases correctly", func() {
-// 			phases := []v1alpha1.ResourcePhase{
-// 				v1alpha1.ResourcePhaseCreating,
-// 				v1alpha1.ResourcePhaseProvisioning,
-// 				v1alpha1.ResourcePhaseUpdating,
-// 				v1alpha1.ResourcePhaseActive,
-// 			}
+	BeforeEach(func() {
+		ctx = context.Background()
+	})
 
-// 			for i, phase := range phases {
-// 				By(fmt.Sprintf("Testing phase %s", phase))
-// 				resourceName := fmt.Sprintf("test-phase-cs-%d", i)
-// 				namespacedName := types.NamespacedName{
-// 					Name:      resourceName,
-// 					Namespace: "default",
-// 				}
+	AfterEach(func() {
+		if cs != nil {
+			s := &v1alpha1.CloudServer{}
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), s); err == nil {
+				s.Finalizers = nil
+				_ = k8sClient.Update(ctx, s)
+				_ = k8sClient.Delete(ctx, s)
+			}
+			cs = nil
+		}
+	})
 
-// 				arubaCloudServer = &v1alpha1.CloudServer{
-// 					ObjectMeta: metav1.ObjectMeta{
-// 						Name:      resourceName,
-// 						Namespace: "default",
-// 					},
-// 					Spec: v1alpha1.CloudServerSpec{
-// 						Tenant: "test-tenant",
-// 						Tags:   []string{"test", "phases"},
-// 						Location: v1alpha1.Location{
-// 							Value: "ITBG-Bergamo",
-// 						},
-// 						DataCenter: "ITBG-1",
-// 						VpcReference: v1alpha1.ResourceReference{
-// 							Name:      "test-vpc",
-// 							Namespace: "default",
-// 						},
-// 						VpcPreset:  false,
-// 						FlavorName: "b5052a43-60d0-4041-9d5d-448d30c48f0c",
-// 						SubnetReferences: []v1alpha1.ResourceReference{
-// 							{Name: "test-subnet", Namespace: "default"},
-// 						},
-// 						SecurityGroupReferences: []v1alpha1.ResourceReference{
-// 							{Name: "test-sg", Namespace: "default"},
-// 						},
-// 						KeyPairReference: v1alpha1.ResourceReference{
-// 							Name:      "test-keypair",
-// 							Namespace: "default",
-// 						},
-// 						BootVolumeReference: v1alpha1.ResourceReference{
-// 							Name:      "test-boot-volume",
-// 							Namespace: "default",
-// 						},
-// 						ProjectReference: v1alpha1.ResourceReference{
-// 							Name:      "test-project",
-// 							Namespace: "default",
-// 						},
-// 					},
-// 					Status: v1alpha1.CloudServerStatus{
-// 						ResourceStatus: v1alpha1.ResourceStatus{
-// 							Phase: phase,
-// 						},
-// 					},
-// 				}
-// 				Expect(k8sClient.Create(ctx, arubaCloudServer)).To(Succeed())
+	Describe("First reconciliation", func() {
+		It("transitions to Creating+ShallSynchronize when CMP has no CloudServer", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+			cs = createTestCS(ctx, "test-cs-first", defaultCSSpec(csProjectName, csVpcName, csBootVolName, csSubnetName, csSGName))
 
-// 				By("Reconciling the resource")
-// 				// Should handle phases correctly with the implementation, even with nil ArubaClient
-// 				_, err := cloudServerReconciler.Reconcile(ctx, reconcile.Request{
-// 					NamespacedName: namespacedName,
-// 				})
-// 				// Note: Some phases may return errors due to nil ArubaClient, which is expected in tests
-// 				if phase == v1alpha1.ResourcePhaseActive {
-// 					Expect(err).NotTo(HaveOccurred())
-// 				}
-// 				// For other phases that require ArubaClient, we expect errors but test should not panic
+			m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, "test-cs-first")
 
-// 				By("Cleanup")
-// 				Expect(k8sClient.Delete(ctx, arubaCloudServer)).To(Succeed())
-// 			}
-// 		})
+			_, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
 
-// 		It("should test Next method", func() {
-// 			By("Creating resource")
-// 			testName := fmt.Sprintf("test-next-method-cs-%d", GinkgoRandomSeed())
-// 			arubaCloudServer = &v1alpha1.CloudServer{
-// 				ObjectMeta: metav1.ObjectMeta{
-// 					Name:      testName,
-// 					Namespace: "default",
-// 				},
-// 				Spec: v1alpha1.CloudServerSpec{
-// 					Tenant: "test-tenant",
-// 					Tags:   []string{"test", "next-method"},
-// 					Location: v1alpha1.Location{
-// 						Value: "ITBG-Bergamo",
-// 					},
-// 					DataCenter: "ITBG-1",
-// 					VpcReference: v1alpha1.ResourceReference{
-// 						Name:      "test-vpc",
-// 						Namespace: "default",
-// 					},
-// 					VpcPreset:  false,
-// 					FlavorName: "b5052a43-60d0-4041-9d5d-448d30c48f0c",
-// 					SubnetReferences: []v1alpha1.ResourceReference{
-// 						{Name: "test-subnet", Namespace: "default"},
-// 					},
-// 					SecurityGroupReferences: []v1alpha1.ResourceReference{
-// 						{Name: "test-sg", Namespace: "default"},
-// 					},
-// 					KeyPairReference: v1alpha1.ResourceReference{
-// 						Name:      "test-keypair",
-// 						Namespace: "default",
-// 					},
-// 					BootVolumeReference: v1alpha1.ResourceReference{
-// 						Name:      "test-boot-volume",
-// 						Namespace: "default",
-// 					},
-// 					ProjectReference: v1alpha1.ResourceReference{
-// 						Name:      "test-project",
-// 						Namespace: "default",
-// 					},
-// 				},
-// 				Status: v1alpha1.CloudServerStatus{
-// 					ResourceStatus: v1alpha1.ResourceStatus{
-// 						Phase: v1alpha1.ResourcePhaseActive,
-// 					},
-// 				},
-// 			}
-// 			Expect(k8sClient.Create(ctx, arubaCloudServer)).To(Succeed())
+			updated := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
+		})
+	})
 
-// 			By("Cleanup")
-// 			Expect(k8sClient.Delete(ctx, arubaCloudServer)).To(Succeed())
-// 		})
+	Describe("Create on CMP", func() {
+		It("transitions to Creating+Synchronizing after successful CMP create", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+			cs = createTestCS(ctx, "test-cs-create-cmp", defaultCSSpec(csProjectName, csVpcName, csBootVolName, csSubnetName, csSGName))
+			setCSStatus(ctx, cs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize,
+				"", "", "", "", "", nil, nil, 0, time.Now())
 
-// 		It("should test getProjectID method with valid project reference", func() {
-// 			By("Creating a test Project first")
-// 			projectName := fmt.Sprintf("test-ref-project-%d-%d", GinkgoRandomSeed(), GinkgoParallelProcess())
-// 			testProject := &v1alpha1.Project{
-// 				ObjectMeta: metav1.ObjectMeta{
-// 					Name:      projectName,
-// 					Namespace: "default",
-// 				},
-// 				Spec: v1alpha1.ProjectSpec{
-// 					Tenant: "test-tenant",
-// 				},
-// 			}
+			m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, "test-cs-create-cmp")
+			m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
+			m.mockCompute.EXPECT().CloudServers().Return(m.mockCSs)
+			m.mockCSs.EXPECT().Create(mock.Anything, csProjectID, mock.Anything, mock.Anything).Return(buildCSCRUDResponse(http.StatusCreated), nil)
 
-// 			// Check if project already exists, delete it first
-// 			existingProject := &v1alpha1.Project{}
-// 			err := k8sClient.Get(ctx, types.NamespacedName{Name: projectName, Namespace: "default"}, existingProject)
-// 			if err == nil {
-// 				Expect(k8sClient.Delete(ctx, existingProject)).To(Succeed())
-// 				// Wait for deletion
-// 				Eventually(func() bool {
-// 					err := k8sClient.Get(ctx, types.NamespacedName{Name: projectName, Namespace: "default"}, existingProject)
-// 					return errors.IsNotFound(err)
-// 				}).Should(BeTrue())
-// 			}
+			_, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
 
-// 			Expect(k8sClient.Create(ctx, testProject)).To(Succeed())
+			updated := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronizing))
+		})
+	})
 
-// 			By("Updating the project status with ProjectID")
-// 			testProject.Status.ResourceID = "test-project-id-12345"
-// 			Expect(k8sClient.Status().Update(ctx, testProject)).To(Succeed())
+	Describe("Waiting creation (CloudServer not yet in CMP)", func() {
+		It("returns LongRequeue when CMP has no CloudServer", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+			cs = createTestCS(ctx, "test-cs-wait-create", defaultCSSpec(csProjectName, csVpcName, csBootVolName, csSubnetName, csSGName))
+			setCSStatus(ctx, cs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing,
+				"", "", "", "", "", nil, nil, 0, time.Now())
 
-// 			By("Creating cloud server resource with project reference")
-// 			csName := fmt.Sprintf("test-get-project-id-cs-%d-%d", GinkgoRandomSeed(), GinkgoParallelProcess())
-// 			arubaCloudServer = &v1alpha1.CloudServer{
-// 				ObjectMeta: metav1.ObjectMeta{
-// 					Name:      csName,
-// 					Namespace: "default",
-// 				},
-// 				Spec: v1alpha1.CloudServerSpec{
-// 					Tenant: "test-tenant",
-// 					Location: v1alpha1.Location{
-// 						Value: "ITBG-Bergamo",
-// 					},
-// 					DataCenter: "ITBG-1",
-// 					VpcReference: v1alpha1.ResourceReference{
-// 						Name:      "test-vpc",
-// 						Namespace: "default",
-// 					},
-// 					VpcPreset:  false,
-// 					FlavorName: "b5052a43-60d0-4041-9d5d-448d30c48f0c",
-// 					SubnetReferences: []v1alpha1.ResourceReference{
-// 						{Name: "test-subnet", Namespace: "default"},
-// 					},
-// 					SecurityGroupReferences: []v1alpha1.ResourceReference{
-// 						{Name: "test-sg", Namespace: "default"},
-// 					},
-// 					KeyPairReference: v1alpha1.ResourceReference{
-// 						Name:      "test-keypair",
-// 						Namespace: "default",
-// 					},
-// 					BootVolumeReference: v1alpha1.ResourceReference{
-// 						Name:      "test-boot-volume",
-// 						Namespace: "default",
-// 					},
-// 					ProjectReference: v1alpha1.ResourceReference{
-// 						Name:      projectName,
-// 						Namespace: "default",
-// 					},
-// 				},
-// 			}
-// 			Expect(k8sClient.Create(ctx, arubaCloudServer)).To(Succeed())
+			m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, "test-cs-wait-create")
 
-// 			By("Testing getProjectID method")
-// 			projectID, err := cloudServerReconciler.GetProjectID(ctx, projectName, "default")
-// 			Expect(err).NotTo(HaveOccurred())
-// 			Expect(projectID).To(Equal("test-project-id-12345"))
+			result, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
+		})
+	})
 
-// 			By("Cleanup")
-// 			Expect(k8sClient.Delete(ctx, arubaCloudServer)).To(Succeed())
-// 			Expect(k8sClient.Delete(ctx, testProject)).To(Succeed())
-// 		})
-// 	})
-// })
+	Describe("Waiting creation (CloudServer in transitory CMP state)", func() {
+		It("returns LongRequeue when CMP state is Creating", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+			cs = createTestCS(ctx, "test-cs-wait-create-transitory", defaultCSSpec(csProjectName, csVpcName, csBootVolName, csSubnetName, csSGName))
+			setCSStatus(ctx, cs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing,
+				"", "", "", "", "", nil, nil, 0, time.Now())
+
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-wait-create-transitory", CSPResourceStateCreating)
+			m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, "test-cs-wait-create-transitory", cmpCS)
+
+			result, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
+		})
+	})
+
+	Describe("Creation confirmed on CMP", func() {
+		It("transitions to Creating+Synchronized when CMP CloudServer is active", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+			cs = createTestCS(ctx, "test-cs-creation-confirmed", defaultCSSpec(csProjectName, csVpcName, csBootVolName, csSubnetName, csSGName))
+			setCSStatus(ctx, cs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing,
+				"", "", "", "", "", nil, nil, 0, time.Now())
+
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-creation-confirmed", CSPResourceStateActive)
+			m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, "test-cs-creation-confirmed", cmpCS)
+
+			_, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
+		})
+	})
+
+	Describe("Creation accomplished", func() {
+		It("transitions to Active+Synchronized and stamps ResourceID and parent IDs", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+			cs = createTestCS(ctx, "test-cs-creation-accomplished", defaultCSSpec(csProjectName, csVpcName, csBootVolName, csSubnetName, csSGName))
+			setCSStatus(ctx, cs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronized,
+				"", "", "", "", "", nil, nil, 0, time.Now())
+
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-creation-accomplished", CSPResourceStateActive)
+			m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, "test-cs-creation-accomplished", cmpCS)
+
+			_, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseActive))
+			Expect(updated.Status.ResourceID).To(Equal("cs-id-1"))
+			Expect(updated.Status.ProjectID).To(Equal(csProjectID))
+			Expect(updated.Status.VpcID).To(Equal(csVpcID))
+			Expect(updated.Status.BootVolumeID).To(Equal(csBootVolID))
+			Expect(updated.Status.SubnetIDs).To(ConsistOf(csSubnetID))
+			Expect(updated.Status.SecurityGroupIDs).To(ConsistOf(csSGID))
+		})
+	})
+
+	Describe("HasDeniedChanges", func() {
+		It("returns LongRequeue when immutable field (flavorName) is changed", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+			cs = createTestCS(ctx, "test-cs-denied-changes", defaultCSSpec(csProjectName, csVpcName, csBootVolName, csSubnetName, csSGName))
+			setCSStatus(ctx, cs, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized,
+				"cs-id-1", csProjectID, csVpcID, csBootVolID, csKPID,
+				[]string{csSubnetID}, []string{csSGID}, 1, time.Now())
+
+			// Force generation change with different flavorName
+			csFetch := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), csFetch)).To(Succeed())
+			csFetch.Spec.FlavorName = "gp1.medium"
+			Expect(k8sClient.Update(ctx, csFetch)).To(Succeed())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
+
+			// CMP still has original flavor name "gp1.small"
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-denied-changes", CSPResourceStateActive)
+			m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, "test-cs-denied-changes", cmpCS)
+
+			result, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
+		})
+	})
+
+	Describe("SpecAlreadyInSyncWithCMP", func() {
+		It("re-stamps ObservedGeneration when spec hasn't changed", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+			cs = createTestCS(ctx, "test-cs-spec-in-sync", defaultCSSpec(csProjectName, csVpcName, csBootVolName, csSubnetName, csSGName))
+			setCSStatus(ctx, cs, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized,
+				"cs-id-1", csProjectID, csVpcID, csBootVolID, csKPID,
+				[]string{csSubnetID}, []string{csSGID}, 1, time.Now())
+
+			// Trigger generation bump with same tags
+			csFetch := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), csFetch)).To(Succeed())
+			csFetch.Spec.Tags = []string{"tag1"}
+			Expect(k8sClient.Update(ctx, csFetch)).To(Succeed())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
+
+			// CMP matches: same tags, same flavor
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-spec-in-sync", CSPResourceStateActive)
+			cmpCS.Metadata.Tags = []string{"tag1"}
+			m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, "test-cs-spec-in-sync", cmpCS)
+
+			_, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseActive))
+			Expect(updated.Status.ObservedGeneration).To(Equal(cs.Generation))
+		})
+	})
+
+	Describe("ShouldBeUpdated", func() {
+		It("transitions to Updating+ShallSynchronize when tags differ", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+			cs = createTestCS(ctx, "test-cs-should-update", defaultCSSpec(csProjectName, csVpcName, csBootVolName, csSubnetName, csSGName))
+			setCSStatus(ctx, cs, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized,
+				"cs-id-1", csProjectID, csVpcID, csBootVolID, csKPID,
+				[]string{csSubnetID}, []string{csSGID}, 1, time.Now())
+
+			// Change tags to trigger update
+			csFetch := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), csFetch)).To(Succeed())
+			csFetch.Spec.Tags = []string{"tag1", "tag2"}
+			Expect(k8sClient.Update(ctx, csFetch)).To(Succeed())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
+
+			// CMP has old tags
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-should-update", CSPResourceStateActive)
+			cmpCS.Metadata.Tags = []string{"tag1"}
+			m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, "test-cs-should-update", cmpCS)
+
+			_, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseUpdating))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseUpdating))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
+		})
+	})
+
+	Describe("Update on CMP", func() {
+		It("transitions to Updating+Synchronizing after successful CMP update", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+			cs = createTestCS(ctx, "test-cs-update-cmp", defaultCSSpec(csProjectName, csVpcName, csBootVolName, csSubnetName, csSGName))
+			setCSStatus(ctx, cs, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize,
+				"cs-id-1", csProjectID, csVpcID, csBootVolID, csKPID,
+				[]string{csSubnetID}, []string{csSGID}, 1, time.Now())
+
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-update-cmp", CSPResourceStateActive)
+			m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, "test-cs-update-cmp", cmpCS)
+			m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
+			m.mockCompute.EXPECT().CloudServers().Return(m.mockCSs)
+			m.mockCSs.EXPECT().Update(mock.Anything, csProjectID, "cs-id-1", mock.Anything, mock.Anything).Return(buildCSCRUDResponse(http.StatusOK), nil)
+
+			_, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseUpdating))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseUpdating))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronizing))
+		})
+	})
+
+	Describe("Should delete", func() {
+		It("transitions to Deleting+ShallSynchronize when deletion is requested on Active CloudServer", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+			cs = createTestCS(ctx, "test-cs-should-delete", defaultCSSpec(csProjectName, csVpcName, csBootVolName, csSubnetName, csSGName))
+			csFetch := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), csFetch)).To(Succeed())
+			csFetch.Finalizers = []string{cloudServerFinalizerName}
+			Expect(k8sClient.Update(ctx, csFetch)).To(Succeed())
+			setCSStatus(ctx, cs, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized,
+				"cs-id-1", csProjectID, csVpcID, csBootVolID, csKPID,
+				[]string{csSubnetID}, []string{csSGID}, 1, time.Now())
+			Expect(k8sClient.Delete(ctx, cs)).To(Succeed())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
+
+			// During deletion, cached IDs are used — only CS list is called
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-should-delete", CSPResourceStateActive)
+			m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
+			m.mockCompute.EXPECT().CloudServers().Return(m.mockCSs)
+			m.mockCSs.EXPECT().List(mock.Anything, csProjectID, mock.Anything).Return(buildCSList(cmpCS), nil)
+
+			_, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleting))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
+		})
+	})
+
+	Describe("Delete on CMP", func() {
+		It("transitions to Deleting+Synchronizing after successful CMP delete", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+			cs = createTestCS(ctx, "test-cs-delete-cmp", defaultCSSpec(csProjectName, csVpcName, csBootVolName, csSubnetName, csSGName))
+			csFetch := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), csFetch)).To(Succeed())
+			csFetch.Finalizers = []string{cloudServerFinalizerName}
+			Expect(k8sClient.Update(ctx, csFetch)).To(Succeed())
+			setCSStatus(ctx, cs, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize,
+				"cs-id-1", csProjectID, csVpcID, csBootVolID, csKPID,
+				[]string{csSubnetID}, []string{csSGID}, 1, time.Now())
+			Expect(k8sClient.Delete(ctx, cs)).To(Succeed())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
+
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-delete-cmp", CSPResourceStateActive)
+			m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
+			m.mockCompute.EXPECT().CloudServers().Return(m.mockCSs)
+			m.mockCSs.EXPECT().List(mock.Anything, csProjectID, mock.Anything).Return(buildCSList(cmpCS), nil)
+			m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
+			m.mockCompute.EXPECT().CloudServers().Return(m.mockCSs)
+			m.mockCSs.EXPECT().Delete(mock.Anything, csProjectID, "cs-id-1", mock.Anything).Return(buildDeleteResponse(http.StatusOK), nil)
+
+			_, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleting))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronizing))
+		})
+	})
+
+	Describe("Deletion with CMP already gone", func() {
+		It("transitions directly to Deleting+Synchronized without calling CMP delete", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+			cs = createTestCS(ctx, "test-cs-delete-already-gone", defaultCSSpec(csProjectName, csVpcName, csBootVolName, csSubnetName, csSGName))
+			csFetch := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), csFetch)).To(Succeed())
+			csFetch.Finalizers = []string{cloudServerFinalizerName}
+			Expect(k8sClient.Update(ctx, csFetch)).To(Succeed())
+			setCSStatus(ctx, cs, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize,
+				"cs-id-1", csProjectID, csVpcID, csBootVolID, csKPID,
+				[]string{csSubnetID}, []string{csSGID}, 1, time.Now())
+			Expect(k8sClient.Delete(ctx, cs)).To(Succeed())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
+
+			// CMP returns empty list (CS already gone)
+			m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
+			m.mockCompute.EXPECT().CloudServers().Return(m.mockCSs)
+			m.mockCSs.EXPECT().List(mock.Anything, csProjectID, mock.Anything).Return(buildCSList(), nil)
+
+			_, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleting))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
+		})
+	})
+
+	Describe("Deletion accomplished", func() {
+		It("transitions to Deleted when CMP CloudServer is gone after confirmed deletion", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+			cs = createTestCS(ctx, "test-cs-deletion-accomplished", defaultCSSpec(csProjectName, csVpcName, csBootVolName, csSubnetName, csSGName))
+			csFetch := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), csFetch)).To(Succeed())
+			csFetch.Finalizers = []string{cloudServerFinalizerName}
+			Expect(k8sClient.Update(ctx, csFetch)).To(Succeed())
+			setCSStatus(ctx, cs, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronized,
+				"cs-id-1", csProjectID, csVpcID, csBootVolID, csKPID,
+				[]string{csSubnetID}, []string{csSGID}, 1, time.Now())
+			Expect(k8sClient.Delete(ctx, cs)).To(Succeed())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
+
+			m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
+			m.mockCompute.EXPECT().CloudServers().Return(m.mockCSs)
+			m.mockCSs.EXPECT().List(mock.Anything, csProjectID, mock.Anything).Return(buildCSList(), nil)
+
+			_, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleted))
+		})
+	})
+
+	Describe("Phase timeout", func() {
+		It("transitions to Failed when stuck in transitory phase too long", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+			cs = createTestCS(ctx, "test-cs-timeout", defaultCSSpec(csProjectName, csVpcName, csBootVolName, csSubnetName, csSGName))
+			setCSStatus(ctx, cs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize,
+				"", csProjectID, csVpcID, csBootVolID, "", nil, nil,
+				0, time.Now().Add(-(reconciler.MaxPhaseTimeout + time.Minute)))
+
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-timeout", CSPResourceStateActive)
+			m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, "test-cs-timeout", cmpCS)
+
+			_, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+		})
+	})
+
+	Describe("IsInError", func() {
+		It("transitions to Failed+Synchronized when CMP state is Failed", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+			cs = createTestCS(ctx, "test-cs-in-error", defaultCSSpec(csProjectName, csVpcName, csBootVolName, csSubnetName, csSGName))
+			setCSStatus(ctx, cs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing,
+				"cs-id-1", csProjectID, csVpcID, csBootVolID, csKPID,
+				[]string{csSubnetID}, []string{csSGID}, 1, time.Now())
+
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-in-error", CSPResourceStateFailed)
+			m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, "test-cs-in-error", cmpCS)
+
+			_, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
+		})
+	})
+
+	Describe("Project not found yet", func() {
+		It("returns LongRequeue when project doesn't exist in CMP yet", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+			cs = createTestCS(ctx, "test-cs-no-project", defaultCSSpec(csProjectName, csVpcName, csBootVolName, csSubnetName, csSGName))
+
+			m.mockAruba.EXPECT().FromProject().Return(m.mockProject)
+			m.mockProject.EXPECT().List(mock.Anything, mock.Anything).Return(buildProjectList(), nil)
+
+			result, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
+		})
+	})
+
+	Describe("Boot volume not found yet", func() {
+		It("returns LongRequeue when boot volume doesn't exist in CMP yet", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+			cs = createTestCS(ctx, "test-cs-no-bootvol", defaultCSSpec(csProjectName, csVpcName, csBootVolName, csSubnetName, csSGName))
+
+			m.expectProjectList(csProjectID, csProjectName)
+			m.expectVpcList(csProjectID, csVpcID, csVpcName)
+
+			emptyVolList := &arubatypes.Response[arubatypes.BlockStorageList]{
+				Data:       &arubatypes.BlockStorageList{},
+				StatusCode: http.StatusOK,
+			}
+			m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
+			m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
+			m.mockVolumes.EXPECT().List(mock.Anything, csProjectID, mock.Anything).Return(emptyVolList, nil)
+
+			result, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
+		})
+	})
+
+	Describe("Parent IDs stamped in status", func() {
+		It("stamps all parent IDs on status when first transitioning", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+			cs = createTestCS(ctx, "test-cs-ids-stamped", defaultCSSpec(csProjectName, csVpcName, csBootVolName, csSubnetName, csSGName))
+
+			m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, "test-cs-ids-stamped")
+
+			_, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
+			Expect(updated.Status.ProjectID).To(Equal(csProjectID))
+			Expect(updated.Status.VpcID).To(Equal(csVpcID))
+			Expect(updated.Status.BootVolumeID).To(Equal(csBootVolID))
+			Expect(updated.Status.SubnetIDs).To(ConsistOf(csSubnetID))
+			Expect(updated.Status.SecurityGroupIDs).To(ConsistOf(csSGID))
+		})
+	})
+
+	Describe("CMP error handling", func() {
+		DescribeTable("CMP create fails — preserves Creating+ShallSynchronize, surfaces error in condition",
+			func(name string, statusCode int, expectedRequeue time.Duration) {
+				m := newCSReconcilerWithMocks(GinkgoT())
+				cs = createTestCS(ctx, name, defaultCSSpec(csProjectName, csVpcName, csBootVolName, csSubnetName, csSGName))
+				setCSStatus(ctx, cs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize,
+					"", "", "", "", "", nil, nil, 0, time.Now())
+
+				m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, name)
+				m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
+				m.mockCompute.EXPECT().CloudServers().Return(m.mockCSs)
+				m.mockCSs.EXPECT().Create(mock.Anything, csProjectID, mock.Anything, mock.Anything).Return(buildCSCRUDResponse(statusCode), nil)
+
+				result, err := m.r.HandleReconcile(ctx, cs)
+				Expect(err).To(Succeed())
+				Expect(result.RequeueAfter).To(Equal(expectedRequeue))
+
+				updated := &v1alpha1.CloudServer{}
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
+				Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
+				cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
+				Expect(cond).NotTo(BeNil())
+				Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
+				Expect(cond.Message).To(ContainSubstring("ERROR"))
+			},
+			Entry("4xx → LongRequeueAfter, no phase change", "cs-cmp-err-create-400", http.StatusBadRequest, reconciler.LongRequeueAfter),
+			Entry("5xx → ShortRequeueAfter, no phase change", "cs-cmp-err-create-500", http.StatusInternalServerError, reconciler.ShortRequeueAfter),
+		)
+
+		DescribeTable("CMP update fails — preserves Updating+ShallSynchronize, surfaces error in condition",
+			func(name string, statusCode int, expectedRequeue time.Duration) {
+				m := newCSReconcilerWithMocks(GinkgoT())
+				cs = createTestCS(ctx, name, defaultCSSpec(csProjectName, csVpcName, csBootVolName, csSubnetName, csSGName))
+				setCSStatus(ctx, cs, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize,
+					"cs-id-1", csProjectID, csVpcID, csBootVolID, csKPID,
+					[]string{csSubnetID}, []string{csSGID}, 1, time.Now())
+
+				cmpCS := buildCSResponse("cs-id-1", name, CSPResourceStateActive)
+				m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, name, cmpCS)
+				m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
+				m.mockCompute.EXPECT().CloudServers().Return(m.mockCSs)
+				m.mockCSs.EXPECT().Update(mock.Anything, csProjectID, "cs-id-1", mock.Anything, mock.Anything).Return(buildCSCRUDResponse(statusCode), nil)
+
+				result, err := m.r.HandleReconcile(ctx, cs)
+				Expect(err).To(Succeed())
+				Expect(result.RequeueAfter).To(Equal(expectedRequeue))
+
+				updated := &v1alpha1.CloudServer{}
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
+				Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseUpdating))
+				cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseUpdating))
+				Expect(cond).NotTo(BeNil())
+				Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
+				Expect(cond.Message).To(ContainSubstring("ERROR"))
+			},
+			Entry("4xx → LongRequeueAfter, no phase change", "cs-cmp-err-update-400", http.StatusBadRequest, reconciler.LongRequeueAfter),
+			Entry("5xx → ShortRequeueAfter, no phase change", "cs-cmp-err-update-500", http.StatusInternalServerError, reconciler.ShortRequeueAfter),
+		)
+
+		DescribeTable("CMP delete fails — preserves Deleting+ShallSynchronize, surfaces error in condition",
+			func(name string, statusCode int, expectedRequeue time.Duration) {
+				m := newCSReconcilerWithMocks(GinkgoT())
+				cs = createTestCS(ctx, name, defaultCSSpec(csProjectName, csVpcName, csBootVolName, csSubnetName, csSGName))
+				csFetch := &v1alpha1.CloudServer{}
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), csFetch)).To(Succeed())
+				csFetch.Finalizers = []string{cloudServerFinalizerName}
+				Expect(k8sClient.Update(ctx, csFetch)).To(Succeed())
+				setCSStatus(ctx, cs, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize,
+					"cs-id-1", csProjectID, csVpcID, csBootVolID, csKPID,
+					[]string{csSubnetID}, []string{csSGID}, 1, time.Now())
+				Expect(k8sClient.Delete(ctx, cs)).To(Succeed())
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
+
+				cmpCS := buildCSResponse("cs-id-1", name, CSPResourceStateActive)
+				m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
+				m.mockCompute.EXPECT().CloudServers().Return(m.mockCSs)
+				m.mockCSs.EXPECT().List(mock.Anything, csProjectID, mock.Anything).Return(buildCSList(cmpCS), nil)
+				m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
+				m.mockCompute.EXPECT().CloudServers().Return(m.mockCSs)
+				m.mockCSs.EXPECT().Delete(mock.Anything, csProjectID, "cs-id-1", mock.Anything).Return(buildDeleteResponse(statusCode), nil)
+
+				result, err := m.r.HandleReconcile(ctx, cs)
+				Expect(err).To(Succeed())
+				Expect(result.RequeueAfter).To(Equal(expectedRequeue))
+
+				updated := &v1alpha1.CloudServer{}
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
+				Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleting))
+				cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
+				Expect(cond).NotTo(BeNil())
+				Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
+				Expect(cond.Message).To(ContainSubstring("ERROR"))
+			},
+			Entry("4xx → LongRequeueAfter, no phase change", "cs-cmp-err-delete-400", http.StatusBadRequest, reconciler.LongRequeueAfter),
+			Entry("5xx → ShortRequeueAfter, no phase change", "cs-cmp-err-delete-500", http.StatusInternalServerError, reconciler.ShortRequeueAfter),
+		)
+	})
+})

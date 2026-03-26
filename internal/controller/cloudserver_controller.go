@@ -114,6 +114,9 @@ func (r *CloudServerReconciler) HandleReconcile(ctx context.Context, obj reconci
 	}
 
 	isDeleting := !kubeCS.GetDeletionTimestamp().IsZero()
+	// WORKAROUND: used to gate the dependency readiness checks in resolveBootVolumeID and resolveSubnetIDs.
+	// TODO: Remove once the CMP Infra Team fixes the root cause.
+	isCreating := !isDeleting && kubeCS.Status.ResourceID == ""
 
 	// --- Resolve Project ID ---
 	prjID, result, err := r.resolveProjectID(ctx, arubaClient, kubeCS, isDeleting)
@@ -128,13 +131,13 @@ func (r *CloudServerReconciler) HandleReconcile(ctx context.Context, obj reconci
 	}
 
 	// --- Resolve Boot Volume ID ---
-	bootVolumeID, result, err := r.resolveBootVolumeID(ctx, arubaClient, kubeCS, isDeleting, prjID)
+	bootVolumeID, result, err := r.resolveBootVolumeID(ctx, arubaClient, kubeCS, isDeleting, isCreating, prjID)
 	if err != nil || result != (ctrl.Result{}) {
 		return result, err
 	}
 
 	// --- Resolve Subnet IDs ---
-	subnetIDs, result, err := r.resolveSubnetIDs(ctx, arubaClient, kubeCS, isDeleting, prjID, vpcID)
+	subnetIDs, result, err := r.resolveSubnetIDs(ctx, arubaClient, kubeCS, isDeleting, isCreating, prjID, vpcID)
 	if err != nil || result != (ctrl.Result{}) {
 		return result, err
 	}
@@ -312,6 +315,9 @@ func (r *CloudServerReconciler) resolveBootVolumeID(
 	arubaClient aruba.Client,
 	kubeCS *v1alpha1.CloudServer,
 	isDeleting bool,
+	// WORKAROUND: isCreating gates the readiness check below.
+	// TODO: remove once CMP Infra Team fixes the root cause.
+	isCreating bool,
 	prjID string,
 ) (string, ctrl.Result, error) {
 	if isDeleting && kubeCS.Status.BootVolumeID != "" {
@@ -349,6 +355,21 @@ func (r *CloudServerReconciler) resolveBootVolumeID(
 		return "", ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
 	}
 
+	// WORKAROUND: CMP bug causes CloudServer creation to stall when the boot volume is not yet
+	// ready. Wait for the volume to reach a final CMP state before proceeding with the create.
+	// TODO: Remove this block once the CMP Infra Team fixes the root cause.
+	if isCreating {
+		stateNature := AssesCSPResourceStateNature(&cmpVolList.Data.Values[0].Status)
+		if stateNature != CSPResourceStateNatureFinal {
+			state := "<nil>"
+			if cmpVolList.Data.Values[0].Status.State != nil {
+				state = *cmpVolList.Data.Values[0].Status.State
+			}
+			log.FromContext(ctx).V(1).Info("boot volume not ready on CMP, requeuing", "volumeName", volName, "cmpState", state)
+			return "", ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
+		}
+	}
+
 	volID := *(cmpVolList.Data.Values[0].Metadata.ID)
 	if kubeCS.Status.BootVolumeID != "" && kubeCS.Status.BootVolumeID != volID {
 		return "", ctrl.Result{}, fmt.Errorf(
@@ -364,6 +385,9 @@ func (r *CloudServerReconciler) resolveSubnetIDs(
 	arubaClient aruba.Client,
 	kubeCS *v1alpha1.CloudServer,
 	isDeleting bool,
+	// WORKAROUND: isCreating gates the readiness check below.
+	// TODO: remove once CMP Infra Team fixes the root cause.
+	isCreating bool,
 	prjID, vpcID string,
 ) ([]string, ctrl.Result, error) {
 	if isDeleting && len(kubeCS.Status.SubnetIDs) > 0 {
@@ -397,6 +421,22 @@ func (r *CloudServerReconciler) resolveSubnetIDs(
 			log.FromContext(ctx).V(1).Info("subnet not found on CMP, requeuing", "subnetName", ref.Name)
 			return nil, ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
 		}
+
+		// WORKAROUND: CMP bug causes CloudServer creation to stall when a subnet is not yet
+		// ready. Wait for the subnet to reach a final CMP state before proceeding with the create.
+		// TODO: Remove this block once the CMP Infra Team fixes the root cause.
+		if isCreating {
+			stateNature := AssesCSPResourceStateNature(&cmpList.Data.Values[0].Status)
+			if stateNature != CSPResourceStateNatureFinal {
+				state := "<nil>"
+				if cmpList.Data.Values[0].Status.State != nil {
+					state = *cmpList.Data.Values[0].Status.State
+				}
+				log.FromContext(ctx).V(1).Info("subnet not ready on CMP, requeuing", "subnetName", ref.Name, "cmpState", state)
+				return nil, ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
+			}
+		}
+
 		ids = append(ids, *(cmpList.Data.Values[0].Metadata.ID))
 	}
 	return ids, ctrl.Result{}, nil

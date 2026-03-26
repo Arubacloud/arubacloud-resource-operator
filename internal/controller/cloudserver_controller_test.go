@@ -21,16 +21,18 @@ import (
 	"net/http"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
 	"github.com/stretchr/testify/mock"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
+
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
 	arubamocks "github.com/Arubacloud/arubacloud-resource-operator/internal/mocks/aruba"
 	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
-	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 // --- Builder helpers ---
@@ -107,12 +109,21 @@ func buildVpcListForCS(vpcID, vpcName string) *arubatypes.Response[arubatypes.VP
 }
 
 func buildBootVolumeListForCS(volID, volName string) *arubatypes.Response[arubatypes.BlockStorageList] {
+	return buildBootVolumeListForCSWithState(volID, volName, CSPResourceStateActive)
+}
+
+// WORKAROUND: used to test the dependency readiness check.
+// TODO: remove once the CMP Infra Team fixes the root cause.
+func buildBootVolumeListForCSWithState(volID, volName, state string) *arubatypes.Response[arubatypes.BlockStorageList] {
 	id := volID
 	name := volName
 	vol := arubatypes.BlockStorageResponse{
 		Metadata: arubatypes.ResourceMetadataResponse{
 			ID:   &id,
 			Name: &name,
+		},
+		Status: arubatypes.ResourceStatus{
+			State: &state,
 		},
 	}
 	list := &arubatypes.BlockStorageList{}
@@ -125,12 +136,21 @@ func buildBootVolumeListForCS(volID, volName string) *arubatypes.Response[arubat
 }
 
 func buildSubnetListForCS(subnetID, subnetName string) *arubatypes.Response[arubatypes.SubnetList] {
+	return buildSubnetListForCSWithState(subnetID, subnetName, CSPResourceStateActive)
+}
+
+// WORKAROUND: used to test the dependency readiness check.
+// TODO: remove once the CMP Infra Team fixes the root cause.
+func buildSubnetListForCSWithState(subnetID, subnetName, state string) *arubatypes.Response[arubatypes.SubnetList] {
 	id := subnetID
 	name := subnetName
 	subnet := arubatypes.SubnetResponse{
 		Metadata: arubatypes.ResourceMetadataResponse{
 			ID:   &id,
 			Name: &name,
+		},
+		Status: arubatypes.ResourceStatus{
+			State: &state,
 		},
 	}
 	list := &arubatypes.SubnetList{}
@@ -836,6 +856,97 @@ var _ = Describe("CloudServerReconciler", func() {
 			m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
 			m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
 			m.mockVolumes.EXPECT().List(mock.Anything, csProjectID, mock.Anything).Return(emptyVolList, nil)
+
+			result, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
+		})
+	})
+
+	// WORKAROUND: tests for the dependency readiness check.
+	// TODO: remove once the CMP Infra Team fixes the root cause.
+	Describe("Boot volume not ready yet (WORKAROUND)", func() {
+		It("returns LongRequeue when boot volume is in a transitory CMP state during creation", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+			cs = createTestCS(ctx, "test-cs-bootvol-not-ready", defaultCSSpec(csProjectName, csVpcName, csBootVolName, csSubnetName, csSGName))
+
+			m.expectProjectList(csProjectID, csProjectName)
+			m.expectVpcList(csProjectID, csVpcID, csVpcName)
+			m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
+			m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
+			m.mockVolumes.EXPECT().List(mock.Anything, csProjectID, mock.Anything).
+				Return(buildBootVolumeListForCSWithState(csBootVolID, csBootVolName, CSPResourceStateInCreation), nil)
+
+			result, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
+		})
+
+		It("proceeds when boot volume is in Failed CMP state during creation (Final state, no block)", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+			cs = createTestCS(ctx, "test-cs-bootvol-failed", defaultCSSpec(csProjectName, csVpcName, csBootVolName, csSubnetName, csSGName))
+
+			m.expectProjectList(csProjectID, csProjectName)
+			m.expectVpcList(csProjectID, csVpcID, csVpcName)
+			m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
+			m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
+			m.mockVolumes.EXPECT().List(mock.Anything, csProjectID, mock.Anything).
+				Return(buildBootVolumeListForCSWithState(csBootVolID, csBootVolName, CSPResourceStateFailed), nil)
+			m.expectSubnetList(csProjectID, csVpcID, csSubnetID, csSubnetName)
+			m.expectSGList(csProjectID, csVpcID, csSGID, csSGName)
+			m.expectKeyPairList(csProjectID, csKPID, csKPName)
+			m.expectCSList(csProjectID)
+
+			_, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
+		})
+
+		It("does not block when boot volume is in transitory state during an update (not creation)", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+			cs = createTestCS(ctx, "test-cs-bootvol-update-no-block", defaultCSSpec(csProjectName, csVpcName, csBootVolName, csSubnetName, csSGName))
+			setCSStatus(ctx, cs, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized,
+				"cs-id-1", csProjectID, csVpcID, csBootVolID, csKPID,
+				[]string{csSubnetID}, []string{csSGID}, 1, time.Now())
+
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-bootvol-update-no-block", CSPResourceStateActive)
+			m.expectProjectList(csProjectID, csProjectName)
+			m.expectVpcList(csProjectID, csVpcID, csVpcName)
+			m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
+			m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
+			m.mockVolumes.EXPECT().List(mock.Anything, csProjectID, mock.Anything).
+				Return(buildBootVolumeListForCSWithState(csBootVolID, csBootVolName, CSPResourceStateInCreation), nil)
+			m.expectSubnetList(csProjectID, csVpcID, csSubnetID, csSubnetName)
+			m.expectSGList(csProjectID, csVpcID, csSGID, csSGName)
+			m.expectKeyPairList(csProjectID, csKPID, csKPName)
+			m.expectCSList(csProjectID, cmpCS)
+
+			_, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseActive))
+		})
+	})
+
+	// WORKAROUND: tests for the dependency readiness check; remove once the CMP Infra Team
+	// fixes the root cause (see ai/plan/server_wait_resources.md).
+	Describe("Subnet not ready yet (WORKAROUND)", func() {
+		It("returns LongRequeue when subnet is in a transitory CMP state during creation", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+			cs = createTestCS(ctx, "test-cs-subnet-not-ready", defaultCSSpec(csProjectName, csVpcName, csBootVolName, csSubnetName, csSGName))
+
+			m.expectProjectList(csProjectID, csProjectName)
+			m.expectVpcList(csProjectID, csVpcID, csVpcName)
+			m.expectBootVolumeList(csProjectID, csBootVolID, csBootVolName)
+			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
+			m.mockNetwork.EXPECT().Subnets().Return(m.mockSubnets)
+			m.mockSubnets.EXPECT().List(mock.Anything, csProjectID, csVpcID, mock.Anything).
+				Return(buildSubnetListForCSWithState(csSubnetID, csSubnetName, CSPResourceStateCreating), nil)
 
 			result, err := m.r.HandleReconcile(ctx, cs)
 			Expect(err).To(Succeed())

@@ -1,7 +1,8 @@
+---
 apiVersion: arubacloud.com/v1alpha1
 kind: SecurityRule
 metadata:
-  name: __NAME__
+  name: egress-__NAME__
   namespace: __NAMESPACE__
 spec:
   tenant: __TENANT__
@@ -13,6 +14,34 @@ spec:
   protocol: TCP
   port: '80-90'
   direction: Egress
+  target:
+    kind: Ip
+    value: '0.0.0.0/0'
+  securityGroupReference:
+    name: __NAME__
+    namespace: __NAMESPACE__
+  vpcReference:
+    name: __NAME__
+    namespace: __NAMESPACE__
+  projectReference:
+    name: __NAME__
+    namespace: __NAMESPACE__
+---
+apiVersion: arubacloud.com/v1alpha1
+kind: SecurityRule
+metadata:
+  name: ingress-__NAME__
+  namespace: __NAMESPACE__
+spec:
+  tenant: __TENANT__
+  tags:
+    - tag-1
+    - tag-2
+  location:
+    value: ITBG-Bergamo
+  protocol: TCP
+  port: '80-90'
+  direction: Ingress
   target:
     kind: Ip
     value: '0.0.0.0/0'

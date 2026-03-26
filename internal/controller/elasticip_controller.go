@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net/http"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -87,6 +88,24 @@ func (r *ElasticIpReconciler) HandleReconcile(ctx context.Context, obj reconcile
 
 	if kubeEip.Spec.ProjectReference.Name == "" {
 		return ctrl.Result{}, fmt.Errorf("project reference is not valid")
+	}
+
+	if kubeEip.GetDeletionTimestamp().IsZero() {
+		kubeProject := &v1alpha1.Project{}
+		if err := resolveOwnerObject(ctx, r.Client, kubeEip.Spec.ProjectReference, kubeEip.Namespace, kubeProject); err != nil {
+			if !apierrors.IsNotFound(err) {
+				return ctrl.Result{}, fmt.Errorf("resolving parent project for owner reference: %w", err)
+			}
+			logger.V(1).Info("parent project not found for owner reference setup, skipping", "projectName", kubeEip.Spec.ProjectReference.Name)
+		} else {
+			requeue, err := ensureOwnerReference(ctx, r.Client, r.Scheme, kubeProject, kubeEip)
+			if err != nil {
+				return ctrl.Result{}, fmt.Errorf("setting owner reference on elasticip: %w", err)
+			}
+			if requeue {
+				return ctrl.Result{RequeueAfter: reconciler.ShortRequeueAfter}, nil
+			}
+		}
 	}
 
 	eipName, projectName := kubeEip.Name, kubeEip.Spec.ProjectReference.Name

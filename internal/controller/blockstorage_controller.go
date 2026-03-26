@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net/http"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -76,6 +77,7 @@ func (r *BlockStorageReconciler) Finalizer() string {
 	return blockStorageFinalizerName
 }
 
+//nolint:gocyclo // complexity is intentional to maintain locality of behavior
 func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconciler.ResourceObject) (ctrl.Result, error) {
 	kubeBlockStorage, ok := obj.(*v1alpha1.BlockStorage)
 	if !ok {
@@ -92,6 +94,24 @@ func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconc
 
 	if kubeBlockStorage.Spec.ProjectReference.Name == "" {
 		return ctrl.Result{}, fmt.Errorf("project reference is not valid")
+	}
+
+	if kubeBlockStorage.GetDeletionTimestamp().IsZero() {
+		kubeProject := &v1alpha1.Project{}
+		if err := resolveOwnerObject(ctx, r.Client, kubeBlockStorage.Spec.ProjectReference, kubeBlockStorage.Namespace, kubeProject); err != nil {
+			if !apierrors.IsNotFound(err) {
+				return ctrl.Result{}, fmt.Errorf("resolving parent project for owner reference: %w", err)
+			}
+			logger.V(1).Info("parent project not found for owner reference setup, skipping", "projectName", kubeBlockStorage.Spec.ProjectReference.Name)
+		} else {
+			requeue, err := ensureOwnerReference(ctx, r.Client, r.Scheme, kubeProject, kubeBlockStorage)
+			if err != nil {
+				return ctrl.Result{}, fmt.Errorf("setting owner reference on blockstorage: %w", err)
+			}
+			if requeue {
+				return ctrl.Result{RequeueAfter: reconciler.ShortRequeueAfter}, nil
+			}
+		}
 	}
 
 	blockStorageName, projectName := kubeBlockStorage.Name, kubeBlockStorage.Spec.ProjectReference.Name

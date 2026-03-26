@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net/http"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/util/retry"
@@ -90,6 +91,24 @@ func (r *KeyPairReconciler) HandleReconcile(ctx context.Context, obj reconciler.
 	}
 	if kubeKp.Spec.ProjectReference.Name == "" {
 		return ctrl.Result{}, fmt.Errorf("project reference is not valid")
+	}
+
+	if kubeKp.GetDeletionTimestamp().IsZero() {
+		kubeProject := &v1alpha1.Project{}
+		if err := resolveOwnerObject(ctx, r.Client, kubeKp.Spec.ProjectReference, kubeKp.Namespace, kubeProject); err != nil {
+			if !apierrors.IsNotFound(err) {
+				return ctrl.Result{}, fmt.Errorf("resolving parent project for owner reference: %w", err)
+			}
+			logger.V(1).Info("parent project not found for owner reference setup, skipping", "projectName", kubeKp.Spec.ProjectReference.Name)
+		} else {
+			requeue, err := ensureOwnerReference(ctx, r.Client, r.Scheme, kubeProject, kubeKp)
+			if err != nil {
+				return ctrl.Result{}, fmt.Errorf("setting owner reference on keypair: %w", err)
+			}
+			if requeue {
+				return ctrl.Result{RequeueAfter: reconciler.ShortRequeueAfter}, nil
+			}
+		}
 	}
 
 	kpName, projectName := kubeKp.Name, kubeKp.Spec.ProjectReference.Name

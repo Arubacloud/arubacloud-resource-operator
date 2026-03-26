@@ -52,7 +52,8 @@ List every transition the `TransitionSet` will contain, in evaluation order (top
 | 0 | `PhaseTimedOut` | `kubePhaseTimedOut` | `AlwaysTrue` | `kubeSetFailedOnTimeout` | — | — | — | `NoRequeue` | `NoRequeueButIgnoreError` | Safety net: move to Failed if stuck in transitory phase > MaxPhaseTimeout |
 | 1 | `ShouldBeDeleted` | `kubeShouldDelete` | `cmp<Resource>IsFinal` | `kubeMarkToDelete` | — | — | — | `ShortRequeue` | `NoRequeueButIgnoreError` | DeletionTimestamp set + Active → mark Deleting+ShallSynchronize |
 | 2 | `ShouldDeleteTimedOut` | `kubeShouldDeleteTimedOut` | `AlwaysTrue` | `kubeMarkToDelete` | — | — | — | `ShortRequeue` | `NoRequeueButIgnoreError` | Timed-out resource with DeletionTimestamp → enter deletion flow |
-| 3 | `ShouldBeDeletedOnCMP` | `kubeShouldBeDeletedOnCMP` | `cmp<Resource>Exists` | — | `cmpDelete` | `kubeMarkDeleting` | — | `ShortRequeue` | `LongRequeueAndIgnoreError` | Dispatch CMP delete call |
+| 2b *(parent controllers only)* | `WaitingChildrenDeletion` | `kubeShouldBeDeletedOnCMP` + owned K8s children still exist | `cmp<Resource>IsFinal` | `kube<Resource>DeleteOwnedChildren` | — | — | — | `LongRequeue` | `ShortRequeueAndIgnoreError` | Explicitly delete owned K8s children (GC cannot cascade while parent finalizer exists); long requeue until all children are gone, blocking CMP deletion |
+| 3 | `ShouldBeDeletedOnCMP` | `kubeShouldBeDeletedOnCMP` | `cmp<Resource>Exists` | — | `cmpDelete` | `kubeMarkDeleting` | `kubeSetErrorMessageOnCMPError` | `ShortRequeue` | `SmartRequeueOnError` | Dispatch CMP delete call |
 | 4 | `DeletionOnCMPNotNeeded` | `kubeShouldBeDeletedOnCMP` | `cmp<Resource>NotExists` | `kubeMarkDeletingDone` | — | — | — | `ShortRequeue` | `NoRequeueButIgnoreError` | CMP resource already gone; skip delete call |
 | 5 | `WaitingDeletionOnCMP` | `kubeWaitingDeletionOnCMP` | `cmp<Resource>Exists` | — | — | — | — | `LongRequeue` | `NoRequeueButIgnoreError` | Poll until CMP confirms deletion |
 | 6 | `DeletionConfirmedOnCMP` | `kubeWaitingDeletionOnCMP` | `cmp<Resource>NotExists` | `kubeMarkDeletingDone` | — | — | — | `ShortRequeue` | `NoRequeueButIgnoreError` | CMP gone → advance to Synchronized |
@@ -60,18 +61,20 @@ List every transition the `TransitionSet` will contain, in evaluation order (top
 | 8 | `HasDeniedChanges` *(if applicable)* | `kube<Resource>HasDeniedChanges` | `cmp<Resource>IsFinal` | _(return error)_ | — | — | — | `NoRequeue` | `LongRequeueAndIgnoreError` | Surface immutable field violations |
 | 9 | `SpecAlreadyInSyncWithCMP` | `kube<Resource>SpecInSyncWithCMP` | `cmp<Resource>Exists` | `kubeSetActiveAndSetID` | — | — | — | `NoRequeue` | `NoRequeueButIgnoreError` | Generation bumped but no real diff; re-stamp ObservedGeneration |
 | 10 | `ShouldBeUpdated` | `kube<Resource>ShouldUpdate` | `cmp<Resource>IsFinal` | `kubeMarkToUpdate` | — | — | — | `ShortRequeue` | `NoRequeueButIgnoreError` | Spec changed → mark Updating+ShallSynchronize |
-| 11 | `ShouldBeUpdatedOnCMP` | `kubeShouldBeUpdatedOnCMP` | `cmp<Resource>IsFinal` | — | `cmpUpdate` | `kubeMarkUpdating` | — | `ShortRequeue` | `LongRequeueAndIgnoreError` | Dispatch CMP update call |
+| 11 | `ShouldBeUpdatedOnCMP` | `kubeShouldBeUpdatedOnCMP` | `cmp<Resource>IsFinal` | — | `cmpUpdate` | `kubeMarkUpdating` | `kubeSetErrorMessageOnCMPError` | `ShortRequeue` | `SmartRequeueOnError` | Dispatch CMP update call |
 | 12 | `WaitingUpdateOnCMP` | `kube<Resource>WaitingUpdateOnCMP` | `cmp<Resource>IsTransitory` | — | — | — | — | `LongRequeue` | `NoRequeueButIgnoreError` | Poll until CMP settles |
 | 13 | `UpdateConfirmedOnCMP` | `kube<Resource>UpdateConfirmedOnCMP` | `cmp<Resource>IsFinal` | `kubeMarkUpdatingDone` | — | — | — | `ShortRequeue` | `NoRequeueButIgnoreError` | CMP converged → mark Updating+Synchronized |
 | 14 | `UpdateAccomplished` | `kubeUpdateAccomplished` | `cmp<Resource>IsActive` | `kubeSetActiveAndSetID` | — | — | — | `NoRequeue` | `NoRequeueButIgnoreError` | Transition back to Active |
 | 15 | `ShouldBeCreated` | `kubeIsFirstReconciliation` | `cmp<Resource>NotExists` | `kubeMarkToCreate` | — | — | — | `ShortRequeue` | `NoRequeueButIgnoreError` | First reconciliation → mark Creating+ShallSynchronize |
-| 16 | `ShouldBeCreatedInCMP` | `kubeShouldBeCreatedOnCMP` | `cmp<Resource>NotExists` | — | `cmpCreate` | `kubeMarkCreating` | — | `ShortRequeue` | `LongRequeueAndIgnoreError` | Dispatch CMP create call |
+| 16 | `ShouldBeCreatedInCMP` | `kubeShouldBeCreatedOnCMP` | `cmp<Resource>NotExists` | — | `cmpCreate` | `kubeMarkCreating` | `kubeSetErrorMessageOnCMPError` | `ShortRequeue` | `SmartRequeueOnError` | Dispatch CMP create call |
 | 17 | `WaitingCreationInCMP` | `kubeWaitingCreationInCMP` | `cmp<Resource>NotExistsOrTransitory` | — | — | — | — | `LongRequeue` | `NoRequeueButIgnoreError` | Poll until CMP resource appears |
 | 18 | `CreationConfirmedOnCMP` | `kubeWaitingCreationInCMP` | `cmp<Resource>IsActive` | `kubeMarkCreatingDone` | — | — | — | `ShortRequeue` | `NoRequeueButIgnoreError` | CMP active → mark Creating+Synchronized |
 | 19 | `CreationAccomplished` | `kubeIsCreatedOnCMP` | `cmp<Resource>IsActive` | `kubeSetActiveAndSetID` | — | — | — | `NoRequeue` | `NoRequeueButIgnoreError` | Store ResourceID, stamp ObservedGeneration, go Active |
 | 20 | `IsInError` *(if CMP has Failed state)* | `AlwaysTrue` | `cmp<Resource>IsFailed` | `kubeSetFailed` | — | — | — | `NoRequeue` | `NoRequeueButIgnoreError` | CMP-side failure → mark K8s resource Failed |
 
 > Remove rows for transitions that do not apply. Add resource-specific transitions as needed.
+> Row 2b (`WaitingChildrenDeletion`) only applies to **parent controllers** (Project, VPC, SecurityGroup). Remove it for leaf resources (BlockStorage, KeyPair, ElasticIp, Subnet, CloudServer, SecurityRule).
+> The standard `requeueOnError` for CMP-facing transitions (rows 3, 11, 16) is **`SmartRequeueOnError`** — never `LongRequeueAndIgnoreError`. See `CONVENTIONS.md` for the canonical wiring pattern.
 
 ### Alternative: update-not-supported rollback
 
@@ -113,8 +116,14 @@ Identify which pieces already exist and can be reused as-is, and which must be i
 | `setPhaseAndCondition` | KAction (helper) | `transition_actions.go` |
 | `setActiveAndSetID` | KAction (helper) | `transition_actions.go` |
 | `setFailedOnTimeout` | KAction (helper) | `transition_actions.go` |
+| `kubeSetErrorMessageOnCMPError` | KActionOnAError — surfaces CMP error details in condition without changing phase/reason; standard wiring for all CMP-facing transitions | `transition_actions.go` |
+| `hasOwnedChildren` | helper — lists namespace objects across multiple list types, filters by OwnerReference UID | `owner_reference.go` |
+| `deleteOwnedChildren` | helper — issues `c.Delete()` on each owned child not yet being deleted; used in `WaitingChildrenDeletion` kAction *(parent controllers only)* | `owner_reference.go` |
+| `resolveOwnerObject` | helper — fetches the parent K8s object by `ResourceReference` | `owner_reference.go` |
+| `ensureOwnerReference` | helper — idempotently sets `controllerutil.SetControllerReference`; returns `(needsRequeue=true, nil)` on first set | `owner_reference.go` |
 | `ShortRequeue`, `LongRequeue`, `NoRequeue` | Requeue | `transition.go` |
-| `NoRequeueButIgnoreError`, `LongRequeueAndIgnoreError` | RequeueOnError | `transition.go` |
+| `NoRequeueButIgnoreError`, `LongRequeueAndIgnoreError`, `ShortRequeueAndIgnoreError` | RequeueOnError | `transition.go` |
+| `SmartRequeueOnError` | RequeueOnError — `ShortRequeue` for technical (5xx/transport) errors, `LongRequeue` for semantic (4xx) errors; **standard wiring for all CMP-facing transitions** | `transition.go` |
 
 ### 4.2 Resource-specific components to implement
 
@@ -146,6 +155,15 @@ Identify which pieces already exist and can be reused as-is, and which must be i
 | `kubeSetFailedOnTimeout` | KAction wrapper | thin wrapper over `setFailedOnTimeout` |
 | `kubeSetFailed` *(if applicable)* | KAction wrapper | thin wrapper over `setPhaseAndCondition` for CMP-driven failures |
 
+**Additional components for parent controllers** *(only when this resource owns other K8s resources — see ownership graph in `ai/ARCHITECTURE.md`)*:
+
+| Component | Type | Notes |
+|-----------|------|-------|
+| `kube<Resource>HasOwnedChildren` | method on reconciler — closes over `r.Client`, calls `hasOwnedChildren` with all child list types; used as inline `kCondition` in `WaitingChildrenDeletion` | implement on the reconciler struct |
+| `kube<Resource>DeleteOwnedChildren` | `ActionFunc[K, A]` method on reconciler — closes over `r.Client`, calls `deleteOwnedChildren` with all child list types; used as `kAction` in `WaitingChildrenDeletion` | implement on the reconciler struct |
+
+---
+
 **Additional components for the update-not-supported rollback pattern** *(include these instead of the standard update components when the CMP has no update API)*:
 
 | Component | Type | Notes |
@@ -175,8 +193,21 @@ Work through each sub-step in order. Do not proceed to the next sub-step until t
   - `Object()`, `Finalizer()`, `Reconcile()` (delegates to base), `SetupWithManager()`
   - `HandleReconcile()`:
     1. Resolve tenant client: `arubaClient, err := r.ArubaClient(kubeObj.Spec.Tenant)` → inject into context: `ctx = context.WithValue(ctx, reconciler.ArubaClientKey, arubaClient)`
-    2. Resolve parent references (if any) → inject parent IDs into context
-    3. Fetch CMP resource → validate cardinality → pass to `ts.Run()`
+    2. Validate required spec references (return error immediately if empty)
+    3. **Set OwnerReference *(child controllers only)***: if `DeletionTimestamp.IsZero()`, call `resolveOwnerObject` to fetch the parent K8s object by `Spec.<Parent>Reference`, then `ensureOwnerReference`. If `ensureOwnerReference` returns `(true, nil)`, return `ctrl.Result{RequeueAfter: reconciler.ShortRequeueAfter}` immediately. Skip silently if the parent K8s object is not found (`apierrors.IsNotFound`). See `owner_reference.go` for the pattern used by all existing child controllers.
+    4. Resolve parent references (if any) → inject parent IDs into context
+    5. Fetch CMP resource → validate cardinality → pass to `ts.Run()`
+- [ ] **Parent controllers only** — `SetupWithManager`: register `Owns()` for each owned child type and add `delete` verb to RBAC markers for each child resource:
+  ```go
+  // +kubebuilder:rbac:groups=arubacloud.com,resources=<children>,verbs=get;list;watch;delete
+  func (r *<Resource>Reconciler) SetupWithManager(mgr ctrl.Manager) error {
+      return ctrl.NewControllerManagedBy(mgr).
+          For(&v1alpha1.<Resource>{}).
+          Owns(&v1alpha1.<Child>{}).
+          Named("<resource>").
+          Complete(r)
+  }
+  ```
 - [ ] Write tests for `HandleReconcile` covering: dependency not yet ready (requeue), CMP fetch error, cardinality error, happy path (delegates to ts).
 
 ### 5.3 TransitionSet

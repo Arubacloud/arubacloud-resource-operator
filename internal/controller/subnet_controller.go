@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net/http"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -94,6 +95,24 @@ func (r *SubnetReconciler) HandleReconcile(ctx context.Context, obj reconciler.R
 	}
 	if kubeSubnet.Spec.VpcReference.Name == "" {
 		return ctrl.Result{}, fmt.Errorf("vpc reference is not valid")
+	}
+
+	if kubeSubnet.GetDeletionTimestamp().IsZero() {
+		kubeVpc := &v1alpha1.Vpc{}
+		if err := resolveOwnerObject(ctx, r.Client, kubeSubnet.Spec.VpcReference, kubeSubnet.Namespace, kubeVpc); err != nil {
+			if !apierrors.IsNotFound(err) {
+				return ctrl.Result{}, fmt.Errorf("resolving parent vpc for owner reference: %w", err)
+			}
+			logger.V(1).Info("parent vpc not found for owner reference setup, skipping", "vpcName", kubeSubnet.Spec.VpcReference.Name)
+		} else {
+			requeue, err := ensureOwnerReference(ctx, r.Client, r.Scheme, kubeVpc, kubeSubnet)
+			if err != nil {
+				return ctrl.Result{}, fmt.Errorf("setting owner reference on subnet: %w", err)
+			}
+			if requeue {
+				return ctrl.Result{RequeueAfter: reconciler.ShortRequeueAfter}, nil
+			}
+		}
 	}
 
 	subnetName := kubeSubnet.Name

@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net/http"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -111,6 +112,24 @@ func (r *CloudServerReconciler) HandleReconcile(ctx context.Context, obj reconci
 	}
 	if len(kubeCS.Spec.SecurityGroupReferences) == 0 {
 		return ctrl.Result{}, fmt.Errorf("at least one security group reference is required")
+	}
+
+	if kubeCS.GetDeletionTimestamp().IsZero() {
+		kubeProject := &v1alpha1.Project{}
+		if err := resolveOwnerObject(ctx, r.Client, kubeCS.Spec.ProjectReference, kubeCS.Namespace, kubeProject); err != nil {
+			if !apierrors.IsNotFound(err) {
+				return ctrl.Result{}, fmt.Errorf("resolving parent project for owner reference: %w", err)
+			}
+			logger.V(1).Info("parent project not found for owner reference setup, skipping", "projectName", kubeCS.Spec.ProjectReference.Name)
+		} else {
+			requeue, err := ensureOwnerReference(ctx, r.Client, r.Scheme, kubeProject, kubeCS)
+			if err != nil {
+				return ctrl.Result{}, fmt.Errorf("setting owner reference on cloudserver: %w", err)
+			}
+			if requeue {
+				return ctrl.Result{RequeueAfter: reconciler.ShortRequeueAfter}, nil
+			}
+		}
 	}
 
 	isDeleting := !kubeCS.GetDeletionTimestamp().IsZero()

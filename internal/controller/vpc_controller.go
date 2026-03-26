@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net/http"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -57,6 +58,8 @@ func NewVpcReconciler(baseReconciler *reconciler.Reconciler) *VpcReconciler {
 // +kubebuilder:rbac:groups=arubacloud.com,resources=vpcs/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=arubacloud.com,resources=vpcs/finalizers,verbs=update
 // +kubebuilder:rbac:groups=arubacloud.com,resources=projects,verbs=get;list;watch
+// +kubebuilder:rbac:groups=arubacloud.com,resources=subnets,verbs=get;list;watch;delete
+// +kubebuilder:rbac:groups=arubacloud.com,resources=securitygroups,verbs=get;list;watch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 
@@ -89,6 +92,26 @@ func (r *VpcReconciler) HandleReconcile(ctx context.Context, obj reconciler.Reso
 
 	if kubeVpc.Spec.ProjectReference.Name == "" {
 		return ctrl.Result{}, fmt.Errorf("project reference is not valid")
+	}
+
+	// Set OwnerReference to Project (skipped during deletion — the resource is going away).
+	if kubeVpc.GetDeletionTimestamp().IsZero() {
+		kubeProject := &v1alpha1.Project{}
+		if err := resolveOwnerObject(ctx, r.Client, kubeVpc.Spec.ProjectReference, kubeVpc.Namespace, kubeProject); err != nil {
+			if !apierrors.IsNotFound(err) {
+				return ctrl.Result{}, fmt.Errorf("resolving parent project for owner reference: %w", err)
+			}
+			logger.V(1).Info("parent project not found for owner reference setup, skipping",
+				"projectName", kubeVpc.Spec.ProjectReference.Name)
+		} else {
+			requeue, err := ensureOwnerReference(ctx, r.Client, r.Scheme, kubeProject, kubeVpc)
+			if err != nil {
+				return ctrl.Result{}, fmt.Errorf("setting owner reference on vpc: %w", err)
+			}
+			if requeue {
+				return ctrl.Result{RequeueAfter: reconciler.ShortRequeueAfter}, nil
+			}
+		}
 	}
 
 	vpcName, projectName := kubeVpc.Name, kubeVpc.Spec.ProjectReference.Name
@@ -177,6 +200,31 @@ func (r *VpcReconciler) HandleReconcile(ctx context.Context, obj reconciler.Reso
 	return r.ts.Run(ctx, kubeVpc, cmpVpc)
 }
 
+// kubeVpcHasOwnedChildren returns true when any Kubernetes resource directly owned
+// by the VPC still exists. Used by the WaitingChildrenDeletion transition.
+func (r *VpcReconciler) kubeVpcHasOwnedChildren(k *v1alpha1.Vpc, _ *arubatypes.VPCResponse) bool {
+	has, err := hasOwnedChildren(context.Background(), r.Client, k,
+		&v1alpha1.SubnetList{},
+		&v1alpha1.SecurityGroupList{},
+	)
+	if err != nil {
+		ctrl.Log.Error(err, "checking owned children for vpc", "vpc", k.GetName())
+		return true // conservative: assume children exist on error
+	}
+	return has
+}
+
+// kubeVpcDeleteOwnedChildren deletes all K8s children of the VPC that have not yet
+// received a deletionTimestamp. Called by the WaitingChildrenDeletion action because
+// the K8s GC only cascade-deletes children after the owner is fully removed from etcd,
+// which cannot happen while the VPC finalizer is present.
+func (r *VpcReconciler) kubeVpcDeleteOwnedChildren(ctx context.Context, k *v1alpha1.Vpc, _ *arubatypes.VPCResponse) error {
+	return deleteOwnedChildren(ctx, r.Client, k,
+		&v1alpha1.SubnetList{},
+		&v1alpha1.SecurityGroupList{},
+	)
+}
+
 // Transition Set Builder
 
 func (r *VpcReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Vpc, *arubatypes.VPCResponse] {
@@ -215,7 +263,21 @@ func (r *VpcReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Vpc, *arubat
 		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Vpc, *arubatypes.VPCResponse],
 	})
 
-	// 3. ShouldBeDeletedOnCMP
+	// 3. WaitingChildrenDeletion — block CMP delete until all owned K8s children are gone.
+	// The kAction explicitly deletes children because the K8s GC only cascades after the
+	// owner is fully removed from etcd (impossible while the VPC finalizer is present).
+	ts.Add(&AbstractTransition[*v1alpha1.Vpc, *arubatypes.VPCResponse]{
+		name: "WaitingChildrenDeletion",
+		kCondition: func(k *v1alpha1.Vpc, a *arubatypes.VPCResponse) bool {
+			return kubeShouldBeDeletedOnCMP(k, a) && r.kubeVpcHasOwnedChildren(k, a)
+		},
+		aCondition:     cmpVpcIsFinal,
+		kAction:        r.kubeVpcDeleteOwnedChildren,
+		requeue:        LongRequeue[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		requeueOnError: ShortRequeueAndIgnoreError[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+	})
+
+	// 4. ShouldBeDeletedOnCMP
 	ts.Add(&AbstractTransition[*v1alpha1.Vpc, *arubatypes.VPCResponse]{
 		name:              "ShouldBeDeletedOnCMP",
 		kCondition:        kubeShouldBeDeletedOnCMP[*v1alpha1.Vpc, *arubatypes.VPCResponse],
@@ -227,7 +289,7 @@ func (r *VpcReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Vpc, *arubat
 		requeueOnError:    SmartRequeueOnError[*v1alpha1.Vpc, *arubatypes.VPCResponse],
 	})
 
-	// 4. DeletionOnCMPNotNeeded — resource marked for deletion but CMP resource doesn't exist; skip CMP delete
+	// 5. DeletionOnCMPNotNeeded — resource marked for deletion but CMP resource doesn't exist; skip CMP delete
 	ts.Add(&AbstractTransition[*v1alpha1.Vpc, *arubatypes.VPCResponse]{
 		name:           "DeletionOnCMPNotNeeded",
 		kCondition:     kubeShouldBeDeletedOnCMP[*v1alpha1.Vpc, *arubatypes.VPCResponse],
@@ -237,7 +299,7 @@ func (r *VpcReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Vpc, *arubat
 		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Vpc, *arubatypes.VPCResponse],
 	})
 
-	// 5. WaitingDeletionOnCMP
+	// 6. WaitingDeletionOnCMP
 	ts.Add(&AbstractTransition[*v1alpha1.Vpc, *arubatypes.VPCResponse]{
 		name:           "WaitingDeletionOnCMP",
 		kCondition:     kubeWaitingDeletionOnCMP[*v1alpha1.Vpc, *arubatypes.VPCResponse],
@@ -246,7 +308,7 @@ func (r *VpcReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Vpc, *arubat
 		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Vpc, *arubatypes.VPCResponse],
 	})
 
-	// 6. DeletionConfirmedOnCMP
+	// 7. DeletionConfirmedOnCMP
 	ts.Add(&AbstractTransition[*v1alpha1.Vpc, *arubatypes.VPCResponse]{
 		name:           "DeletionConfirmedOnCMP",
 		kCondition:     kubeWaitingDeletionOnCMP[*v1alpha1.Vpc, *arubatypes.VPCResponse],
@@ -256,7 +318,7 @@ func (r *VpcReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Vpc, *arubat
 		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Vpc, *arubatypes.VPCResponse],
 	})
 
-	// 7. DeletionAccomplished
+	// 8. DeletionAccomplished
 	ts.Add(&AbstractTransition[*v1alpha1.Vpc, *arubatypes.VPCResponse]{
 		name:           "DeletionAccomplished",
 		kCondition:     kubeDeletionAccomplished[*v1alpha1.Vpc, *arubatypes.VPCResponse],
@@ -668,6 +730,8 @@ func cmpVpcRequestFromKube(kubeVpc *v1alpha1.Vpc) *arubatypes.VPCRequest {
 func (r *VpcReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.Vpc{}).
+		Owns(&v1alpha1.Subnet{}).
+		Owns(&v1alpha1.SecurityGroup{}).
 		Named("vpc").
 		Complete(r)
 }

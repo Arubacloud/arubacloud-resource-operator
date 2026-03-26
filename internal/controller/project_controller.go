@@ -32,6 +32,38 @@ import (
 	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
 )
 
+// kubeProjectHasOwnedChildren returns true when any Kubernetes resource directly owned
+// by the project still exists. Used by the WaitingChildrenDeletion transition to prevent
+// CMP deletion before all child CMP resources have been cleaned up.
+func (r *ProjectReconciler) kubeProjectHasOwnedChildren(k *v1alpha1.Project, _ *arubatypes.ProjectResponse) bool {
+	has, err := hasOwnedChildren(context.Background(), r.Client, k,
+		&v1alpha1.VpcList{},
+		&v1alpha1.BlockStorageList{},
+		&v1alpha1.KeyPairList{},
+		&v1alpha1.ElasticIpList{},
+		&v1alpha1.CloudServerList{},
+	)
+	if err != nil {
+		ctrl.Log.Error(err, "checking owned children for project", "project", k.GetName())
+		return true // conservative: assume children exist on error
+	}
+	return has
+}
+
+// kubeProjectDeleteOwnedChildren deletes all K8s children of the project that have not
+// yet received a deletionTimestamp. Called by the WaitingChildrenDeletion action because
+// the K8s GC only cascade-deletes children after the owner is fully removed from etcd,
+// which cannot happen while the project finalizer is present.
+func (r *ProjectReconciler) kubeProjectDeleteOwnedChildren(ctx context.Context, k *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
+	return deleteOwnedChildren(ctx, r.Client, k,
+		&v1alpha1.VpcList{},
+		&v1alpha1.BlockStorageList{},
+		&v1alpha1.KeyPairList{},
+		&v1alpha1.ElasticIpList{},
+		&v1alpha1.CloudServerList{},
+	)
+}
+
 const (
 	projectFinalizerName = "project.arubacloud.com/finalizer"
 )
@@ -57,6 +89,10 @@ func NewProjectReconciler(baseReconciler *reconciler.Reconciler) *ProjectReconci
 // +kubebuilder:rbac:groups=arubacloud.com,resources=blockstorages/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=arubacloud.com,resources=blockstorages/finalizers,verbs=update
 // +kubebuilder:rbac:groups=arubacloud.com,resources=projects,verbs=get;list;watch
+// +kubebuilder:rbac:groups=arubacloud.com,resources=vpcs,verbs=get;list;watch;delete
+// +kubebuilder:rbac:groups=arubacloud.com,resources=cloudservers,verbs=get;list;watch;delete
+// +kubebuilder:rbac:groups=arubacloud.com,resources=keypairs,verbs=get;list;watch;delete
+// +kubebuilder:rbac:groups=arubacloud.com,resources=elasticips,verbs=get;list;watch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 
@@ -154,6 +190,23 @@ func (r *ProjectReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Project,
 			kAction:        r.kubeMarkToDelete,
 			requeue:        ShortRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
 			requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+		},
+	)
+
+	// WaitingChildrenDeletion — block CMP delete until all owned K8s children are gone,
+	// preventing the CMP API from rejecting the project deletion due to existing child resources.
+	// The kAction explicitly deletes children because the K8s GC only cascades after the
+	// owner is fully removed from etcd (impossible while the project finalizer is present).
+	ts.Add(
+		&AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+			name: "WaitingChildrenDeletion",
+			kCondition: func(k *v1alpha1.Project, a *arubatypes.ProjectResponse) bool {
+				return kubeShouldBeDeletedOnCMP(k, a) && r.kubeProjectHasOwnedChildren(k, a)
+			},
+			aCondition:     cmpProjectExists,
+			kAction:        r.kubeProjectDeleteOwnedChildren,
+			requeue:        LongRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			requeueOnError: ShortRequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 		},
 	)
 
@@ -541,6 +594,11 @@ func cmpProjectRequestFromCMP(cmpProj *arubatypes.ProjectResponse) *arubatypes.P
 func (r *ProjectReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.Project{}).
+		Owns(&v1alpha1.Vpc{}).
+		Owns(&v1alpha1.BlockStorage{}).
+		Owns(&v1alpha1.KeyPair{}).
+		Owns(&v1alpha1.ElasticIp{}).
+		Owns(&v1alpha1.CloudServer{}).
 		Named("project").
 		Complete(r)
 }

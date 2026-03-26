@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net/http"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -106,6 +107,26 @@ func (r *SecurityRuleReconciler) HandleReconcile(ctx context.Context, obj reconc
 	}
 	if kubeSR.Spec.SecurityGroupReference.Name == "" {
 		return ctrl.Result{}, fmt.Errorf("security group reference is not valid")
+	}
+
+	// Set OwnerReference to SecurityGroup (skipped during deletion — the resource is going away).
+	if kubeSR.GetDeletionTimestamp().IsZero() {
+		kubeSG := &v1alpha1.SecurityGroup{}
+		if err := resolveOwnerObject(ctx, r.Client, kubeSR.Spec.SecurityGroupReference, kubeSR.Namespace, kubeSG); err != nil {
+			if !apierrors.IsNotFound(err) {
+				return ctrl.Result{}, fmt.Errorf("resolving parent security group for owner reference: %w", err)
+			}
+			logger.V(1).Info("parent security group not found for owner reference setup, skipping",
+				"securityGroupName", kubeSR.Spec.SecurityGroupReference.Name)
+		} else {
+			requeue, err := ensureOwnerReference(ctx, r.Client, r.Scheme, kubeSG, kubeSR)
+			if err != nil {
+				return ctrl.Result{}, fmt.Errorf("setting owner reference on security rule: %w", err)
+			}
+			if requeue {
+				return ctrl.Result{RequeueAfter: reconciler.ShortRequeueAfter}, nil
+			}
+		}
 	}
 
 	srName := kubeSR.Name

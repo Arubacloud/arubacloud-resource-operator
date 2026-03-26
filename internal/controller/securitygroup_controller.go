@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net/http"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -58,6 +59,7 @@ func NewSecurityGroupReconciler(baseReconciler *reconciler.Reconciler) *Security
 // +kubebuilder:rbac:groups=arubacloud.com,resources=securitygroups/finalizers,verbs=update
 // +kubebuilder:rbac:groups=arubacloud.com,resources=projects,verbs=get;list;watch
 // +kubebuilder:rbac:groups=arubacloud.com,resources=vpcs,verbs=get;list;watch
+// +kubebuilder:rbac:groups=arubacloud.com,resources=securityrules,verbs=get;list;watch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 
@@ -77,6 +79,7 @@ func (r *SecurityGroupReconciler) Finalizer() string {
 func (r *SecurityGroupReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.SecurityGroup{}).
+		Owns(&v1alpha1.SecurityRule{}).
 		Named("securitygroup").
 		Complete(r)
 }
@@ -101,6 +104,26 @@ func (r *SecurityGroupReconciler) HandleReconcile(ctx context.Context, obj recon
 	}
 	if kubeSG.Spec.VpcReference.Name == "" {
 		return ctrl.Result{}, fmt.Errorf("vpc reference is not valid")
+	}
+
+	// Set OwnerReference to VPC (skipped during deletion — the resource is going away).
+	if kubeSG.GetDeletionTimestamp().IsZero() {
+		kubeVpc := &v1alpha1.Vpc{}
+		if err := resolveOwnerObject(ctx, r.Client, kubeSG.Spec.VpcReference, kubeSG.Namespace, kubeVpc); err != nil {
+			if !apierrors.IsNotFound(err) {
+				return ctrl.Result{}, fmt.Errorf("resolving parent vpc for owner reference: %w", err)
+			}
+			logger.V(1).Info("parent vpc not found for owner reference setup, skipping",
+				"vpcName", kubeSG.Spec.VpcReference.Name)
+		} else {
+			requeue, err := ensureOwnerReference(ctx, r.Client, r.Scheme, kubeVpc, kubeSG)
+			if err != nil {
+				return ctrl.Result{}, fmt.Errorf("setting owner reference on security group: %w", err)
+			}
+			if requeue {
+				return ctrl.Result{RequeueAfter: reconciler.ShortRequeueAfter}, nil
+			}
+		}
 	}
 
 	sgName := kubeSG.Name
@@ -240,6 +263,29 @@ func (r *SecurityGroupReconciler) HandleReconcile(ctx context.Context, obj recon
 	return r.ts.Run(ctx, kubeSG, cmpSG)
 }
 
+// kubeSecurityGroupHasOwnedChildren returns true when any Kubernetes resource directly owned
+// by the SecurityGroup still exists. Used by the WaitingChildrenDeletion transition.
+func (r *SecurityGroupReconciler) kubeSecurityGroupHasOwnedChildren(k *v1alpha1.SecurityGroup, _ *arubatypes.SecurityGroupResponse) bool {
+	has, err := hasOwnedChildren(context.Background(), r.Client, k,
+		&v1alpha1.SecurityRuleList{},
+	)
+	if err != nil {
+		ctrl.Log.Error(err, "checking owned children for security group", "securityGroup", k.GetName())
+		return true // conservative: assume children exist on error
+	}
+	return has
+}
+
+// kubeSecurityGroupDeleteOwnedChildren deletes all K8s children of the SecurityGroup that
+// have not yet received a deletionTimestamp. Called by the WaitingChildrenDeletion action
+// because the K8s GC only cascade-deletes children after the owner is fully removed from etcd,
+// which cannot happen while the SecurityGroup finalizer is present.
+func (r *SecurityGroupReconciler) kubeSecurityGroupDeleteOwnedChildren(ctx context.Context, k *v1alpha1.SecurityGroup, _ *arubatypes.SecurityGroupResponse) error {
+	return deleteOwnedChildren(ctx, r.Client, k,
+		&v1alpha1.SecurityRuleList{},
+	)
+}
+
 // Transition Set Builder
 
 func (r *SecurityGroupReconciler) newTransitionSet() *TransitionSet[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse] {
@@ -278,7 +324,21 @@ func (r *SecurityGroupReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Se
 		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 	})
 
-	// 3. ShouldBeDeletedOnCMP
+	// 3. WaitingChildrenDeletion — block CMP delete until all owned K8s children are gone.
+	// The kAction explicitly deletes children because the K8s GC only cascades after the
+	// owner is fully removed from etcd (impossible while the SecurityGroup finalizer is present).
+	ts.Add(&AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
+		name: "WaitingChildrenDeletion",
+		kCondition: func(k *v1alpha1.SecurityGroup, a *arubatypes.SecurityGroupResponse) bool {
+			return kubeShouldBeDeletedOnCMP(k, a) && r.kubeSecurityGroupHasOwnedChildren(k, a)
+		},
+		aCondition:     cmpSecurityGroupIsFinal,
+		kAction:        r.kubeSecurityGroupDeleteOwnedChildren,
+		requeue:        LongRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		requeueOnError: ShortRequeueAndIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+	})
+
+	// 4. ShouldBeDeletedOnCMP
 	ts.Add(&AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
 		name:              "ShouldBeDeletedOnCMP",
 		kCondition:        kubeShouldBeDeletedOnCMP[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],

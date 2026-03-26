@@ -14,6 +14,7 @@ spec:
   dataCenter: ITBG-1
   bootable: true
   image: LU20-001
+  type: Standard
   projectReference:
     name: __NAME__
     namespace: __NAMESPACE__

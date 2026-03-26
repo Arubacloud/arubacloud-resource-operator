@@ -168,6 +168,8 @@ func (r *SubnetReconciler) HandleReconcile(ctx context.Context, obj reconciler.R
 				cmpVpcList.StatusCode, vpcName, projectName,
 			)
 		}
+		// TODO: Remove once CMP API name:eq() filter is fixed (issue https://jira.aruba.it/browse/DEV-66643).
+		applyNameFilterToVPCList(cmpVpcList, vpcName, logger)
 		if cmpVpcList.Data.Total == 0 && kubeSubnet.Status.VpcID != "" {
 			return ctrl.Result{}, fmt.Errorf(
 				"inconsistent data in vpc list: expected: 1, vpc not found: vpc_name: '%s', vpc_filter: '%s'", vpcName, vpcFilter,
@@ -208,6 +210,8 @@ func (r *SubnetReconciler) HandleReconcile(ctx context.Context, obj reconciler.R
 			cmpSubnetList.StatusCode, subnetName, projectName, vpcName,
 		)
 	}
+	// TODO: Remove once CMP API name:eq() filter is fixed (issue https://jira.aruba.it/browse/DEV-66643).
+	applyNameFilterToSubnetList(cmpSubnetList, subnetName, logger)
 	if !cmpSubnetList.IsError() && (cmpSubnetList.Data.Total < 0 || cmpSubnetList.Data.Total > 1) {
 		return ctrl.Result{}, fmt.Errorf(
 			"inconsistent data in subnet list: subnet_name: '%s', subnet_filter: '%s', project_name: '%s', vpc_name: '%s', instances: %d",

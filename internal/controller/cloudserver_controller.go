@@ -279,6 +279,8 @@ func (r *CloudServerReconciler) resolveVpcID(
 			cmpVpcList.StatusCode, vpcName,
 		)
 	}
+	// TODO: Remove once CMP API name:eq() filter is fixed (issue https://jira.aruba.it/browse/DEV-66643).
+	applyNameFilterToVPCList(cmpVpcList, vpcName, log.FromContext(ctx))
 	if cmpVpcList.Data.Total == 0 && kubeCS.Status.VpcID != "" {
 		return "", ctrl.Result{}, fmt.Errorf(
 			"inconsistent data: vpc not found but already recorded: vpc_name: '%s'", vpcName,
@@ -383,6 +385,8 @@ func (r *CloudServerReconciler) resolveSubnetIDs(
 				cmpList.StatusCode, ref.Name,
 			)
 		}
+		// TODO: Remove once CMP API name:eq() filter is fixed (issue https://jira.aruba.it/browse/DEV-66643).
+		applyNameFilterToSubnetList(cmpList, ref.Name, log.FromContext(ctx))
 		if cmpList.Data.Total > 1 {
 			return nil, ctrl.Result{}, fmt.Errorf(
 				"inconsistent data in subnet list: expected: 1, found: %d, subnet_name: '%s'",
@@ -424,6 +428,8 @@ func (r *CloudServerReconciler) resolveSecurityGroupIDs(
 				cmpList.StatusCode, ref.Name,
 			)
 		}
+		// TODO: Remove once CMP API name:eq() filter is fixed (issue https://jira.aruba.it/browse/DEV-66643).
+		applyNameFilterToSecurityGroupList(cmpList, ref.Name, log.FromContext(ctx))
 		if cmpList.Data.Total > 1 {
 			return nil, ctrl.Result{}, fmt.Errorf(
 				"inconsistent data in security group list: expected: 1, found: %d, sg_name: '%s'",
@@ -510,6 +516,8 @@ func (r *CloudServerReconciler) resolveElasticIpID(
 			cmpEipList.StatusCode, eipName,
 		)
 	}
+	// TODO: Remove once CMP API name:eq() filter is fixed (issue https://jira.aruba.it/browse/DEV-66643).
+	applyNameFilterToElasticIPList(cmpEipList, eipName, log.FromContext(ctx))
 	if cmpEipList.Data.Total > 1 {
 		return "", ctrl.Result{}, fmt.Errorf(
 			"inconsistent data in elastic IP list: expected: 1, found: %d, eip_name: '%s'",

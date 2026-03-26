@@ -154,6 +154,8 @@ func (r *VpcReconciler) HandleReconcile(ctx context.Context, obj reconciler.Reso
 			cmpVpcList.StatusCode, vpcName, projectName,
 		)
 	}
+	// TODO: Remove once CMP API name:eq() filter is fixed (issue https://jira.aruba.it/browse/DEV-66643).
+	applyNameFilterToVPCList(cmpVpcList, vpcName, logger)
 
 	if !cmpVpcList.IsError() && (cmpVpcList.Data.Total < 0 || cmpVpcList.Data.Total > 1) {
 		return ctrl.Result{}, fmt.Errorf(

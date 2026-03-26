@@ -182,6 +182,8 @@ func (r *SecurityRuleReconciler) HandleReconcile(ctx context.Context, obj reconc
 				cmpVpcList.StatusCode, vpcName, projectName,
 			)
 		}
+		// TODO: Remove once CMP API name:eq() filter is fixed (issue https://jira.aruba.it/browse/DEV-66643).
+		applyNameFilterToVPCList(cmpVpcList, vpcName, logger)
 		if cmpVpcList.Data.Total == 0 && kubeSR.Status.VpcID != "" {
 			return ctrl.Result{}, fmt.Errorf(
 				"inconsistent data in vpc list: expected: 1, vpc not found: vpc_name: '%s', vpc_filter: '%s'", vpcName, vpcFilter,
@@ -227,6 +229,8 @@ func (r *SecurityRuleReconciler) HandleReconcile(ctx context.Context, obj reconc
 				cmpSGList.StatusCode, sgName, projectName, vpcName,
 			)
 		}
+		// TODO: Remove once CMP API name:eq() filter is fixed (issue https://jira.aruba.it/browse/DEV-66643).
+		applyNameFilterToSecurityGroupList(cmpSGList, sgName, logger)
 		if cmpSGList.Data.Total == 0 && kubeSR.Status.SecurityGroupID != "" {
 			return ctrl.Result{}, fmt.Errorf(
 				"inconsistent data in security group list: expected: 1, sg not found: sg_name: '%s', sg_filter: '%s'", sgName, sgFilter,
@@ -267,6 +271,8 @@ func (r *SecurityRuleReconciler) HandleReconcile(ctx context.Context, obj reconc
 			cmpSRList.StatusCode, srName, projectName, vpcName, sgName,
 		)
 	}
+	// TODO: Remove once CMP API name:eq() filter is fixed (issue https://jira.aruba.it/browse/DEV-66643).
+	applyNameFilterToSecurityRuleList(cmpSRList, srName, logger)
 	if !cmpSRList.IsError() && (cmpSRList.Data.Total < 0 || cmpSRList.Data.Total > 1) {
 		return ctrl.Result{}, fmt.Errorf(
 			"inconsistent data in security rule list: sr_name: '%s', sr_filter: '%s', project_name: '%s', vpc_name: '%s', sg_name: '%s', instances: %d",

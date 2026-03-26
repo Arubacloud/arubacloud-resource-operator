@@ -152,6 +152,8 @@ func (r *ElasticIpReconciler) HandleReconcile(ctx context.Context, obj reconcile
 			cmpEipList.StatusCode, eipName, projectName,
 		)
 	}
+	// TODO: Remove once CMP API name:eq() filter is fixed (issue https://jira.aruba.it/browse/DEV-66643).
+	applyNameFilterToElasticIPList(cmpEipList, eipName, logger)
 
 	if !cmpEipList.IsError() && (cmpEipList.Data.Total < 0 || cmpEipList.Data.Total > 1) {
 		return ctrl.Result{}, fmt.Errorf(

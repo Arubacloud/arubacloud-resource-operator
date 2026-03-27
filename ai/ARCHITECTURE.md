@@ -61,7 +61,7 @@ It measures the duration of each `HandleReconcile` call (the resource-specific r
 
 | Label | Values | Source |
 |-------|--------|--------|
-| `resource_kind` | `Project`, `BlockStorage`, `CloudServer`, `ElasticIp`, `KeyPair`, `SecurityGroup`, `SecurityRule`, `Subnet`, `Vpc` | `reflect.TypeOf(obj).Elem().Name()` |
+| `resource_kind` | `Project`, `BlockStorage`, `CloudServer`, `ElasticIP`, `KeyPair`, `SecurityGroup`, `SecurityRule`, `Subnet`, `VPC` | `reflect.TypeOf(obj).Elem().Name()` |
 | `result` | `success`, `error` | Whether `HandleReconcile` returned an error |
 | `phase` | `Creating`, `Active`, `Deleting`, `Deleted`, `Failed`, etc. (or `""`) | `obj.GetResourceStatus().Phase` after `HandleReconcile` completes |
 | `reason` | `ShallSynchronize`, `Synchronizing`, `Synchronized`, `Failed` (or `""`) | Active condition's `.Reason` after `HandleReconcile` completes |
@@ -156,7 +156,7 @@ When the CMP provides no update endpoint, spec changes must be rejected and roll
   1. **Spec rollback** (object patch via `retry.RetryOnConflict`): read a fresh copy, restore mutable spec fields from the CMP response, patch the object. This produces a new `Generation`.
   2. **Set Active** (`setActiveAndSetID`): reads fresh object (capturing the new generation from step 1), stamps `ObservedGeneration`, writes `Active+Synchronized`.
 - The rollback transition uses `NoRequeue` because `setActiveAndSetID` internally stamps `ObservedGeneration` to the new generation, preventing re-entry into `ShouldBeUpdated` on the next reconcile.
-- In tests, the `UpdateRollback` test verifies that `Spec.Tags`, `Spec.Location.Value`, and `Spec.Value` (or the resource's equivalent mutable fields) are restored to the CMP response values.
+- In tests, the `UpdateRollback` test verifies that `Spec.Tags` and `Spec.Region` (or the resource's equivalent mutable fields) are restored to the CMP response values.
 
 ### 3. Creation flow
 
@@ -187,16 +187,16 @@ Resources form a containment hierarchy. Each child has exactly one controller-ow
 ```
 Project (root)
   ├── VPC            (Spec.ProjectReference)
-  │   ├── Subnet           (Spec.VpcReference)
-  │   └── SecurityGroup    (Spec.VpcReference)
+  │   ├── Subnet           (Spec.VPCReference)
+  │   └── SecurityGroup    (Spec.VPCReference)
   │       └── SecurityRule (Spec.SecurityGroupReference)
   ├── BlockStorage   (Spec.ProjectReference)
   ├── KeyPair        (Spec.ProjectReference)
-  ├── ElasticIp      (Spec.ProjectReference)
+  ├── ElasticIP      (Spec.ProjectReference)
   └── CloudServer    (Spec.ProjectReference)
 ```
 
-CloudServer _uses_ VPC, Subnet, SecurityGroup, KeyPair, BlockStorage, and ElasticIp, but its **owner** is Project. Deleting a VPC does **not** cascade to CloudServer.
+CloudServer _uses_ VPC, Subnet, SecurityGroup, KeyPair, BlockStorage, and ElasticIP, but its **owner** is Project. Deleting a VPC does **not** cascade to CloudServer.
 
 ### Two-Layer Ownership Model
 

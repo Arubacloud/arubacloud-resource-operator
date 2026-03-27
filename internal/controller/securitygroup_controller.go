@@ -110,19 +110,19 @@ func (r *SecurityGroupReconciler) HandleReconcile(ctx context.Context, obj recon
 	if kubeSG.Spec.ProjectReference.Name == "" {
 		return ctrl.Result{}, fmt.Errorf("project reference is not valid")
 	}
-	if kubeSG.Spec.VpcReference.Name == "" {
+	if kubeSG.Spec.VPCReference.Name == "" {
 		return ctrl.Result{}, fmt.Errorf("vpc reference is not valid")
 	}
 
 	// Set OwnerReference to VPC (skipped during deletion — the resource is going away).
 	if kubeSG.GetDeletionTimestamp().IsZero() {
-		kubeVpc := &v1alpha1.Vpc{}
-		if err := resolveOwnerObject(ctx, r.Client, kubeSG.Spec.VpcReference, kubeSG.Namespace, kubeVpc); err != nil {
+		kubeVpc := &v1alpha1.VPC{}
+		if err := resolveOwnerObject(ctx, r.Client, kubeSG.Spec.VPCReference, kubeSG.Namespace, kubeVpc); err != nil {
 			if !apierrors.IsNotFound(err) {
 				return ctrl.Result{}, fmt.Errorf("resolving parent vpc for owner reference: %w", err)
 			}
 			logger.V(1).Info("parent vpc not found for owner reference setup, skipping",
-				"vpcName", kubeSG.Spec.VpcReference.Name)
+				"vpcName", kubeSG.Spec.VPCReference.Name)
 		} else {
 			requeue, err := ensureOwnerReference(ctx, r.Client, r.Scheme, kubeVpc, kubeSG)
 			if err != nil {
@@ -136,7 +136,7 @@ func (r *SecurityGroupReconciler) HandleReconcile(ctx context.Context, obj recon
 
 	sgName := kubeSG.Name
 	projectName := kubeSG.Spec.ProjectReference.Name
-	vpcName := kubeSG.Spec.VpcReference.Name
+	vpcName := kubeSG.Spec.VPCReference.Name
 	prjFilter := fmt.Sprintf(`name:eq("%s")`, projectName)
 	vpcFilter := fmt.Sprintf(`name:eq("%s")`, vpcName)
 	sgFilter := fmt.Sprintf(`name:eq("%s")`, sgName)
@@ -190,8 +190,8 @@ func (r *SecurityGroupReconciler) HandleReconcile(ctx context.Context, obj recon
 
 	var vpcID string
 
-	if !kubeSG.GetDeletionTimestamp().IsZero() && kubeSG.Status.VpcID != "" {
-		vpcID = kubeSG.Status.VpcID
+	if !kubeSG.GetDeletionTimestamp().IsZero() && kubeSG.Status.VPCID != "" {
+		vpcID = kubeSG.Status.VPCID
 	} else {
 		cmpVpcList, err := arubaClient.FromNetwork().VPCs().List(ctx, prjID, &arubatypes.RequestParameters{Filter: &vpcFilter})
 		if err != nil {
@@ -208,7 +208,7 @@ func (r *SecurityGroupReconciler) HandleReconcile(ctx context.Context, obj recon
 		}
 		// TODO: Remove once CMP API name:eq() filter is fixed (issue https://jira.aruba.it/browse/DEV-66643).
 		applyNameFilterToVPCList(cmpVpcList, vpcName, logger)
-		if cmpVpcList.Data.Total == 0 && kubeSG.Status.VpcID != "" {
+		if cmpVpcList.Data.Total == 0 && kubeSG.Status.VPCID != "" {
 			return ctrl.Result{}, fmt.Errorf(
 				"inconsistent data in vpc list: expected: 1, vpc not found: vpc_name: '%s', vpc_filter: '%s'", vpcName, vpcFilter,
 			)
@@ -226,10 +226,10 @@ func (r *SecurityGroupReconciler) HandleReconcile(ctx context.Context, obj recon
 		vpcID = *(cmpVpcList.Data.Values[0].Metadata.ID)
 	}
 
-	if kubeSG.Status.VpcID != "" && kubeSG.Status.VpcID != vpcID {
+	if kubeSG.Status.VPCID != "" && kubeSG.Status.VPCID != vpcID {
 		return ctrl.Result{}, fmt.Errorf(
 			"inconsistent vpc id in security group: sg_name: '%s', sg_vpc_id: '%s', vpc_name: '%s', vpc_id: '%s'",
-			sgName, kubeSG.Status.VpcID, vpcName, vpcID,
+			sgName, kubeSG.Status.VPCID, vpcName, vpcID,
 		)
 	}
 
@@ -566,14 +566,14 @@ func cmpSecurityGroupIsFinal(_ *v1alpha1.SecurityGroup, cmpSG *arubatypes.Securi
 	if cmpSG == nil || cmpSG.Status.State == nil {
 		return false
 	}
-	return AssesCSPResourceStateNature(&cmpSG.Status) == CSPResourceStateNatureFinal
+	return AssessCSPResourceStateNature(&cmpSG.Status) == CSPResourceStateNatureFinal
 }
 
 func cmpSecurityGroupIsTransitory(_ *v1alpha1.SecurityGroup, cmpSG *arubatypes.SecurityGroupResponse) bool {
 	if cmpSG == nil || cmpSG.Status.State == nil {
 		return false
 	}
-	return AssesCSPResourceStateNature(&cmpSG.Status) == CSPResourceStateNatureTransitory
+	return AssessCSPResourceStateNature(&cmpSG.Status) == CSPResourceStateNatureTransitory
 }
 
 func cmpSecurityGroupNotExistsOrTransitory(_ *v1alpha1.SecurityGroup, cmpSG *arubatypes.SecurityGroupResponse) bool {
@@ -583,7 +583,7 @@ func cmpSecurityGroupNotExistsOrTransitory(_ *v1alpha1.SecurityGroup, cmpSG *aru
 	if cmpSG.Status.State == nil {
 		return false
 	}
-	return AssesCSPResourceStateNature(&cmpSG.Status) == CSPResourceStateNatureTransitory
+	return AssessCSPResourceStateNature(&cmpSG.Status) == CSPResourceStateNatureTransitory
 }
 
 func cmpSecurityGroupIsActive(_ *v1alpha1.SecurityGroup, cmpSG *arubatypes.SecurityGroupResponse) bool {
@@ -602,8 +602,8 @@ func (r *SecurityGroupReconciler) kubeSetPhaseAndCondition(ctx context.Context, 
 		if prjID, ok := ctx.Value(projectIDKey).(string); ok && sg.Status.ProjectID == "" {
 			sg.Status.ProjectID = prjID
 		}
-		if vID, ok := ctx.Value(vpcIDKey).(string); ok && sg.Status.VpcID == "" {
-			sg.Status.VpcID = vID
+		if vID, ok := ctx.Value(vpcIDKey).(string); ok && sg.Status.VPCID == "" {
+			sg.Status.VPCID = vID
 		}
 	})
 }
@@ -657,8 +657,8 @@ func (r *SecurityGroupReconciler) kubeSetActiveAndSetID(ctx context.Context, kub
 		if prjID, ok := ctx.Value(projectIDKey).(string); ok && sg.Status.ProjectID != "" {
 			sg.Status.ProjectID = prjID
 		}
-		if vID, ok := ctx.Value(vpcIDKey).(string); ok && sg.Status.VpcID != "" {
-			sg.Status.VpcID = vID
+		if vID, ok := ctx.Value(vpcIDKey).(string); ok && sg.Status.VPCID != "" {
+			sg.Status.VPCID = vID
 		}
 	})
 }
@@ -668,8 +668,8 @@ func (r *SecurityGroupReconciler) kubeSetFailedOnTimeout(ctx context.Context, ku
 		if prjID, ok := ctx.Value(projectIDKey).(string); ok && sg.Status.ProjectID == "" {
 			sg.Status.ProjectID = prjID
 		}
-		if vID, ok := ctx.Value(vpcIDKey).(string); ok && sg.Status.VpcID == "" {
-			sg.Status.VpcID = vID
+		if vID, ok := ctx.Value(vpcIDKey).(string); ok && sg.Status.VPCID == "" {
+			sg.Status.VPCID = vID
 		}
 	})
 }
@@ -735,7 +735,7 @@ func checkSecurityGroupDeniedChanges(kubeSG *v1alpha1.SecurityGroup, cmpSG *arub
 
 	if cmpSG.Metadata.LocationResponse != nil &&
 		cmpSG.Metadata.LocationResponse.Value != "" &&
-		kubeSG.Spec.Location.Value != cmpSG.Metadata.LocationResponse.Value {
+		kubeSG.Spec.Region != cmpSG.Metadata.LocationResponse.Value {
 		return fmt.Errorf("%w: %w", ErrNotAllowedChanges, errors.New("change the 'location' is not allowed"))
 	}
 
@@ -749,16 +749,13 @@ func kubeSecurityGroupNeedsUpdate(kubeSG *v1alpha1.SecurityGroup, cmpSG *arubaty
 	if !tagsAreEqual(kubeSG.Spec.Tags, cmpSG.Metadata.Tags) {
 		return true
 	}
-	if kubeSG.Spec.Default != cmpSG.Properties.Default {
-		return true
-	}
 	return false
 }
 
 func cmpSecurityGroupRequestFromKube(kubeSG *v1alpha1.SecurityGroup) *arubatypes.SecurityGroupRequest {
 	tags := make([]string, len(kubeSG.Spec.Tags))
 	copy(tags, kubeSG.Spec.Tags)
-	defaultVal := kubeSG.Spec.Default
+	defaultVal := false
 	return &arubatypes.SecurityGroupRequest{
 		Metadata: arubatypes.ResourceMetadataRequest{
 			Name: kubeSG.Name,
@@ -800,7 +797,7 @@ func buildSecurityGroupUpdateRequest(kubeSG *v1alpha1.SecurityGroup, cmpSG *arub
 	tags := make([]string, len(kubeSG.Spec.Tags))
 	copy(tags, kubeSG.Spec.Tags)
 	request.Metadata.Tags = tags
-	defaultVal := kubeSG.Spec.Default
+	defaultVal := false
 	request.Properties.Default = &defaultVal
 	return request
 }

@@ -30,29 +30,27 @@ type CloudServerSpec struct {
 	// +kubebuilder:validation:Optional
 	Tags []string `json:"tags,omitempty"`
 
-	// Location specifies the location for the cloud server
+	// Region specifies the region for the cloud server
 	// +kubebuilder:validation:Required
-	Location Location `json:"location"`
+	// +kubebuilder:default="ITBG-Bergamo"
+	Region string `json:"region"`
 
-	// DataCenter specifies the data center
+	// Zone specifies the data center zone
 	// +kubebuilder:validation:Required
-	DataCenter string `json:"dataCenter"`
+	// +kubebuilder:default="ITBG-1"
+	Zone string `json:"zone"`
 
-	// VpcReference references the VPC where the cloud server will be created
+	// VPCReference references the VPC where the cloud server will be created
 	// +kubebuilder:validation:Required
-	VpcReference ResourceReference `json:"vpcReference"`
+	VPCReference ResourceReference `json:"vpcReference"`
 
-	// VpcPreset indicates whether to use VPC preset
-	// +kubebuilder:validation:Optional
-	VpcPreset bool `json:"vpcPreset,omitempty"`
-
-	// FlavorId specifies the flavor/size of the cloud server
+	// FlavorName specifies the flavor/size of the cloud server
 	// +kubebuilder:validation:Required
 	FlavorName string `json:"flavorName"`
 
-	// ElasticIpReference references an existing elastic IP (optional)
+	// ElasticIPReference references an existing elastic IP (optional)
 	// +kubebuilder:validation:Optional
-	ElasticIpReference *ResourceReference `json:"elasticIpReference,omitempty"`
+	ElasticIPReference *ResourceReference `json:"elasticIPReference,omitempty"`
 
 	// KeyPairReference references a key pair for SSH access (optional)
 	// +kubebuilder:validation:Required
@@ -89,17 +87,17 @@ type CloudServerStatus struct {
 	// +kubebuilder:validation:Optional
 	ProjectID string `json:"projectID,omitempty"`
 
-	// VpcID is the VPC ID where this cloud server is created
+	// VPCID is the VPC ID where this cloud server is created
 	// +kubebuilder:validation:Optional
-	VpcID string `json:"vpcID,omitempty"`
+	VPCID string `json:"vpcID,omitempty"`
 
 	// BootVolumeID is the boot volume ID where this cloud server is created
 	// +kubebuilder:validation:Optional
 	BootVolumeID string `json:"bootVolumeID,omitempty"`
 
-	// ElasticIpID is the elastic IP ID if one is assigned
+	// ElasticIPID is the elastic IP ID if one is assigned
 	// +kubebuilder:validation:Optional
-	ElasticIpID string `json:"elasticIpID,omitempty"`
+	ElasticIPID string `json:"elasticIPID,omitempty"`
 
 	// KeyPairID is the key pair ID if one is specified
 	// +kubebuilder:validation:Optional
@@ -124,7 +122,7 @@ type CloudServerStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:scope=Namespaced,shortName=cs
+// +kubebuilder:resource:scope=Namespaced,shortName=cs;arucs
 // +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase"
 // +kubebuilder:printcolumn:name="Resource ID",type="string",JSONPath=".status.resourceID"
 // +kubebuilder:printcolumn:name="Message",type="string",JSONPath=".status.message"

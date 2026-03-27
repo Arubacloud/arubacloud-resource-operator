@@ -24,7 +24,7 @@ resources:
     controller: true
     domain: arubacloud.com
     group: arubacloud.com
-    kind: ElasticIp
+    kind: ElasticIP
     path: aruba/api/v1alpha1
     version: v1alpha1
   - api:
@@ -51,7 +51,7 @@ resources:
     controller: true
     domain: arubacloud.com
     group: arubacloud.com
-    kind: Vpc
+    kind: VPC
     path: aruba/api/v1alpha1
     version: v1alpha1
   - api:

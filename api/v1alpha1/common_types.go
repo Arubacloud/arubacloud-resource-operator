@@ -59,13 +59,6 @@ const (
 	ConditionReasonFailed = "Failed"
 )
 
-// Location specifies the location for resources
-type Location struct {
-	// Value is the location identifier (e.g., "ITBG-Bergamo")
-	// +kubebuilder:validation:Required
-	Value string `json:"value"`
-}
-
 // ArubaOwnerReference contains the information needed to identify an owning object
 // across namespaces. It mirrors metav1.OwnerReference but adds a Namespace field,
 // enabling cross-namespace ownership relationships that standard Kubernetes
@@ -161,12 +154,4 @@ func (s *ResourceStatus) AssessPhaseNature() ResourcePhaseNature {
 	}
 
 	return PhaseNatureInvalid
-}
-
-// Object is the common Schema for the API.
-type Object struct {
-	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata,omitempty"`
-
-	Status ResourceStatus `json:"status,omitempty"`
 }

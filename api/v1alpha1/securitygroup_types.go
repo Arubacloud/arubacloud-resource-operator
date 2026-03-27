@@ -30,17 +30,14 @@ type SecurityGroupSpec struct {
 	// +kubebuilder:validation:Optional
 	Tags []string `json:"tags,omitempty"`
 
-	// Location specifies the location for the security group
+	// Region specifies the region for the security group
 	// +kubebuilder:validation:Required
-	Location Location `json:"location"`
+	// +kubebuilder:default="ITBG-Bergamo"
+	Region string `json:"region"`
 
-	// Default indicates whether this is a default security group
-	// +kubebuilder:validation:Optional
-	Default bool `json:"default,omitempty"`
-
-	// VpcReference references the ArubaVpc that owns this security group
+	// VPCReference references the ArubaVpc that owns this security group
 	// +kubebuilder:validation:Required
-	VpcReference ResourceReference `json:"vpcReference"`
+	VPCReference ResourceReference `json:"vpcReference"`
 
 	// ProjectReference references the Project that owns this security group
 	// +kubebuilder:validation:Required
@@ -55,14 +52,14 @@ type SecurityGroupStatus struct {
 	// +kubebuilder:validation:Optional
 	ProjectID string `json:"projectID,omitempty"`
 
-	// VpcID is the VPC ID where this security group is created
+	// VPCID is the VPC ID where this security group is created
 	// +kubebuilder:validation:Optional
-	VpcID string `json:"vpcID,omitempty"`
+	VPCID string `json:"vpcID,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:scope=Namespaced,shortName=sg
+// +kubebuilder:resource:scope=Namespaced,shortName=sg;arusg
 // +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase"
 // +kubebuilder:printcolumn:name="Resource ID",type="string",JSONPath=".status.resourceID"
 // +kubebuilder:printcolumn:name="Message",type="string",JSONPath=".status.message"

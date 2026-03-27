@@ -73,7 +73,7 @@ List every transition the `TransitionSet` will contain, in evaluation order (top
 | 20 | `IsInError` *(if CMP has Failed state)* | `AlwaysTrue` | `cmp<Resource>IsFailed` | `kubeSetFailed` | — | — | — | `NoRequeue` | `NoRequeueButIgnoreError` | CMP-side failure → mark K8s resource Failed |
 
 > Remove rows for transitions that do not apply. Add resource-specific transitions as needed.
-> Row 2b (`WaitingChildrenDeletion`) only applies to **parent controllers** (Project, VPC, SecurityGroup). Remove it for leaf resources (BlockStorage, KeyPair, ElasticIp, Subnet, CloudServer, SecurityRule).
+> Row 2b (`WaitingChildrenDeletion`) only applies to **parent controllers** (Project, VPC, SecurityGroup). Remove it for leaf resources (BlockStorage, KeyPair, ElasticIP, Subnet, CloudServer, SecurityRule).
 > The standard `requeueOnError` for CMP-facing transitions (rows 3, 11, 16) is **`SmartRequeueOnError`** — never `LongRequeueAndIgnoreError`. See `CONVENTIONS.md` for the canonical wiring pattern.
 
 ### Alternative: update-not-supported rollback
@@ -131,7 +131,7 @@ Identify which pieces already exist and can be reused as-is, and which must be i
 |-----------|------|-------|
 | `cmp<Resource>Exists` | ACondition | CMP response is non-nil |
 | `cmp<Resource>NotExists` | ACondition | CMP response is nil |
-| `cmp<Resource>IsFinal` | ACondition | CMP state nature is Final (uses `AssesCSPResourceStateNature`) |
+| `cmp<Resource>IsFinal` | ACondition | CMP state nature is Final (uses `AssessCSPResourceStateNature`) |
 | `cmp<Resource>IsTransitory` | ACondition | CMP state nature is Transitory |
 | `cmp<Resource>IsActive` | ACondition | CMP state is one of the active/usable states |
 | `cmp<Resource>IsFailed` | ACondition *(if applicable)* | CMP state == `Failed` |
@@ -197,13 +197,19 @@ Work through each sub-step in order. Do not proceed to the next sub-step until t
     3. **Set OwnerReference *(child controllers only)***: if `DeletionTimestamp.IsZero()`, call `resolveOwnerObject` to fetch the parent K8s object by `Spec.<Parent>Reference`, then `ensureOwnerReference`. If `ensureOwnerReference` returns `(true, nil)`, return `ctrl.Result{RequeueAfter: reconciler.ShortRequeueAfter}` immediately. Skip silently if the parent K8s object is not found (`apierrors.IsNotFound`). See `owner_reference.go` for the pattern used by all existing child controllers.
     4. Resolve parent references (if any) → inject parent IDs into context
     5. Fetch CMP resource → validate cardinality → pass to `ts.Run()`
-- [ ] **Parent controllers only** — `SetupWithManager`: register `Owns()` for each owned child type and add `delete` verb to RBAC markers for each child resource:
+- [ ] **Parent controllers only** — `SetupWithManager`: register `Watches()` for each owned child type using `childToParentMapFunc`. Do **not** use `Owns()` — this operator does not set K8s OwnerReferences, so `Owns()` would never trigger. Add `delete` verb to RBAC markers for each child resource:
   ```go
   // +kubebuilder:rbac:groups=arubacloud.com,resources=<children>,verbs=get;list;watch;delete
   func (r *<Resource>Reconciler) SetupWithManager(mgr ctrl.Manager) error {
       return ctrl.NewControllerManagedBy(mgr).
           For(&v1alpha1.<Resource>{}).
-          Owns(&v1alpha1.<Child>{}).
+          Watches(&v1alpha1.<Child>{}, handler.EnqueueRequestsFromMapFunc(
+              childToParentMapFunc(func(o client.Object) *v1alpha1.ResourceReference {
+                  if v, ok := o.(*v1alpha1.<Child>); ok {
+                      return &v.Spec.<Resource>Reference
+                  }
+                  return nil
+              }))).
           Named("<resource>").
           Complete(r)
   }

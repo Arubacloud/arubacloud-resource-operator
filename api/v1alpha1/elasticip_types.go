@@ -20,17 +20,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// BillingPlan represents the billing configuration
-type BillingPlan struct {
-	// BillingPeriod defines the billing period (Hour, Month, etc.)
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Enum=Hour;Month
-	BillingPeriod string `json:"billingPeriod"`
-}
-
-// ElasticIpSpec defines the desired state of ElasticIp.
+// ElasticIPSpec defines the desired state of ElasticIP.
 // +kubebuilder:validation:XValidation:rule="self.tenant == oldSelf.tenant",message="tenant is immutable"
-type ElasticIpSpec struct {
+type ElasticIPSpec struct {
 	// Tenant is the owning account/tenant of this elastic IP
 	Tenant string `json:"tenant,omitempty"`
 
@@ -38,21 +30,24 @@ type ElasticIpSpec struct {
 	// +kubebuilder:validation:Optional
 	Tags []string `json:"tags,omitempty"`
 
-	// Location specifies the location for the elastic IP
+	// Region specifies the region for the elastic IP
 	// +kubebuilder:validation:Required
-	Location Location `json:"location"`
+	// +kubebuilder:default="ITBG-Bergamo"
+	Region string `json:"region"`
 
-	// BillingPlan specifies the billing configuration
+	// BillingPeriod defines the billing period
 	// +kubebuilder:validation:Required
-	BillingPlan BillingPlan `json:"billingPlan"`
+	// +kubebuilder:validation:Enum=Hour;Month
+	// +kubebuilder:default="Hour"
+	BillingPeriod string `json:"billingPeriod"`
 
 	// ProjectReference references the Project that owns this elastic IP
 	// +kubebuilder:validation:Required
 	ProjectReference ResourceReference `json:"projectReference"`
 }
 
-// ElasticIpStatus defines the observed state of ElasticIp.
-type ElasticIpStatus struct {
+// ElasticIPStatus defines the observed state of ElasticIP.
+type ElasticIPStatus struct {
 	ResourceStatus `json:",inline"`
 
 	// ProjectID is the project ID where this elastic IP is created
@@ -62,38 +57,38 @@ type ElasticIpStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:scope=Namespaced,shortName=eip
+// +kubebuilder:resource:scope=Namespaced,shortName=eip;arueip
 // +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase"
 // +kubebuilder:printcolumn:name="Resource ID",type="string",JSONPath=".status.resourceID"
 // +kubebuilder:printcolumn:name="Message",type="string",JSONPath=".status.message"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
-// ElasticIp is the Schema for the elasticips API.
-type ElasticIp struct {
+// ElasticIP is the Schema for the elasticips API.
+type ElasticIP struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   ElasticIpSpec   `json:"spec,omitempty"`
-	Status ElasticIpStatus `json:"status,omitempty"`
+	Spec   ElasticIPSpec   `json:"spec,omitempty"`
+	Status ElasticIPStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// ElasticIpList contains a list of ElasticIp.
-type ElasticIpList struct {
+// ElasticIPList contains a list of ElasticIP.
+type ElasticIPList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []ElasticIp `json:"items"`
+	Items           []ElasticIP `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&ElasticIp{}, &ElasticIpList{})
+	SchemeBuilder.Register(&ElasticIP{}, &ElasticIPList{})
 }
 
-func (b *ElasticIp) GetResourceStatus() *ResourceStatus {
+func (b *ElasticIP) GetResourceStatus() *ResourceStatus {
 	return &b.Status.ResourceStatus
 }
 
-func (b *ElasticIp) GetTenant() string {
+func (b *ElasticIP) GetTenant() string {
 	return b.Spec.Tenant
 }

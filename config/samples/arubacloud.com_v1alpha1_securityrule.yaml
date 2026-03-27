@@ -9,13 +9,12 @@ spec:
   tags:
     - tag-1
     - tag-2
-  location:
-    value: ITBG-Bergamo
+  region: ITBG-Bergamo
   protocol: TCP
   port: '80-90'
   direction: Egress
   target:
-    kind: Ip
+    type: Ip
     value: '0.0.0.0/0'
   securityGroupReference:
     name: __NAME__
@@ -37,13 +36,12 @@ spec:
   tags:
     - tag-1
     - tag-2
-  location:
-    value: ITBG-Bergamo
+  region: ITBG-Bergamo
   protocol: TCP
   port: '80-90'
   direction: Ingress
   target:
-    kind: Ip
+    type: Ip
     value: '0.0.0.0/0'
   securityGroupReference:
     name: __NAME__

@@ -8,9 +8,7 @@ spec:
   tags:
     - tag-1
     - tag-2
-  location:
-    value: ITBG-Bergamo
-  default: false
+  region: ITBG-Bergamo
   vpcReference:
     name: __NAME__
     namespace: __NAMESPACE__

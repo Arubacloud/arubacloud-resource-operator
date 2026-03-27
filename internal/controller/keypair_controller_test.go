@@ -90,10 +90,10 @@ func buildProjectListForKeyPair(projectID, projectName string) *arubatypes.Respo
 
 func defaultKeyPairSpec(projectName string) v1alpha1.KeyPairSpec {
 	return v1alpha1.KeyPairSpec{
-		Tenant:   "test-tenant",
-		Location: v1alpha1.Location{Value: "ITBG-Bergamo"},
-		Tags:     []string{"tag1"},
-		Value:    "ssh-rsa AAAAB3NzaC1 test-key",
+		Tenant: "test-tenant",
+		Region: "ITBG-Bergamo",
+		Tags:   []string{"tag1"},
+		Value:  "ssh-rsa AAAAB3NzaC1 test-key",
 		ProjectReference: v1alpha1.ResourceReference{
 			Name:      projectName,
 			Namespace: "default",
@@ -388,7 +388,7 @@ var _ = Describe("KeyPairReconciler", func() {
 			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseActive))
 			// Spec should be rolled back to CMP values
 			Expect(updated.Spec.Tags).To(Equal(cmpKp.Metadata.Tags))
-			Expect(updated.Spec.Location.Value).To(Equal(cmpKp.Metadata.LocationResponse.Value))
+			Expect(updated.Spec.Region).To(Equal(cmpKp.Metadata.LocationResponse.Value))
 			Expect(updated.Spec.Value).To(Equal(cmpKp.Properties.Value))
 		})
 	})

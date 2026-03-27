@@ -68,7 +68,6 @@ func defaultProjectSpec() v1alpha1.ProjectSpec {
 		Tenant:      "test-tenant",
 		Description: "test description",
 		Tags:        []string{"tag1"},
-		Default:     false,
 	}
 }
 
@@ -283,7 +282,7 @@ var _ = Describe("ProjectReconciler", func() {
 
 			// CMP has same spec
 			spec := defaultProjectSpec()
-			cmpProj := buildProjectResponse("cmp-id-1", "test-already-in-sync", spec.Tags, spec.Description, spec.Default)
+			cmpProj := buildProjectResponse("cmp-id-1", "test-already-in-sync", spec.Tags, spec.Description, false)
 			mockArubaClient.EXPECT().FromProject().Return(mockProjectClient)
 			mockProjectClient.EXPECT().List(mock.Anything, mock.Anything).Return(buildProjectList(cmpProj), nil)
 
@@ -327,7 +326,7 @@ var _ = Describe("ProjectReconciler", func() {
 			setProjectStatus(ctx, proj, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonSynchronizing, "cmp-id-1", 1, time.Now())
 
 			spec := defaultProjectSpec()
-			cmpProj := buildProjectResponse("cmp-id-1", "test-update-confirmed", spec.Tags, spec.Description, spec.Default)
+			cmpProj := buildProjectResponse("cmp-id-1", "test-update-confirmed", spec.Tags, spec.Description, false)
 			mockArubaClient.EXPECT().FromProject().Return(mockProjectClient)
 			mockProjectClient.EXPECT().List(mock.Anything, mock.Anything).Return(buildProjectList(cmpProj), nil)
 

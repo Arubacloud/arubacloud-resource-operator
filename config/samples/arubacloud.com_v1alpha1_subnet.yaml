@@ -8,12 +8,9 @@ spec:
   tags:
     - tag-1
     - tag-2
-  location:
-    value: ITBG-Bergamo
+  region: ITBG-Bergamo
   type: Advanced
-  default: false
-  network:
-    address: 192.168.1.0/24
+  cidr: 192.168.1.0/24
   dhcp:
     enabled: true
   vpcReference:

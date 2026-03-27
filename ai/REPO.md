@@ -22,8 +22,8 @@
 
 Defines all Custom Resource types and the shared status model.
 
-- `common_types.go` — `ResourceStatus`, `ResourcePhase`, condition reason constants (`ShallSynchronize`, `Synchronizing`, `Synchronized`, `Failed`), `ResourcePhaseNature` (Transitory / Final), and the base `Object` struct embedded by every CRD.
-- `<resource>_types.go` — one file per CRD (Project, BlockStorage, CloudServer, ElasticIP, KeyPair, SecurityGroup, SecurityRule, Subnet, VPC); each contains the `Spec`, `Status`, and list type for that resource.
+- `common_types.go` — `ResourceStatus`, `ResourcePhase`, condition reason constants (`ShallSynchronize`, `Synchronizing`, `Synchronized`, `Failed`), `ResourcePhaseNature` (Transitory / Final), `ResourceReference`, `ArubaOwnerReference`, and `CSPResourceStateActive` / related state constants.
+- `<resource>_types.go` — one file per CRD (Project, BlockStorage, CloudServer, ElasticIP, KeyPair, SecurityGroup, SecurityRule, Subnet, VPC); each contains the `Spec`, `Status`, and list type for that resource. Flat scalar fields are used for `Region string`, `Zone string`, `SizeGB int`, `BillingPeriod string`, and `CIDR string` — no nested structs for these.
 - `zz_generated.deepcopy.go` — generated; do not edit.
 
 ### `internal/reconciler/`
@@ -47,7 +47,7 @@ One file per concern:
 - `transition_conditions.go` — all reusable `ConditionFunc[K,A]` implementations (e.g. `kubeIsFirstReconciliation`, `kubeShouldBeCreatedOnCMP`, `kubePhaseTimedOut`, `kubeShouldDelete`, `kubeHasOwnedChildren`). These are package-private; only referenced from controller transition wiring.
 - `transition_actions.go` — all reusable status-patch helpers: `setPhaseAndCondition`, `setActiveAndSetID`, `setFailedOnTimeout`, and `kubeSetErrorMessageOnCMPError`. These use `retry.RetryOnConflict` internally and are the canonical way to write back Kubernetes status.
 - `cmp_error.go` — CMP error types: `CMPError` struct, `CMPErrorCategory` enum (Semantic/Technical), `cmpTransportError` and `cmpResponseError` constructors, `cmpCheckResponse[T]` generic response checker, and `CMPErrorIsSemantic`/`CMPErrorIsTechnical` helpers.
-- `common.go` — CMP (Aruba-side) state constants (`CSPResourceState*`) and `AssesCSPResourceStateNature` for classifying CMP states as Transitory/Final.
+- `common.go` — CMP (Aruba-side) state constants (`CSPResourceState*`) and `AssessCSPResourceStateNature` for classifying CMP states as Transitory/Final.
 
 ### `internal/config/`
 

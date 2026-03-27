@@ -93,17 +93,17 @@ func (r *SubnetReconciler) HandleReconcile(ctx context.Context, obj reconciler.R
 	if kubeSubnet.Spec.ProjectReference.Name == "" {
 		return ctrl.Result{}, fmt.Errorf("project reference is not valid")
 	}
-	if kubeSubnet.Spec.VpcReference.Name == "" {
+	if kubeSubnet.Spec.VPCReference.Name == "" {
 		return ctrl.Result{}, fmt.Errorf("vpc reference is not valid")
 	}
 
 	if kubeSubnet.GetDeletionTimestamp().IsZero() {
-		kubeVpc := &v1alpha1.Vpc{}
-		if err := resolveOwnerObject(ctx, r.Client, kubeSubnet.Spec.VpcReference, kubeSubnet.Namespace, kubeVpc); err != nil {
+		kubeVpc := &v1alpha1.VPC{}
+		if err := resolveOwnerObject(ctx, r.Client, kubeSubnet.Spec.VPCReference, kubeSubnet.Namespace, kubeVpc); err != nil {
 			if !apierrors.IsNotFound(err) {
 				return ctrl.Result{}, fmt.Errorf("resolving parent vpc for owner reference: %w", err)
 			}
-			logger.V(1).Info("parent vpc not found for owner reference setup, skipping", "vpcName", kubeSubnet.Spec.VpcReference.Name)
+			logger.V(1).Info("parent vpc not found for owner reference setup, skipping", "vpcName", kubeSubnet.Spec.VPCReference.Name)
 		} else {
 			requeue, err := ensureOwnerReference(ctx, r.Client, r.Scheme, kubeVpc, kubeSubnet)
 			if err != nil {
@@ -117,7 +117,7 @@ func (r *SubnetReconciler) HandleReconcile(ctx context.Context, obj reconciler.R
 
 	subnetName := kubeSubnet.Name
 	projectName := kubeSubnet.Spec.ProjectReference.Name
-	vpcName := kubeSubnet.Spec.VpcReference.Name
+	vpcName := kubeSubnet.Spec.VPCReference.Name
 	prjFilter := fmt.Sprintf(`name:eq("%s")`, projectName)
 	vpcFilter := fmt.Sprintf(`name:eq("%s")`, vpcName)
 	subnetFilter := fmt.Sprintf(`name:eq("%s")`, subnetName)
@@ -171,8 +171,8 @@ func (r *SubnetReconciler) HandleReconcile(ctx context.Context, obj reconciler.R
 
 	var vpcID string
 
-	if !kubeSubnet.GetDeletionTimestamp().IsZero() && kubeSubnet.Status.VpcID != "" {
-		vpcID = kubeSubnet.Status.VpcID
+	if !kubeSubnet.GetDeletionTimestamp().IsZero() && kubeSubnet.Status.VPCID != "" {
+		vpcID = kubeSubnet.Status.VPCID
 	} else {
 		cmpVpcList, err := arubaClient.FromNetwork().VPCs().List(ctx, prjID, &arubatypes.RequestParameters{Filter: &vpcFilter})
 		if err != nil {
@@ -189,7 +189,7 @@ func (r *SubnetReconciler) HandleReconcile(ctx context.Context, obj reconciler.R
 		}
 		// TODO: Remove once CMP API name:eq() filter is fixed (issue https://jira.aruba.it/browse/DEV-66643).
 		applyNameFilterToVPCList(cmpVpcList, vpcName, logger)
-		if cmpVpcList.Data.Total == 0 && kubeSubnet.Status.VpcID != "" {
+		if cmpVpcList.Data.Total == 0 && kubeSubnet.Status.VPCID != "" {
 			return ctrl.Result{}, fmt.Errorf(
 				"inconsistent data in vpc list: expected: 1, vpc not found: vpc_name: '%s', vpc_filter: '%s'", vpcName, vpcFilter,
 			)
@@ -207,10 +207,10 @@ func (r *SubnetReconciler) HandleReconcile(ctx context.Context, obj reconciler.R
 		vpcID = *(cmpVpcList.Data.Values[0].Metadata.ID)
 	}
 
-	if kubeSubnet.Status.VpcID != "" && kubeSubnet.Status.VpcID != vpcID {
+	if kubeSubnet.Status.VPCID != "" && kubeSubnet.Status.VPCID != vpcID {
 		return ctrl.Result{}, fmt.Errorf(
 			"inconsistent vpc id in subnet: subnet_name: '%s', subnet_vpc_id: '%s', vpc_name: '%s', vpc_id: '%s'",
-			subnetName, kubeSubnet.Status.VpcID, vpcName, vpcID,
+			subnetName, kubeSubnet.Status.VPCID, vpcName, vpcID,
 		)
 	}
 
@@ -510,14 +510,14 @@ func cmpSubnetIsFinal(_ *v1alpha1.Subnet, cmpSubnet *arubatypes.SubnetResponse) 
 	if cmpSubnet == nil || cmpSubnet.Status.State == nil {
 		return false
 	}
-	return AssesCSPResourceStateNature(&cmpSubnet.Status) == CSPResourceStateNatureFinal
+	return AssessCSPResourceStateNature(&cmpSubnet.Status) == CSPResourceStateNatureFinal
 }
 
 func cmpSubnetIsTransitory(_ *v1alpha1.Subnet, cmpSubnet *arubatypes.SubnetResponse) bool {
 	if cmpSubnet == nil || cmpSubnet.Status.State == nil {
 		return false
 	}
-	return AssesCSPResourceStateNature(&cmpSubnet.Status) == CSPResourceStateNatureTransitory
+	return AssessCSPResourceStateNature(&cmpSubnet.Status) == CSPResourceStateNatureTransitory
 }
 
 func cmpSubnetNotExistsOrTransitory(_ *v1alpha1.Subnet, cmpSubnet *arubatypes.SubnetResponse) bool {
@@ -527,7 +527,7 @@ func cmpSubnetNotExistsOrTransitory(_ *v1alpha1.Subnet, cmpSubnet *arubatypes.Su
 	if cmpSubnet.Status.State == nil {
 		return false
 	}
-	return AssesCSPResourceStateNature(&cmpSubnet.Status) == CSPResourceStateNatureTransitory
+	return AssessCSPResourceStateNature(&cmpSubnet.Status) == CSPResourceStateNatureTransitory
 }
 
 func cmpSubnetIsActive(_ *v1alpha1.Subnet, cmpSubnet *arubatypes.SubnetResponse) bool {
@@ -546,8 +546,8 @@ func (r *SubnetReconciler) kubeSetPhaseAndCondition(ctx context.Context, kubeSub
 		if prjID, ok := ctx.Value(projectIDKey).(string); ok && subnet.Status.ProjectID == "" {
 			subnet.Status.ProjectID = prjID
 		}
-		if vID, ok := ctx.Value(vpcIDKey).(string); ok && subnet.Status.VpcID == "" {
-			subnet.Status.VpcID = vID
+		if vID, ok := ctx.Value(vpcIDKey).(string); ok && subnet.Status.VPCID == "" {
+			subnet.Status.VPCID = vID
 		}
 	})
 }
@@ -601,8 +601,8 @@ func (r *SubnetReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeSubnet
 		if prjID, ok := ctx.Value(projectIDKey).(string); ok && subnet.Status.ProjectID != "" {
 			subnet.Status.ProjectID = prjID
 		}
-		if vID, ok := ctx.Value(vpcIDKey).(string); ok && subnet.Status.VpcID != "" {
-			subnet.Status.VpcID = vID
+		if vID, ok := ctx.Value(vpcIDKey).(string); ok && subnet.Status.VPCID != "" {
+			subnet.Status.VPCID = vID
 		}
 	})
 }
@@ -612,8 +612,8 @@ func (r *SubnetReconciler) kubeSetFailedOnTimeout(ctx context.Context, kubeSubne
 		if prjID, ok := ctx.Value(projectIDKey).(string); ok && subnet.Status.ProjectID == "" {
 			subnet.Status.ProjectID = prjID
 		}
-		if vID, ok := ctx.Value(vpcIDKey).(string); ok && subnet.Status.VpcID == "" {
-			subnet.Status.VpcID = vID
+		if vID, ok := ctx.Value(vpcIDKey).(string); ok && subnet.Status.VPCID == "" {
+			subnet.Status.VPCID = vID
 		}
 	})
 }
@@ -681,20 +681,16 @@ func checkSubnetDeniedChanges(kubeSubnet *v1alpha1.Subnet, cmpSubnet *arubatypes
 	if cmpSubnet.Metadata.LocationResponse != nil {
 		locationValue = cmpSubnet.Metadata.LocationResponse.Value
 	}
-	if kubeSubnet.Spec.Location.Value != locationValue {
+	if kubeSubnet.Spec.Region != locationValue {
 		return fmt.Errorf("%w: %w", ErrNotAllowedChanges, errors.New("change the 'location' is not allowed"))
 	}
 
-	if cmpSubnet.Properties.Network != nil && kubeSubnet.Spec.Network.Address != cmpSubnet.Properties.Network.Address {
+	if cmpSubnet.Properties.Network != nil && kubeSubnet.Spec.CIDR != cmpSubnet.Properties.Network.Address {
 		return fmt.Errorf("%w: %w", ErrNotAllowedChanges, errors.New("change the 'network.address' is not allowed"))
 	}
 
 	if string(cmpSubnet.Properties.Type) != "" && kubeSubnet.Spec.Type != string(cmpSubnet.Properties.Type) {
 		return fmt.Errorf("%w: %w", ErrNotAllowedChanges, errors.New("change the 'type' is not allowed"))
-	}
-
-	if kubeSubnet.Spec.Default != cmpSubnet.Properties.Default {
-		return fmt.Errorf("%w: %w", ErrNotAllowedChanges, errors.New("change the 'default' is not allowed"))
 	}
 
 	return nil
@@ -780,13 +776,13 @@ func cmpSubnetRequestFromKube(kubeSubnet *v1alpha1.Subnet) *arubatypes.SubnetReq
 				Name: kubeSubnet.Name,
 				Tags: tags,
 			},
-			Location: arubatypes.LocationRequest(kubeSubnet.Spec.Location),
+			Location: arubatypes.LocationRequest{Value: kubeSubnet.Spec.Region},
 		},
 		Properties: arubatypes.SubnetPropertiesRequest{
 			Type:    arubatypes.SubnetType(kubeSubnet.Spec.Type),
-			Default: kubeSubnet.Spec.Default,
+			Default: false,
 			Network: &arubatypes.SubnetNetwork{
-				Address: kubeSubnet.Spec.Network.Address,
+				Address: kubeSubnet.Spec.CIDR,
 			},
 			DHCP: &arubatypes.SubnetDHCP{
 				Enabled: kubeSubnet.Spec.DHCP.Enabled,

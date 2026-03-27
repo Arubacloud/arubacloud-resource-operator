@@ -30,9 +30,10 @@ type KeyPairSpec struct {
 	// +kubebuilder:validation:Optional
 	Tags []string `json:"tags,omitempty"`
 
-	// Location specifies the location for the keypair
+	// Region specifies the region for the key pair
 	// +kubebuilder:validation:Required
-	Location Location `json:"location"`
+	// +kubebuilder:default="ITBG-Bergamo"
+	Region string `json:"region"`
 
 	// Value specifies the SSH public key value
 	// +kubebuilder:validation:Required
@@ -55,7 +56,7 @@ type KeyPairStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:scope=Namespaced,shortName=kp
+// +kubebuilder:resource:scope=Namespaced,shortName=kp;arukp
 // +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase"
 // +kubebuilder:printcolumn:name="Resource ID",type="string",JSONPath=".status.resourceID"
 // +kubebuilder:printcolumn:name="Message",type="string",JSONPath=".status.message"

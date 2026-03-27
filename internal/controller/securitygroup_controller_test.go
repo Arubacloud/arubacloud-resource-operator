@@ -111,15 +111,12 @@ func defaultSecurityGroupSpec(projectName, vpcName string) v1alpha1.SecurityGrou
 	return v1alpha1.SecurityGroupSpec{
 		Tenant: "test-tenant",
 		Tags:   []string{"tag1"},
-		Location: v1alpha1.Location{
-			Value: "ITBG-Bergamo",
-		},
-		Default: false,
+		Region: "ITBG-Bergamo",
 		ProjectReference: v1alpha1.ResourceReference{
 			Name:      projectName,
 			Namespace: "default",
 		},
-		VpcReference: v1alpha1.ResourceReference{
+		VPCReference: v1alpha1.ResourceReference{
 			Name:      vpcName,
 			Namespace: "default",
 		},
@@ -144,7 +141,7 @@ func setSecurityGroupStatus(ctx context.Context, sg *v1alpha1.SecurityGroup, pha
 	s.Status.Phase = phase
 	s.Status.ResourceID = resourceID
 	s.Status.ProjectID = projectID
-	s.Status.VpcID = vpcID
+	s.Status.VPCID = vpcID
 	s.Status.ObservedGeneration = observedGen
 	if phase != "" {
 		s.Status.Conditions = []metav1.Condition{
@@ -370,7 +367,7 @@ var _ = Describe("SecurityGroupReconciler", func() {
 			// Force generation change with different location
 			sgFetch := &v1alpha1.SecurityGroup{}
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sgFetch)).To(Succeed())
-			sgFetch.Spec.Location.Value = "IT-MILAN"
+			sgFetch.Spec.Region = "IT-MILAN"
 			Expect(k8sClient.Update(ctx, sgFetch)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
 
@@ -711,7 +708,7 @@ var _ = Describe("SecurityGroupReconciler", func() {
 			updated := &v1alpha1.SecurityGroup{}
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), updated)).To(Succeed())
 			Expect(updated.Status.ProjectID).To(Equal(sgProjectID))
-			Expect(updated.Status.VpcID).To(Equal(sgVpcID))
+			Expect(updated.Status.VPCID).To(Equal(sgVpcID))
 		})
 	})
 

@@ -225,10 +225,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Setup ElasticIp controller
-	elasticIpReconciler := controller.NewElasticIpReconciler(baseReconciler)
-	if err = elasticIpReconciler.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "ElasticIp")
+	// Setup ElasticIP controller
+	elasticIPReconciler := controller.NewElasticIPReconciler(baseReconciler)
+	if err = elasticIPReconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "ElasticIP")
 		os.Exit(1)
 	}
 
@@ -274,10 +274,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Setup Vpc controller
-	vpcReconciler := controller.NewVpcReconciler(baseReconciler)
+	// Setup VPC controller
+	vpcReconciler := controller.NewVPCReconciler(baseReconciler)
 	if err = vpcReconciler.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "Vpc")
+		setupLog.Error(err, "unable to create controller", "controller", "VPC")
 		os.Exit(1)
 	}
 

@@ -101,13 +101,9 @@ func defaultSubnetSpec(projectName, vpcName string) v1alpha1.SubnetSpec {
 	return v1alpha1.SubnetSpec{
 		Tenant: "test-tenant",
 		Tags:   []string{"tag1"},
-		Location: v1alpha1.Location{
-			Value: "ITBG-Bergamo",
-		},
-		Type: "Advanced",
-		Network: v1alpha1.SubnetNetwork{
-			Address: "192.168.1.0/24",
-		},
+		Region: "ITBG-Bergamo",
+		Type:   "Advanced",
+		CIDR:   "192.168.1.0/24",
 		DHCP: v1alpha1.SubnetDHCP{
 			Enabled: true,
 		},
@@ -115,7 +111,7 @@ func defaultSubnetSpec(projectName, vpcName string) v1alpha1.SubnetSpec {
 			Name:      projectName,
 			Namespace: "default",
 		},
-		VpcReference: v1alpha1.ResourceReference{
+		VPCReference: v1alpha1.ResourceReference{
 			Name:      vpcName,
 			Namespace: "default",
 		},
@@ -140,7 +136,7 @@ func setSubnetStatus(ctx context.Context, subnet *v1alpha1.Subnet, phase v1alpha
 	s.Status.Phase = phase
 	s.Status.ResourceID = resourceID
 	s.Status.ProjectID = projectID
-	s.Status.VpcID = vpcID
+	s.Status.VPCID = vpcID
 	s.Status.ObservedGeneration = observedGen
 	if phase != "" {
 		s.Status.Conditions = []metav1.Condition{
@@ -366,7 +362,7 @@ var _ = Describe("SubnetReconciler", func() {
 			// Force generation change with different location
 			sFetch := &v1alpha1.Subnet{}
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), sFetch)).To(Succeed())
-			sFetch.Spec.Location.Value = "ITMI-Milan"
+			sFetch.Spec.Region = "ITMI-Milan"
 			Expect(k8sClient.Update(ctx, sFetch)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
 
@@ -389,7 +385,7 @@ var _ = Describe("SubnetReconciler", func() {
 			// Force generation change with different network address
 			sFetch := &v1alpha1.Subnet{}
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), sFetch)).To(Succeed())
-			sFetch.Spec.Network.Address = "10.0.0.0/24"
+			sFetch.Spec.CIDR = "10.0.0.0/24"
 			Expect(k8sClient.Update(ctx, sFetch)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
 
@@ -696,7 +692,7 @@ var _ = Describe("SubnetReconciler", func() {
 			updated := &v1alpha1.Subnet{}
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), updated)).To(Succeed())
 			Expect(updated.Status.ProjectID).To(Equal(subnetProjectID))
-			Expect(updated.Status.VpcID).To(Equal(subnetVpcID))
+			Expect(updated.Status.VPCID).To(Equal(subnetVpcID))
 		})
 	})
 

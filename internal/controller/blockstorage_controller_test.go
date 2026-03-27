@@ -80,10 +80,10 @@ func buildProjectListForBS(projectID, projectName string) *arubatypes.Response[a
 func defaultBSSpec(projectName string) v1alpha1.BlockStorageSpec {
 	return v1alpha1.BlockStorageSpec{
 		Tenant:        "test-tenant",
-		Location:      v1alpha1.Location{Value: "ITBG-Bergamo"},
-		SizeGb:        10,
+		Region:        "ITBG-Bergamo",
+		SizeGB:        10,
 		BillingPeriod: "Hour",
-		DataCenter:    "zone1",
+		Zone:          "zone1",
 		Type:          "Standard",
 		Tags:          []string{"tag1"},
 		ProjectReference: v1alpha1.ResourceReference{
@@ -317,7 +317,7 @@ var _ = Describe("BlockStorageReconciler", func() {
 			// Force generation change with smaller size
 			bFetch := &v1alpha1.BlockStorage{}
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bFetch)).To(Succeed())
-			bFetch.Spec.SizeGb = 1 // decrease from 10 to 1
+			bFetch.Spec.SizeGB = 1 // decrease from 10 to 1
 			Expect(k8sClient.Update(ctx, bFetch)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bs)).To(Succeed())
 

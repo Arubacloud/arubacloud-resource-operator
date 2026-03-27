@@ -125,7 +125,7 @@ test/e2e/
 
 #### 02_network_basic_test.go
 
-- **Reconciler testati**: `ProjectReconciler`, `VpcReconciler`, `SubnetReconciler`
+- **Reconciler testati**: `ProjectReconciler`, `VPCReconciler`, `SubnetReconciler`
 - **Risorse**: Project → VPC → Subnet
 - **Test**:
   - Creazione sequenziale con dependency resolution
@@ -218,7 +218,7 @@ test/e2e/
 | Reconciler        | Tested In                  | Test Count |
 | ----------------- | -------------------------- | ---------- |
 | ProjectReconciler | 01, 02, 03, 04, 05, 06, 08 | 7          |
-| VpcReconciler     | 02, 03, 06, 08             | 4          |
+| VPCReconciler     | 02, 03, 06, 08             | 4          |
 | SecurityGroupRec. | 03, 06, 08                 | 3          |
 | SecurityRuleRec.  | 03, 06, 08                 | 3          |
 | SubnetReconciler  | 02, 03, 06, 08             | 4          |

@@ -20,68 +20,69 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// VpcSpec defines the desired state of Vpc.
+// VPCSpec defines the desired state of VPC.
 // +kubebuilder:validation:XValidation:rule="self.tenant == oldSelf.tenant",message="tenant is immutable"
-type VpcSpec struct {
-	// Tenant is the owning account/tenant of this vpc
+type VPCSpec struct {
+	// Tenant is the owning account/tenant of this VPC
 	Tenant string `json:"tenant,omitempty"`
 
-	// Tags are labels associated with the vpc
+	// Tags are labels associated with the VPC
 	// +kubebuilder:validation:Optional
 	Tags []string `json:"tags,omitempty"`
 
-	// Location specifies the location for the vpc
+	// Region specifies the region for the VPC
 	// +kubebuilder:validation:Required
-	Location Location `json:"location"`
+	// +kubebuilder:default="ITBG-Bergamo"
+	Region string `json:"region"`
 
-	// ProjectReference references the Project that owns this vpc
+	// ProjectReference references the Project that owns this VPC
 	// +kubebuilder:validation:Required
 	ProjectReference ResourceReference `json:"projectReference"`
 }
 
-// VpcStatus defines the observed state of Vpc.
-type VpcStatus struct {
+// VPCStatus defines the observed state of VPC.
+type VPCStatus struct {
 	ResourceStatus `json:",inline"`
 
-	// ProjectID is the project ID where this vpc is created
+	// ProjectID is the project ID where this VPC is created
 	// +kubebuilder:validation:Optional
 	ProjectID string `json:"projectID,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:scope=Namespaced,shortName=vpc
+// +kubebuilder:resource:scope=Namespaced,shortName=vpc;aruvpc
 // +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase"
 // +kubebuilder:printcolumn:name="Resource ID",type="string",JSONPath=".status.resourceID"
 // +kubebuilder:printcolumn:name="Message",type="string",JSONPath=".status.message"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
-// Vpc is the Schema for the vpcs API.
-type Vpc struct {
+// VPC is the Schema for the vpcs API.
+type VPC struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   VpcSpec   `json:"spec,omitempty"`
-	Status VpcStatus `json:"status,omitempty"`
+	Spec   VPCSpec   `json:"spec,omitempty"`
+	Status VPCStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// VpcList contains a list of Vpc.
-type VpcList struct {
+// VPCList contains a list of VPC.
+type VPCList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []Vpc `json:"items"`
+	Items           []VPC `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&Vpc{}, &VpcList{})
+	SchemeBuilder.Register(&VPC{}, &VPCList{})
 }
 
-func (b *Vpc) GetResourceStatus() *ResourceStatus {
+func (b *VPC) GetResourceStatus() *ResourceStatus {
 	return &b.Status.ResourceStatus
 }
 
-func (b *Vpc) GetTenant() string {
+func (b *VPC) GetTenant() string {
 	return b.Spec.Tenant
 }

@@ -39,15 +39,15 @@ const (
 	vpcFinalizerName = "vpc.arubacloud.com/finalizer"
 )
 
-// VpcReconciler reconciles a Vpc object
-type VpcReconciler struct {
+// VPCReconciler reconciles a VPC object
+type VPCReconciler struct {
 	*reconciler.Reconciler
-	ts *TransitionSet[*v1alpha1.Vpc, *arubatypes.VPCResponse]
+	ts *TransitionSet[*v1alpha1.VPC, *arubatypes.VPCResponse]
 }
 
-// NewVpcReconciler creates a new VpcReconciler
-func NewVpcReconciler(baseReconciler *reconciler.Reconciler) *VpcReconciler {
-	r := &VpcReconciler{
+// NewVPCReconciler creates a new VPCReconciler
+func NewVPCReconciler(baseReconciler *reconciler.Reconciler) *VPCReconciler {
+	r := &VPCReconciler{
 		Reconciler: baseReconciler,
 	}
 
@@ -65,23 +65,23 @@ func NewVpcReconciler(baseReconciler *reconciler.Reconciler) *VpcReconciler {
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 
-func (r *VpcReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *VPCReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	return r.Reconciler.Reconcile(ctx, req, r)
 }
 
-func (r *VpcReconciler) Object() reconciler.ResourceObject {
-	return &v1alpha1.Vpc{}
+func (r *VPCReconciler) Object() reconciler.ResourceObject {
+	return &v1alpha1.VPC{}
 }
 
-func (r *VpcReconciler) Finalizer() string {
+func (r *VPCReconciler) Finalizer() string {
 	return vpcFinalizerName
 }
 
 //nolint:gocyclo // complexity is intentional to maintain locality of behavior
-func (r *VpcReconciler) HandleReconcile(ctx context.Context, obj reconciler.ResourceObject) (ctrl.Result, error) {
-	kubeVpc, ok := obj.(*v1alpha1.Vpc)
+func (r *VPCReconciler) HandleReconcile(ctx context.Context, obj reconciler.ResourceObject) (ctrl.Result, error) {
+	kubeVpc, ok := obj.(*v1alpha1.VPC)
 	if !ok {
-		return ctrl.Result{}, errors.New("obj is not a *v1alpha1.Vpc")
+		return ctrl.Result{}, errors.New("obj is not a *v1alpha1.VPC")
 	}
 
 	logger := log.FromContext(ctx).WithValues("tenant", kubeVpc.Spec.Tenant)
@@ -202,9 +202,9 @@ func (r *VpcReconciler) HandleReconcile(ctx context.Context, obj reconciler.Reso
 	return r.ts.Run(ctx, kubeVpc, cmpVpc)
 }
 
-// kubeVpcHasOwnedChildren returns true when any Kubernetes resource directly owned
+// kubeVPCHasOwnedChildren returns true when any Kubernetes resource directly owned
 // by the VPC still exists. Used by the WaitingChildrenDeletion transition.
-func (r *VpcReconciler) kubeVpcHasOwnedChildren(k *v1alpha1.Vpc, _ *arubatypes.VPCResponse) bool {
+func (r *VPCReconciler) kubeVPCHasOwnedChildren(k *v1alpha1.VPC, _ *arubatypes.VPCResponse) bool {
 	labelKey, _ := ownerLabelKey(r.Scheme, k)
 	has, err := hasOwnedChildren(context.Background(), r.Client, k, labelKey,
 		&v1alpha1.SubnetList{},
@@ -217,9 +217,9 @@ func (r *VpcReconciler) kubeVpcHasOwnedChildren(k *v1alpha1.Vpc, _ *arubatypes.V
 	return has
 }
 
-// kubeVpcDeleteOwnedChildren deletes all K8s children of the VPC that have not yet
+// kubeVPCDeleteOwnedChildren deletes all K8s children of the VPC that have not yet
 // received a deletionTimestamp. Called by the WaitingChildrenDeletion action.
-func (r *VpcReconciler) kubeVpcDeleteOwnedChildren(ctx context.Context, k *v1alpha1.Vpc, _ *arubatypes.VPCResponse) error {
+func (r *VPCReconciler) kubeVPCDeleteOwnedChildren(ctx context.Context, k *v1alpha1.VPC, _ *arubatypes.VPCResponse) error {
 	labelKey, _ := ownerLabelKey(r.Scheme, k)
 	return deleteOwnedChildren(ctx, r.Client, k, labelKey,
 		&v1alpha1.SubnetList{},
@@ -229,239 +229,239 @@ func (r *VpcReconciler) kubeVpcDeleteOwnedChildren(ctx context.Context, k *v1alp
 
 // Transition Set Builder
 
-func (r *VpcReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Vpc, *arubatypes.VPCResponse] {
-	ts := &TransitionSet[*v1alpha1.Vpc, *arubatypes.VPCResponse]{
-		defaultRequeue:        NoRequeue[*v1alpha1.Vpc, *arubatypes.VPCResponse],
-		defaultRequeueOnError: NoRequeueButIgnoreError[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+func (r *VPCReconciler) newTransitionSet() *TransitionSet[*v1alpha1.VPC, *arubatypes.VPCResponse] {
+	ts := &TransitionSet[*v1alpha1.VPC, *arubatypes.VPCResponse]{
+		defaultRequeue:        NoRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		defaultRequeueOnError: NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	}
 
 	// 0. PhaseTimedOut — safety net: fail if stuck in a transitory phase too long
-	ts.Add(&AbstractTransition[*v1alpha1.Vpc, *arubatypes.VPCResponse]{
+	ts.Add(&AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
 		name:           "PhaseTimedOut",
-		kCondition:     kubePhaseTimedOut[*v1alpha1.Vpc, *arubatypes.VPCResponse],
-		aCondition:     AlwaysTrue[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		kCondition:     kubePhaseTimedOut[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		aCondition:     AlwaysTrue[*v1alpha1.VPC, *arubatypes.VPCResponse],
 		kAction:        r.kubeSetFailedOnTimeout,
-		requeue:        NoRequeue[*v1alpha1.Vpc, *arubatypes.VPCResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		requeue:        NoRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
 	// 1. ShouldBeDeleted
-	ts.Add(&AbstractTransition[*v1alpha1.Vpc, *arubatypes.VPCResponse]{
+	ts.Add(&AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
 		name:           "ShouldBeDeleted",
-		kCondition:     kubeShouldDelete[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		kCondition:     kubeShouldDelete[*v1alpha1.VPC, *arubatypes.VPCResponse],
 		aCondition:     cmpVpcIsFinal,
 		kAction:        r.kubeMarkToDelete,
-		requeue:        ShortRequeue[*v1alpha1.Vpc, *arubatypes.VPCResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		requeue:        ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
 	// 2. ShouldDeleteTimedOut — enter deletion flow for timed-out resources (except those that timed out during Deleting)
-	ts.Add(&AbstractTransition[*v1alpha1.Vpc, *arubatypes.VPCResponse]{
+	ts.Add(&AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
 		name:           "ShouldDeleteTimedOut",
-		kCondition:     kubeShouldDeleteTimedOut[*v1alpha1.Vpc, *arubatypes.VPCResponse],
-		aCondition:     AlwaysTrue[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		kCondition:     kubeShouldDeleteTimedOut[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		aCondition:     AlwaysTrue[*v1alpha1.VPC, *arubatypes.VPCResponse],
 		kAction:        r.kubeMarkToDelete,
-		requeue:        ShortRequeue[*v1alpha1.Vpc, *arubatypes.VPCResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		requeue:        ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
 	// 3. WaitingChildrenDeletion — block CMP delete until all owned K8s children are gone.
 	// The kAction explicitly deletes children because the K8s GC only cascades after the
 	// owner is fully removed from etcd (impossible while the VPC finalizer is present).
-	ts.Add(&AbstractTransition[*v1alpha1.Vpc, *arubatypes.VPCResponse]{
+	ts.Add(&AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
 		name: "WaitingChildrenDeletion",
-		kCondition: func(k *v1alpha1.Vpc, a *arubatypes.VPCResponse) bool {
-			return kubeShouldBeDeletedOnCMP(k, a) && r.kubeVpcHasOwnedChildren(k, a)
+		kCondition: func(k *v1alpha1.VPC, a *arubatypes.VPCResponse) bool {
+			return kubeShouldBeDeletedOnCMP(k, a) && r.kubeVPCHasOwnedChildren(k, a)
 		},
 		aCondition:     cmpVpcIsFinal,
-		kAction:        r.kubeVpcDeleteOwnedChildren,
-		requeue:        LongRequeue[*v1alpha1.Vpc, *arubatypes.VPCResponse],
-		requeueOnError: ShortRequeueAndIgnoreError[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		kAction:        r.kubeVPCDeleteOwnedChildren,
+		requeue:        LongRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		requeueOnError: ShortRequeueAndIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
 	// 4. ShouldBeDeletedOnCMP
-	ts.Add(&AbstractTransition[*v1alpha1.Vpc, *arubatypes.VPCResponse]{
+	ts.Add(&AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
 		name:              "ShouldBeDeletedOnCMP",
-		kCondition:        kubeShouldBeDeletedOnCMP[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		kCondition:        kubeShouldBeDeletedOnCMP[*v1alpha1.VPC, *arubatypes.VPCResponse],
 		aCondition:        cmpVpcIsFinal,
 		aAction:           r.cmpDelete,
 		kActionOnASuccess: r.kubeMarkDeleting,
-		kActionOnAError:   kubeSetErrorMessageOnCMPError[*v1alpha1.Vpc, *arubatypes.VPCResponse](r.Client),
-		requeue:           ShortRequeue[*v1alpha1.Vpc, *arubatypes.VPCResponse],
-		requeueOnError:    SmartRequeueOnError[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		kActionOnAError:   kubeSetErrorMessageOnCMPError[*v1alpha1.VPC, *arubatypes.VPCResponse](r.Client),
+		requeue:           ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		requeueOnError:    SmartRequeueOnError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
 	// 5. DeletionOnCMPNotNeeded — resource marked for deletion but CMP resource doesn't exist; skip CMP delete
-	ts.Add(&AbstractTransition[*v1alpha1.Vpc, *arubatypes.VPCResponse]{
+	ts.Add(&AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
 		name:           "DeletionOnCMPNotNeeded",
-		kCondition:     kubeShouldBeDeletedOnCMP[*v1alpha1.Vpc, *arubatypes.VPCResponse],
-		aCondition:     cmpVpcNotExists,
+		kCondition:     kubeShouldBeDeletedOnCMP[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		aCondition:     cmpVPCNotExists,
 		kAction:        r.kubeMarkDeletingDone,
-		requeue:        ShortRequeue[*v1alpha1.Vpc, *arubatypes.VPCResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		requeue:        ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
 	// 6. WaitingDeletionOnCMP
-	ts.Add(&AbstractTransition[*v1alpha1.Vpc, *arubatypes.VPCResponse]{
+	ts.Add(&AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
 		name:           "WaitingDeletionOnCMP",
-		kCondition:     kubeWaitingDeletionOnCMP[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		kCondition:     kubeWaitingDeletionOnCMP[*v1alpha1.VPC, *arubatypes.VPCResponse],
 		aCondition:     cmpVpcIsTransitory,
-		requeue:        LongRequeue[*v1alpha1.Vpc, *arubatypes.VPCResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		requeue:        LongRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
 	// 7. DeletionConfirmedOnCMP
-	ts.Add(&AbstractTransition[*v1alpha1.Vpc, *arubatypes.VPCResponse]{
+	ts.Add(&AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
 		name:           "DeletionConfirmedOnCMP",
-		kCondition:     kubeWaitingDeletionOnCMP[*v1alpha1.Vpc, *arubatypes.VPCResponse],
-		aCondition:     cmpVpcNotExists,
+		kCondition:     kubeWaitingDeletionOnCMP[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		aCondition:     cmpVPCNotExists,
 		kAction:        r.kubeMarkDeletingDone,
-		requeue:        ShortRequeue[*v1alpha1.Vpc, *arubatypes.VPCResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		requeue:        ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
 	// 8. DeletionAccomplished
-	ts.Add(&AbstractTransition[*v1alpha1.Vpc, *arubatypes.VPCResponse]{
+	ts.Add(&AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
 		name:           "DeletionAccomplished",
-		kCondition:     kubeDeletionAccomplished[*v1alpha1.Vpc, *arubatypes.VPCResponse],
-		aCondition:     cmpVpcNotExists,
+		kCondition:     kubeDeletionAccomplished[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		aCondition:     cmpVPCNotExists,
 		kAction:        r.kubeMarkDeleted,
-		requeue:        ShortRequeue[*v1alpha1.Vpc, *arubatypes.VPCResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		requeue:        ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
 	// 8. HasDeniedChanges — surface immutable field violations before attempting update
-	ts.Add(&AbstractTransition[*v1alpha1.Vpc, *arubatypes.VPCResponse]{
+	ts.Add(&AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
 		name:       "HasDeniedChanges",
-		kCondition: kubeVpcHasDeniedChanges,
+		kCondition: kubeVPCHasDeniedChanges,
 		aCondition: cmpVpcIsFinal,
-		kAction: func(ctx context.Context, kubeVpc *v1alpha1.Vpc, cmpVpc *arubatypes.VPCResponse) error {
+		kAction: func(ctx context.Context, kubeVpc *v1alpha1.VPC, cmpVpc *arubatypes.VPCResponse) error {
 			return fmt.Errorf("vpc update rejected: %w", checkVpcDeniedChanges(kubeVpc, cmpVpc))
 		},
-		requeue:        NoRequeue[*v1alpha1.Vpc, *arubatypes.VPCResponse],
-		requeueOnError: LongRequeueAndIgnoreError[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		requeue:        NoRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		requeueOnError: LongRequeueAndIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
 	// 9. SpecAlreadyInSyncWithCMP — generation changed but spec identical to CMP; just re-stamp ObservedGeneration
-	ts.Add(&AbstractTransition[*v1alpha1.Vpc, *arubatypes.VPCResponse]{
+	ts.Add(&AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
 		name:           "SpecAlreadyInSyncWithCMP",
-		kCondition:     kubeVpcSpecInSyncWithCMP,
+		kCondition:     kubeVPCSpecInSyncWithCMP,
 		aCondition:     cmpVpcIsActive,
 		kAction:        r.kubeSetActiveAndSetID,
-		requeue:        NoRequeue[*v1alpha1.Vpc, *arubatypes.VPCResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		requeue:        NoRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
 	// 10. ShouldBeUpdated — spec changed and CMP is ready
-	ts.Add(&AbstractTransition[*v1alpha1.Vpc, *arubatypes.VPCResponse]{
+	ts.Add(&AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
 		name:           "ShouldBeUpdated",
-		kCondition:     kubeVpcShouldUpdate,
+		kCondition:     kubeVPCShouldUpdate,
 		aCondition:     cmpVpcIsFinal,
 		kAction:        r.kubeMarkToUpdate,
-		requeue:        ShortRequeue[*v1alpha1.Vpc, *arubatypes.VPCResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		requeue:        ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
 	// 11. ShouldBeUpdatedOnCMP — send update to CMP
-	ts.Add(&AbstractTransition[*v1alpha1.Vpc, *arubatypes.VPCResponse]{
+	ts.Add(&AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
 		name:              "ShouldBeUpdatedOnCMP",
-		kCondition:        kubeShouldBeUpdatedOnCMP[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		kCondition:        kubeShouldBeUpdatedOnCMP[*v1alpha1.VPC, *arubatypes.VPCResponse],
 		aCondition:        cmpVpcIsFinal,
 		aAction:           r.cmpUpdate,
 		kActionOnASuccess: r.kubeMarkUpdating,
-		kActionOnAError:   kubeSetErrorMessageOnCMPError[*v1alpha1.Vpc, *arubatypes.VPCResponse](r.Client),
-		requeue:           ShortRequeue[*v1alpha1.Vpc, *arubatypes.VPCResponse],
-		requeueOnError:    SmartRequeueOnError[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		kActionOnAError:   kubeSetErrorMessageOnCMPError[*v1alpha1.VPC, *arubatypes.VPCResponse](r.Client),
+		requeue:           ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		requeueOnError:    SmartRequeueOnError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
 	// 12. WaitingUpdateOnCMP — CMP is still processing the update
-	ts.Add(&AbstractTransition[*v1alpha1.Vpc, *arubatypes.VPCResponse]{
+	ts.Add(&AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
 		name:           "WaitingUpdateOnCMP",
-		kCondition:     kubeWaitingUpdateOnCMP[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		kCondition:     kubeWaitingUpdateOnCMP[*v1alpha1.VPC, *arubatypes.VPCResponse],
 		aCondition:     cmpVpcIsTransitory,
-		requeue:        LongRequeue[*v1alpha1.Vpc, *arubatypes.VPCResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		requeue:        LongRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
 	// 13. UpdateConfirmedOnCMP — CMP has settled; advance to Synchronized
-	ts.Add(&AbstractTransition[*v1alpha1.Vpc, *arubatypes.VPCResponse]{
+	ts.Add(&AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
 		name:           "UpdateConfirmedOnCMP",
-		kCondition:     kubeWaitingUpdateOnCMP[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		kCondition:     kubeWaitingUpdateOnCMP[*v1alpha1.VPC, *arubatypes.VPCResponse],
 		aCondition:     cmpVpcIsFinal,
 		kAction:        r.kubeMarkUpdatingDone,
-		requeue:        ShortRequeue[*v1alpha1.Vpc, *arubatypes.VPCResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		requeue:        ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
 	// 14. UpdateAccomplished — transition back to Active and stamp generation
-	ts.Add(&AbstractTransition[*v1alpha1.Vpc, *arubatypes.VPCResponse]{
+	ts.Add(&AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
 		name:           "UpdateAccomplished",
-		kCondition:     kubeUpdateAccomplished[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		kCondition:     kubeUpdateAccomplished[*v1alpha1.VPC, *arubatypes.VPCResponse],
 		aCondition:     cmpVpcIsActive,
 		kAction:        r.kubeSetActiveAndSetID,
-		requeue:        NoRequeue[*v1alpha1.Vpc, *arubatypes.VPCResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		requeue:        NoRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
 	// 15. ShouldBeCreated
-	ts.Add(&AbstractTransition[*v1alpha1.Vpc, *arubatypes.VPCResponse]{
+	ts.Add(&AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
 		name:           "ShouldBeCreated",
-		kCondition:     kubeIsFirstReconciliation[*v1alpha1.Vpc, *arubatypes.VPCResponse],
-		aCondition:     cmpVpcNotExists,
+		kCondition:     kubeIsFirstReconciliation[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		aCondition:     cmpVPCNotExists,
 		kAction:        r.kubeMarkToCreate,
-		requeue:        ShortRequeue[*v1alpha1.Vpc, *arubatypes.VPCResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		requeue:        ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
 	// 16. ShouldBeCreatedInCMP
-	ts.Add(&AbstractTransition[*v1alpha1.Vpc, *arubatypes.VPCResponse]{
+	ts.Add(&AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
 		name:              "ShouldBeCreatedInCMP",
-		kCondition:        kubeShouldBeCreatedOnCMP[*v1alpha1.Vpc, *arubatypes.VPCResponse],
-		aCondition:        cmpVpcNotExists,
+		kCondition:        kubeShouldBeCreatedOnCMP[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		aCondition:        cmpVPCNotExists,
 		aAction:           r.cmpCreate,
 		kActionOnASuccess: r.kubeMarkCreating,
-		kActionOnAError:   kubeSetErrorMessageOnCMPError[*v1alpha1.Vpc, *arubatypes.VPCResponse](r.Client),
-		requeue:           ShortRequeue[*v1alpha1.Vpc, *arubatypes.VPCResponse],
-		requeueOnError:    SmartRequeueOnError[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		kActionOnAError:   kubeSetErrorMessageOnCMPError[*v1alpha1.VPC, *arubatypes.VPCResponse](r.Client),
+		requeue:           ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		requeueOnError:    SmartRequeueOnError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
 	// 17. WaitingCreationInCMP
-	ts.Add(&AbstractTransition[*v1alpha1.Vpc, *arubatypes.VPCResponse]{
+	ts.Add(&AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
 		name:           "WaitingCreationInCMP",
-		kCondition:     kubeWaitingCreationInCMP[*v1alpha1.Vpc, *arubatypes.VPCResponse],
-		aCondition:     cmpVpcNotExistsOrTransitory,
-		requeue:        LongRequeue[*v1alpha1.Vpc, *arubatypes.VPCResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		kCondition:     kubeWaitingCreationInCMP[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		aCondition:     cmpVPCNotExistsOrTransitory,
+		requeue:        LongRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
 	// 18. CreationConfirmedOnCMP
-	ts.Add(&AbstractTransition[*v1alpha1.Vpc, *arubatypes.VPCResponse]{
+	ts.Add(&AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
 		name:           "CreationConfirmedOnCMP",
-		kCondition:     kubeWaitingCreationInCMP[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		kCondition:     kubeWaitingCreationInCMP[*v1alpha1.VPC, *arubatypes.VPCResponse],
 		aCondition:     cmpVpcIsActive,
 		kAction:        r.kubeMarkCreatingDone,
-		requeue:        ShortRequeue[*v1alpha1.Vpc, *arubatypes.VPCResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		requeue:        ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
 	// 19. CreationAccomplished
-	ts.Add(&AbstractTransition[*v1alpha1.Vpc, *arubatypes.VPCResponse]{
+	ts.Add(&AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
 		name:           "CreationAccomplished",
-		kCondition:     kubeIsCreatedOnCMP[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		kCondition:     kubeIsCreatedOnCMP[*v1alpha1.VPC, *arubatypes.VPCResponse],
 		aCondition:     cmpVpcIsActive,
 		kAction:        r.kubeSetActiveAndSetID,
-		requeue:        NoRequeue[*v1alpha1.Vpc, *arubatypes.VPCResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		requeue:        NoRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
 	// 20. IsInError
-	ts.Add(&AbstractTransition[*v1alpha1.Vpc, *arubatypes.VPCResponse]{
+	ts.Add(&AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
 		name:           "IsInError",
-		kCondition:     AlwaysTrue[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		kCondition:     AlwaysTrue[*v1alpha1.VPC, *arubatypes.VPCResponse],
 		aCondition:     cmpVpcIsFailed,
 		kAction:        r.kubeSetFailed,
-		requeue:        NoRequeue[*v1alpha1.Vpc, *arubatypes.VPCResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Vpc, *arubatypes.VPCResponse],
+		requeue:        NoRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
 	return ts
@@ -469,7 +469,7 @@ func (r *VpcReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Vpc, *arubat
 
 // Resource-specific condition functions
 
-func kubeVpcHasDeniedChanges(kubeVpc *v1alpha1.Vpc, cmpVpc *arubatypes.VPCResponse) bool {
+func kubeVPCHasDeniedChanges(kubeVpc *v1alpha1.VPC, cmpVpc *arubatypes.VPCResponse) bool {
 	if !kubeVpc.DeletionTimestamp.IsZero() {
 		return false
 	}
@@ -479,132 +479,132 @@ func kubeVpcHasDeniedChanges(kubeVpc *v1alpha1.Vpc, cmpVpc *arubatypes.VPCRespon
 	return checkVpcDeniedChanges(kubeVpc, cmpVpc) != nil
 }
 
-func kubeVpcSpecInSyncWithCMP(kubeVpc *v1alpha1.Vpc, cmpVpc *arubatypes.VPCResponse) bool {
+func kubeVPCSpecInSyncWithCMP(kubeVpc *v1alpha1.VPC, cmpVpc *arubatypes.VPCResponse) bool {
 	return kubeActiveAndGenerationChanged(kubeVpc, cmpVpc) &&
 		checkVpcDeniedChanges(kubeVpc, cmpVpc) == nil &&
 		!kubeVpcNeedsUpdate(kubeVpc, cmpVpc)
 }
 
-func kubeVpcShouldUpdate(kubeVpc *v1alpha1.Vpc, cmpVpc *arubatypes.VPCResponse) bool {
+func kubeVPCShouldUpdate(kubeVpc *v1alpha1.VPC, cmpVpc *arubatypes.VPCResponse) bool {
 	return kubeActiveAndGenerationChanged(kubeVpc, cmpVpc) &&
 		checkVpcDeniedChanges(kubeVpc, cmpVpc) == nil &&
 		kubeVpcNeedsUpdate(kubeVpc, cmpVpc)
 }
 
-func cmpVpcNotExists(_ *v1alpha1.Vpc, cmpVpc *arubatypes.VPCResponse) bool {
+func cmpVPCNotExists(_ *v1alpha1.VPC, cmpVpc *arubatypes.VPCResponse) bool {
 	return cmpVpc == nil
 }
 
-func cmpVpcIsFinal(_ *v1alpha1.Vpc, cmpVpc *arubatypes.VPCResponse) bool {
+func cmpVpcIsFinal(_ *v1alpha1.VPC, cmpVpc *arubatypes.VPCResponse) bool {
 	if cmpVpc == nil || cmpVpc.Status.State == nil {
 		return false
 	}
-	return AssesCSPResourceStateNature(&cmpVpc.Status) == CSPResourceStateNatureFinal
+	return AssessCSPResourceStateNature(&cmpVpc.Status) == CSPResourceStateNatureFinal
 }
 
-func cmpVpcIsTransitory(_ *v1alpha1.Vpc, cmpVpc *arubatypes.VPCResponse) bool {
+func cmpVpcIsTransitory(_ *v1alpha1.VPC, cmpVpc *arubatypes.VPCResponse) bool {
 	if cmpVpc == nil || cmpVpc.Status.State == nil {
 		return false
 	}
-	return AssesCSPResourceStateNature(&cmpVpc.Status) == CSPResourceStateNatureTransitory
+	return AssessCSPResourceStateNature(&cmpVpc.Status) == CSPResourceStateNatureTransitory
 }
 
-func cmpVpcNotExistsOrTransitory(_ *v1alpha1.Vpc, cmpVpc *arubatypes.VPCResponse) bool {
+func cmpVPCNotExistsOrTransitory(_ *v1alpha1.VPC, cmpVpc *arubatypes.VPCResponse) bool {
 	if cmpVpc == nil {
 		return true
 	}
 	if cmpVpc.Status.State == nil {
 		return false
 	}
-	return AssesCSPResourceStateNature(&cmpVpc.Status) == CSPResourceStateNatureTransitory
+	return AssessCSPResourceStateNature(&cmpVpc.Status) == CSPResourceStateNatureTransitory
 }
 
-func cmpVpcIsActive(_ *v1alpha1.Vpc, cmpVpc *arubatypes.VPCResponse) bool {
+func cmpVpcIsActive(_ *v1alpha1.VPC, cmpVpc *arubatypes.VPCResponse) bool {
 	return cmpVpc != nil && cmpVpc.Status.State != nil &&
 		*cmpVpc.Status.State == CSPResourceStateActive
 }
 
-func cmpVpcIsFailed(_ *v1alpha1.Vpc, cmpVpc *arubatypes.VPCResponse) bool {
+func cmpVpcIsFailed(_ *v1alpha1.VPC, cmpVpc *arubatypes.VPCResponse) bool {
 	return cmpVpc != nil && cmpVpc.Status.State != nil && *cmpVpc.Status.State == CSPResourceStateFailed
 }
 
 // Kube action methods
 
-func (r *VpcReconciler) kubeSetPhaseAndCondition(ctx context.Context, kubeVpc *v1alpha1.Vpc, phase v1alpha1.ResourcePhase, reason string, _ error) error {
-	return setPhaseAndCondition(r.Client, ctx, kubeVpc, phase, reason, nil, func(vpc *v1alpha1.Vpc) {
+func (r *VPCReconciler) kubeSetPhaseAndCondition(ctx context.Context, kubeVpc *v1alpha1.VPC, phase v1alpha1.ResourcePhase, reason string, _ error) error {
+	return setPhaseAndCondition(r.Client, ctx, kubeVpc, phase, reason, nil, func(vpc *v1alpha1.VPC) {
 		if prjID, ok := ctx.Value(projectIDKey).(string); ok && vpc.Status.ProjectID == "" {
 			vpc.Status.ProjectID = prjID
 		}
 	})
 }
 
-func (r *VpcReconciler) kubeMarkToDelete(ctx context.Context, kubeVpc *v1alpha1.Vpc, _ *arubatypes.VPCResponse) error {
+func (r *VPCReconciler) kubeMarkToDelete(ctx context.Context, kubeVpc *v1alpha1.VPC, _ *arubatypes.VPCResponse) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeVpc, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize, nil)
 }
 
-func (r *VpcReconciler) kubeMarkDeleting(ctx context.Context, kubeVpc *v1alpha1.Vpc, _ *arubatypes.VPCResponse) error {
+func (r *VPCReconciler) kubeMarkDeleting(ctx context.Context, kubeVpc *v1alpha1.VPC, _ *arubatypes.VPCResponse) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeVpc, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronizing, nil)
 }
 
-func (r *VpcReconciler) kubeMarkDeletingDone(ctx context.Context, kubeVpc *v1alpha1.Vpc, _ *arubatypes.VPCResponse) error {
+func (r *VPCReconciler) kubeMarkDeletingDone(ctx context.Context, kubeVpc *v1alpha1.VPC, _ *arubatypes.VPCResponse) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeVpc, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronized, nil)
 }
 
-func (r *VpcReconciler) kubeMarkDeleted(ctx context.Context, kubeVpc *v1alpha1.Vpc, _ *arubatypes.VPCResponse) error {
+func (r *VPCReconciler) kubeMarkDeleted(ctx context.Context, kubeVpc *v1alpha1.VPC, _ *arubatypes.VPCResponse) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeVpc, v1alpha1.ResourcePhaseDeleted, v1alpha1.ConditionReasonSynchronized, nil)
 }
 
-func (r *VpcReconciler) kubeMarkToUpdate(ctx context.Context, kubeVpc *v1alpha1.Vpc, _ *arubatypes.VPCResponse) error {
+func (r *VPCReconciler) kubeMarkToUpdate(ctx context.Context, kubeVpc *v1alpha1.VPC, _ *arubatypes.VPCResponse) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeVpc, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, nil)
 }
 
-func (r *VpcReconciler) kubeMarkUpdating(ctx context.Context, kubeVpc *v1alpha1.Vpc, _ *arubatypes.VPCResponse) error {
+func (r *VPCReconciler) kubeMarkUpdating(ctx context.Context, kubeVpc *v1alpha1.VPC, _ *arubatypes.VPCResponse) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeVpc, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonSynchronizing, nil)
 }
 
-func (r *VpcReconciler) kubeMarkUpdatingDone(ctx context.Context, kubeVpc *v1alpha1.Vpc, _ *arubatypes.VPCResponse) error {
+func (r *VPCReconciler) kubeMarkUpdatingDone(ctx context.Context, kubeVpc *v1alpha1.VPC, _ *arubatypes.VPCResponse) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeVpc, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonSynchronized, nil)
 }
 
-func (r *VpcReconciler) kubeMarkToCreate(ctx context.Context, kubeVpc *v1alpha1.Vpc, _ *arubatypes.VPCResponse) error {
+func (r *VPCReconciler) kubeMarkToCreate(ctx context.Context, kubeVpc *v1alpha1.VPC, _ *arubatypes.VPCResponse) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeVpc, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, nil)
 }
 
-func (r *VpcReconciler) kubeMarkCreating(ctx context.Context, kubeVpc *v1alpha1.Vpc, _ *arubatypes.VPCResponse) error {
+func (r *VPCReconciler) kubeMarkCreating(ctx context.Context, kubeVpc *v1alpha1.VPC, _ *arubatypes.VPCResponse) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeVpc, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, nil)
 }
 
-func (r *VpcReconciler) kubeMarkCreatingDone(ctx context.Context, kubeVpc *v1alpha1.Vpc, _ *arubatypes.VPCResponse) error {
+func (r *VPCReconciler) kubeMarkCreatingDone(ctx context.Context, kubeVpc *v1alpha1.VPC, _ *arubatypes.VPCResponse) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeVpc, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronized, nil)
 }
 
-func (r *VpcReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeVpc *v1alpha1.Vpc, cmpVpc *arubatypes.VPCResponse) error {
+func (r *VPCReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeVpc *v1alpha1.VPC, cmpVpc *arubatypes.VPCResponse) error {
 	cmpID := ""
 	if cmpVpc != nil && cmpVpc.Metadata.ID != nil {
 		cmpID = *cmpVpc.Metadata.ID
 	}
-	return setActiveAndSetID(r.Client, ctx, kubeVpc, cmpID, nil, func(vpc *v1alpha1.Vpc) {
+	return setActiveAndSetID(r.Client, ctx, kubeVpc, cmpID, nil, func(vpc *v1alpha1.VPC) {
 		if prjID, ok := ctx.Value(projectIDKey).(string); ok && vpc.Status.ProjectID != "" {
 			vpc.Status.ProjectID = prjID
 		}
 	})
 }
 
-func (r *VpcReconciler) kubeSetFailedOnTimeout(ctx context.Context, kubeVpc *v1alpha1.Vpc, _ *arubatypes.VPCResponse) error {
-	return setFailedOnTimeout(r.Client, ctx, kubeVpc, func(vpc *v1alpha1.Vpc) {
+func (r *VPCReconciler) kubeSetFailedOnTimeout(ctx context.Context, kubeVpc *v1alpha1.VPC, _ *arubatypes.VPCResponse) error {
+	return setFailedOnTimeout(r.Client, ctx, kubeVpc, func(vpc *v1alpha1.VPC) {
 		if prjID, ok := ctx.Value(projectIDKey).(string); ok && vpc.Status.ProjectID == "" {
 			vpc.Status.ProjectID = prjID
 		}
 	})
 }
 
-func (r *VpcReconciler) kubeSetFailed(ctx context.Context, kubeVpc *v1alpha1.Vpc, _ *arubatypes.VPCResponse) error {
+func (r *VPCReconciler) kubeSetFailed(ctx context.Context, kubeVpc *v1alpha1.VPC, _ *arubatypes.VPCResponse) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeVpc, v1alpha1.ResourcePhaseFailed, v1alpha1.ConditionReasonSynchronized, nil)
 }
 
 // CMP action methods
 
-func (r *VpcReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.Vpc, cmpVpc *arubatypes.VPCResponse) error {
+func (r *VPCReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.VPC, cmpVpc *arubatypes.VPCResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
 	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
 
@@ -616,7 +616,7 @@ func (r *VpcReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.Vpc, cmpVpc *
 		http.StatusOK, http.StatusAccepted, http.StatusNoContent, http.StatusNotFound)
 }
 
-func (r *VpcReconciler) cmpUpdate(ctx context.Context, kubeVpc *v1alpha1.Vpc, cmpVpc *arubatypes.VPCResponse) error {
+func (r *VPCReconciler) cmpUpdate(ctx context.Context, kubeVpc *v1alpha1.VPC, cmpVpc *arubatypes.VPCResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
 	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
 
@@ -635,7 +635,7 @@ func (r *VpcReconciler) cmpUpdate(ctx context.Context, kubeVpc *v1alpha1.Vpc, cm
 		http.StatusOK, http.StatusAccepted, http.StatusNoContent)
 }
 
-func (r *VpcReconciler) cmpCreate(ctx context.Context, kubeVpc *v1alpha1.Vpc, _ *arubatypes.VPCResponse) error {
+func (r *VPCReconciler) cmpCreate(ctx context.Context, kubeVpc *v1alpha1.VPC, _ *arubatypes.VPCResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
 	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
 
@@ -649,7 +649,7 @@ func (r *VpcReconciler) cmpCreate(ctx context.Context, kubeVpc *v1alpha1.Vpc, _ 
 
 // Helper functions
 
-func checkVpcDeniedChanges(kubeVpc *v1alpha1.Vpc, cmpVpc *arubatypes.VPCResponse) error {
+func checkVpcDeniedChanges(kubeVpc *v1alpha1.VPC, cmpVpc *arubatypes.VPCResponse) error {
 	if cmpVpc == nil {
 		return nil
 	}
@@ -658,21 +658,21 @@ func checkVpcDeniedChanges(kubeVpc *v1alpha1.Vpc, cmpVpc *arubatypes.VPCResponse
 	if cmpVpc.Metadata.LocationResponse != nil {
 		locationValue = cmpVpc.Metadata.LocationResponse.Value
 	}
-	if kubeVpc.Spec.Location.Value != locationValue {
+	if kubeVpc.Spec.Region != locationValue {
 		return fmt.Errorf("%w: %w", ErrNotAllowedChanges, errors.New("change the 'location' is not allowed"))
 	}
 
 	return nil
 }
 
-func kubeVpcNeedsUpdate(kubeVpc *v1alpha1.Vpc, cmpVpc *arubatypes.VPCResponse) bool {
+func kubeVpcNeedsUpdate(kubeVpc *v1alpha1.VPC, cmpVpc *arubatypes.VPCResponse) bool {
 	if cmpVpc == nil {
 		return false
 	}
 	return !tagsAreEqual(kubeVpc.Spec.Tags, cmpVpc.Metadata.Tags)
 }
 
-func buildVpcUpdateRequest(kubeVpc *v1alpha1.Vpc, cmpVpc *arubatypes.VPCResponse) *arubatypes.VPCRequest {
+func buildVpcUpdateRequest(kubeVpc *v1alpha1.VPC, cmpVpc *arubatypes.VPCResponse) *arubatypes.VPCRequest {
 	request := cmpVpcRequestFromCMP(cmpVpc)
 	if request == nil {
 		return nil
@@ -709,7 +709,7 @@ func cmpVpcRequestFromCMP(cmpVpc *arubatypes.VPCResponse) *arubatypes.VPCRequest
 	}
 }
 
-func cmpVpcRequestFromKube(kubeVpc *v1alpha1.Vpc) *arubatypes.VPCRequest {
+func cmpVpcRequestFromKube(kubeVpc *v1alpha1.VPC) *arubatypes.VPCRequest {
 	falseVal := false
 	return &arubatypes.VPCRequest{
 		Metadata: arubatypes.RegionalResourceMetadataRequest{
@@ -717,7 +717,7 @@ func cmpVpcRequestFromKube(kubeVpc *v1alpha1.Vpc) *arubatypes.VPCRequest {
 				Name: kubeVpc.Name,
 				Tags: kubeVpc.Spec.Tags,
 			},
-			Location: arubatypes.LocationRequest(kubeVpc.Spec.Location),
+			Location: arubatypes.LocationRequest{Value: kubeVpc.Spec.Region},
 		},
 		Properties: arubatypes.VPCPropertiesRequest{
 			Properties: &arubatypes.VPCProperties{
@@ -729,20 +729,20 @@ func cmpVpcRequestFromKube(kubeVpc *v1alpha1.Vpc) *arubatypes.VPCRequest {
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *VpcReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *VPCReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&v1alpha1.Vpc{}).
+		For(&v1alpha1.VPC{}).
 		Watches(&v1alpha1.Subnet{}, handler.EnqueueRequestsFromMapFunc(
 			childToParentMapFunc(func(o client.Object) *v1alpha1.ResourceReference {
 				if v, ok := o.(*v1alpha1.Subnet); ok {
-					return &v.Spec.VpcReference
+					return &v.Spec.VPCReference
 				}
 				return nil
 			}))).
 		Watches(&v1alpha1.SecurityGroup{}, handler.EnqueueRequestsFromMapFunc(
 			childToParentMapFunc(func(o client.Object) *v1alpha1.ResourceReference {
 				if v, ok := o.(*v1alpha1.SecurityGroup); ok {
-					return &v.Spec.VpcReference
+					return &v.Spec.VPCReference
 				}
 				return nil
 			}))).

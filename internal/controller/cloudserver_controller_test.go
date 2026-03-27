@@ -204,14 +204,14 @@ func defaultCSSpec(projectName, vpcName, bootVolName, subnetName, sgName string)
 	return v1alpha1.CloudServerSpec{
 		Tenant:     "test-tenant",
 		Tags:       []string{"tag1"},
-		DataCenter: "ITBG",
+		Zone:       "ITBG",
 		FlavorName: "gp1.small",
-		Location:   v1alpha1.Location{Value: "ITBG-Bergamo"},
+		Region:     "ITBG-Bergamo",
 		ProjectReference: v1alpha1.ResourceReference{
 			Name:      projectName,
 			Namespace: "default",
 		},
-		VpcReference: v1alpha1.ResourceReference{
+		VPCReference: v1alpha1.ResourceReference{
 			Name:      vpcName,
 			Namespace: "default",
 		},
@@ -259,7 +259,7 @@ func setCSStatus(
 	s.Status.Phase = phase
 	s.Status.ResourceID = resourceID
 	s.Status.ProjectID = projectID
-	s.Status.VpcID = vpcID
+	s.Status.VPCID = vpcID
 	s.Status.BootVolumeID = bootVolumeID
 	s.Status.KeyPairID = keyPairID
 	s.Status.SubnetIDs = subnetIDs
@@ -540,7 +540,7 @@ var _ = Describe("CloudServerReconciler", func() {
 			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseActive))
 			Expect(updated.Status.ResourceID).To(Equal("cs-id-1"))
 			Expect(updated.Status.ProjectID).To(Equal(csProjectID))
-			Expect(updated.Status.VpcID).To(Equal(csVpcID))
+			Expect(updated.Status.VPCID).To(Equal(csVpcID))
 			Expect(updated.Status.BootVolumeID).To(Equal(csBootVolID))
 			Expect(updated.Status.SubnetIDs).To(ConsistOf(csSubnetID))
 			Expect(updated.Status.SecurityGroupIDs).To(ConsistOf(csSGID))
@@ -967,7 +967,7 @@ var _ = Describe("CloudServerReconciler", func() {
 			updated := &v1alpha1.CloudServer{}
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
 			Expect(updated.Status.ProjectID).To(Equal(csProjectID))
-			Expect(updated.Status.VpcID).To(Equal(csVpcID))
+			Expect(updated.Status.VPCID).To(Equal(csVpcID))
 			Expect(updated.Status.BootVolumeID).To(Equal(csBootVolID))
 			Expect(updated.Status.SubnetIDs).To(ConsistOf(csSubnetID))
 			Expect(updated.Status.SecurityGroupIDs).To(ConsistOf(csSGID))

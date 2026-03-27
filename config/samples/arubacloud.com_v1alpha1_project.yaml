@@ -9,4 +9,3 @@ spec:
   tags:
     - test-ciao
     - local
-  default: false

@@ -23,20 +23,20 @@ func newTestReconciler(_ GinkgoTInterface, mockArubaClient aruba.Client) *reconc
 
 func strPtr(s string) *string { return &s }
 
-var _ = Describe("AssesCSPResourceStateNature", func() {
+var _ = Describe("AssessCSPResourceStateNature", func() {
 	It("returns Undetermined for nil status", func() {
-		Expect(AssesCSPResourceStateNature(nil)).To(Equal(CSPResourceStateNatureUndetermined))
+		Expect(AssessCSPResourceStateNature(nil)).To(Equal(CSPResourceStateNatureUndetermined))
 	})
 
 	It("returns Undetermined when State is nil", func() {
 		s := &arubatypes.ResourceStatus{}
-		Expect(AssesCSPResourceStateNature(s)).To(Equal(CSPResourceStateNatureUndetermined))
+		Expect(AssessCSPResourceStateNature(s)).To(Equal(CSPResourceStateNatureUndetermined))
 	})
 
 	DescribeTable("transitory states",
 		func(state string) {
 			s := &arubatypes.ResourceStatus{State: strPtr(state)}
-			Expect(AssesCSPResourceStateNature(s)).To(Equal(CSPResourceStateNatureTransitory))
+			Expect(AssessCSPResourceStateNature(s)).To(Equal(CSPResourceStateNatureTransitory))
 		},
 		Entry("InCreation", CSPResourceStateInCreation),
 		Entry("Creating", CSPResourceStateCreating),
@@ -50,7 +50,7 @@ var _ = Describe("AssesCSPResourceStateNature", func() {
 	DescribeTable("final states",
 		func(state string) {
 			s := &arubatypes.ResourceStatus{State: strPtr(state)}
-			Expect(AssesCSPResourceStateNature(s)).To(Equal(CSPResourceStateNatureFinal))
+			Expect(AssessCSPResourceStateNature(s)).To(Equal(CSPResourceStateNatureFinal))
 		},
 		Entry("Active", CSPResourceStateActive),
 		Entry("NotUsed", CSPResourceStateNotUsed),
@@ -64,7 +64,7 @@ var _ = Describe("AssesCSPResourceStateNature", func() {
 
 	It("returns Invalid for unknown state", func() {
 		s := &arubatypes.ResourceStatus{State: strPtr("UnknownState")}
-		Expect(AssesCSPResourceStateNature(s)).To(Equal(CSPResourceStateNatureInvalid))
+		Expect(AssessCSPResourceStateNature(s)).To(Equal(CSPResourceStateNatureInvalid))
 	})
 })
 

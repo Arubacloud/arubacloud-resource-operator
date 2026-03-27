@@ -457,14 +457,14 @@ func cmpBlockStorageIsFinal(_ *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockSto
 	if cmpBS == nil || cmpBS.Status.State == nil {
 		return false
 	}
-	return AssesCSPResourceStateNature(&cmpBS.Status) == CSPResourceStateNatureFinal
+	return AssessCSPResourceStateNature(&cmpBS.Status) == CSPResourceStateNatureFinal
 }
 
 func cmpBlockStorageIsTransitory(_ *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockStorageResponse) bool {
 	if cmpBS == nil || cmpBS.Status.State == nil {
 		return false
 	}
-	return AssesCSPResourceStateNature(&cmpBS.Status) == CSPResourceStateNatureTransitory
+	return AssessCSPResourceStateNature(&cmpBS.Status) == CSPResourceStateNatureTransitory
 }
 
 func cmpBlockStorageNotExistsOrTransitory(_ *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockStorageResponse) bool {
@@ -474,7 +474,7 @@ func cmpBlockStorageNotExistsOrTransitory(_ *v1alpha1.BlockStorage, cmpBS *aruba
 	if cmpBS.Status.State == nil {
 		return false
 	}
-	return AssesCSPResourceStateNature(&cmpBS.Status) == CSPResourceStateNatureTransitory
+	return AssessCSPResourceStateNature(&cmpBS.Status) == CSPResourceStateNatureTransitory
 }
 
 func cmpBlockStorageIsActive(_ *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockStorageResponse) bool {
@@ -616,7 +616,7 @@ func checkBlockStorageDeniedChanges(kubeBS *v1alpha1.BlockStorage, cmpBS *arubat
 
 	var errs []error
 
-	if cmpBS.Properties.SizeGB > int(kubeBS.Spec.SizeGb) {
+	if cmpBS.Properties.SizeGB > int(kubeBS.Spec.SizeGB) {
 		errs = append(errs, errors.New("decreasing the 'size' is not allowed"))
 	}
 	if cmpBS.Properties.Bootable != nil && kubeBS.Spec.Bootable != *cmpBS.Properties.Bootable {
@@ -632,7 +632,7 @@ func checkBlockStorageDeniedChanges(kubeBS *v1alpha1.BlockStorage, cmpBS *arubat
 	if cmpBS.Metadata.LocationResponse != nil {
 		locationValue = cmpBS.Metadata.LocationResponse.Value
 	}
-	if kubeBS.Spec.Location.Value != locationValue {
+	if kubeBS.Spec.Region != locationValue {
 		errs = append(errs, errors.New("change the 'location' is not allowed"))
 	}
 
@@ -647,8 +647,8 @@ func kubeBlockStorageNeedsUpdate(kubeBS *v1alpha1.BlockStorage, cmpBS *arubatype
 		return false
 	}
 	return kubeBS.Spec.BillingPeriod != cmpBS.Properties.BillingPeriod ||
-		kubeBS.Spec.DataCenter != cmpBS.Properties.Zone ||
-		kubeBS.Spec.SizeGb != int32(cmpBS.Properties.SizeGB) || //nolint:gosec // disk size in GB always fits int32
+		kubeBS.Spec.Zone != cmpBS.Properties.Zone ||
+		kubeBS.Spec.SizeGB != int32(cmpBS.Properties.SizeGB) || //nolint:gosec // disk size in GB always fits int32
 		!tagsAreEqual(kubeBS.Spec.Tags, cmpBS.Metadata.Tags)
 }
 
@@ -658,9 +658,9 @@ func buildBlockStorageUpdateRequest(kubeBS *v1alpha1.BlockStorage, cmpBS *arubat
 		return nil
 	}
 	request.Properties.BillingPeriod = kubeBS.Spec.BillingPeriod
-	zone := kubeBS.Spec.DataCenter
+	zone := kubeBS.Spec.Zone
 	request.Properties.Zone = &zone
-	request.Properties.SizeGB = int(kubeBS.Spec.SizeGb)
+	request.Properties.SizeGB = int(kubeBS.Spec.SizeGB)
 	tags := make([]string, len(kubeBS.Spec.Tags))
 	copy(tags, kubeBS.Spec.Tags)
 	request.Metadata.Tags = tags
@@ -708,12 +708,12 @@ func cmpBlockStorageRequestFromKube(kubeBS *v1alpha1.BlockStorage) *arubatypes.B
 				Name: kubeBS.Name,
 				Tags: kubeBS.Spec.Tags,
 			},
-			Location: arubatypes.LocationRequest(kubeBS.Spec.Location),
+			Location: arubatypes.LocationRequest{Value: kubeBS.Spec.Region},
 		},
 		Properties: arubatypes.BlockStoragePropertiesRequest{
-			SizeGB:        int(kubeBS.Spec.SizeGb),
+			SizeGB:        int(kubeBS.Spec.SizeGB),
 			BillingPeriod: kubeBS.Spec.BillingPeriod,
-			Zone:          &kubeBS.Spec.DataCenter,
+			Zone:          &kubeBS.Spec.Zone,
 			Bootable:      &kubeBS.Spec.Bootable,
 			Image:         &kubeBS.Spec.Image,
 			Type:          arubatypes.BlockStorageType(kubeBS.Spec.Type),

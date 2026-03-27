@@ -25,10 +25,10 @@ import (
 
 // SecurityRuleTarget defines the target of a security rule
 type SecurityRuleTarget struct {
-	// Kind specifies the type of target (e.g., "Ip", "SecurityGroup")
+	// Type specifies the type of target (e.g., "Ip", "SecurityGroup")
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Enum=Ip;SecurityGroup
-	Kind string `json:"kind"`
+	Type string `json:"type"`
 
 	// Value specifies the target value (e.g., IP address/CIDR or security group reference)
 	// +kubebuilder:validation:Required
@@ -45,9 +45,10 @@ type SecurityRuleSpec struct {
 	// +kubebuilder:validation:Optional
 	Tags []string `json:"tags,omitempty"`
 
-	// Location specifies the location for the security rule
+	// Region specifies the region for the security rule
 	// +kubebuilder:validation:Required
-	Location Location `json:"location"`
+	// +kubebuilder:default="ITBG-Bergamo"
+	Region string `json:"region"`
 
 	// Protocol specifies the network protocol (TCP, UDP, ICMP, etc.)
 	// +kubebuilder:validation:Required
@@ -71,9 +72,9 @@ type SecurityRuleSpec struct {
 	// +kubebuilder:validation:Required
 	SecurityGroupReference ResourceReference `json:"securityGroupReference"`
 
-	// VpcReference references the ArubaVpc that contains the security group
+	// VPCReference references the ArubaVpc that contains the security group
 	// +kubebuilder:validation:Required
-	VpcReference ResourceReference `json:"vpcReference"`
+	VPCReference ResourceReference `json:"vpcReference"`
 
 	// ProjectReference references the Project that owns this security rule
 	// +kubebuilder:validation:Required
@@ -88,9 +89,9 @@ type SecurityRuleStatus struct {
 	// +kubebuilder:validation:Optional
 	ProjectID string `json:"projectID,omitempty"`
 
-	// VpcID is the VPC ID where this security rule is created
+	// VPCID is the VPC ID where this security rule is created
 	// +kubebuilder:validation:Optional
-	VpcID string `json:"vpcID,omitempty"`
+	VPCID string `json:"vpcID,omitempty"`
 
 	// SecurityGroupID is the security group ID that contains this rule
 	// +kubebuilder:validation:Optional
@@ -99,7 +100,7 @@ type SecurityRuleStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:scope=Namespaced,shortName=sr
+// +kubebuilder:resource:scope=Namespaced,shortName=sr;arusr
 // +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase"
 // +kubebuilder:printcolumn:name="Resource ID",type="string",JSONPath=".status.resourceID"
 // +kubebuilder:printcolumn:name="Protocol",type="string",JSONPath=".spec.protocol"

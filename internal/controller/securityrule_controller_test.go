@@ -102,23 +102,21 @@ func buildSGListForSR(sgID, sgName string) *arubatypes.Response[arubatypes.Secur
 
 func defaultSecurityRuleSpec(projectName, vpcName, sgName string) v1alpha1.SecurityRuleSpec {
 	return v1alpha1.SecurityRuleSpec{
-		Tenant: "test-tenant",
-		Tags:   []string{"tag1"},
-		Location: v1alpha1.Location{
-			Value: "ITBG-Bergamo",
-		},
+		Tenant:    "test-tenant",
+		Tags:      []string{"tag1"},
+		Region:    "ITBG-Bergamo",
 		Protocol:  "TCP",
 		Port:      "80",
 		Direction: "Ingress",
 		Target: v1alpha1.SecurityRuleTarget{
-			Kind:  "Ip",
+			Type:  "Ip",
 			Value: "0.0.0.0/0",
 		},
 		ProjectReference: v1alpha1.ResourceReference{
 			Name:      projectName,
 			Namespace: "default",
 		},
-		VpcReference: v1alpha1.ResourceReference{
+		VPCReference: v1alpha1.ResourceReference{
 			Name:      vpcName,
 			Namespace: "default",
 		},
@@ -147,7 +145,7 @@ func setSecurityRuleStatus(ctx context.Context, sr *v1alpha1.SecurityRule, phase
 	s.Status.Phase = phase
 	s.Status.ResourceID = resourceID
 	s.Status.ProjectID = projectID
-	s.Status.VpcID = vpcID
+	s.Status.VPCID = vpcID
 	s.Status.SecurityGroupID = sgID
 	s.Status.ObservedGeneration = observedGen
 	if phase != "" {
@@ -391,7 +389,7 @@ var _ = Describe("SecurityRuleReconciler", func() {
 			// Force generation change with different location
 			srFetch := &v1alpha1.SecurityRule{}
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), srFetch)).To(Succeed())
-			srFetch.Spec.Location.Value = "IT-MILAN"
+			srFetch.Spec.Region = "IT-MILAN"
 			Expect(k8sClient.Update(ctx, srFetch)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), sr)).To(Succeed())
 
@@ -759,7 +757,7 @@ var _ = Describe("SecurityRuleReconciler", func() {
 			updated := &v1alpha1.SecurityRule{}
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), updated)).To(Succeed())
 			Expect(updated.Status.ProjectID).To(Equal(srProjectID))
-			Expect(updated.Status.VpcID).To(Equal(srVpcID))
+			Expect(updated.Status.VPCID).To(Equal(srVpcID))
 			Expect(updated.Status.SecurityGroupID).To(Equal(srSGID))
 		})
 	})

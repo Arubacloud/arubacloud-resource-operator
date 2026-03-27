@@ -102,7 +102,7 @@ func (r *SecurityRuleReconciler) HandleReconcile(ctx context.Context, obj reconc
 	if kubeSR.Spec.ProjectReference.Name == "" {
 		return ctrl.Result{}, fmt.Errorf("project reference is not valid")
 	}
-	if kubeSR.Spec.VpcReference.Name == "" {
+	if kubeSR.Spec.VPCReference.Name == "" {
 		return ctrl.Result{}, fmt.Errorf("vpc reference is not valid")
 	}
 	if kubeSR.Spec.SecurityGroupReference.Name == "" {
@@ -131,7 +131,7 @@ func (r *SecurityRuleReconciler) HandleReconcile(ctx context.Context, obj reconc
 
 	srName := kubeSR.Name
 	projectName := kubeSR.Spec.ProjectReference.Name
-	vpcName := kubeSR.Spec.VpcReference.Name
+	vpcName := kubeSR.Spec.VPCReference.Name
 	sgName := kubeSR.Spec.SecurityGroupReference.Name
 	prjFilter := fmt.Sprintf(`name:eq("%s")`, projectName)
 	vpcFilter := fmt.Sprintf(`name:eq("%s")`, vpcName)
@@ -187,8 +187,8 @@ func (r *SecurityRuleReconciler) HandleReconcile(ctx context.Context, obj reconc
 
 	var vpcID string
 
-	if !kubeSR.GetDeletionTimestamp().IsZero() && kubeSR.Status.VpcID != "" {
-		vpcID = kubeSR.Status.VpcID
+	if !kubeSR.GetDeletionTimestamp().IsZero() && kubeSR.Status.VPCID != "" {
+		vpcID = kubeSR.Status.VPCID
 	} else {
 		cmpVpcList, err := arubaClient.FromNetwork().VPCs().List(ctx, prjID, &arubatypes.RequestParameters{Filter: &vpcFilter})
 		if err != nil {
@@ -205,7 +205,7 @@ func (r *SecurityRuleReconciler) HandleReconcile(ctx context.Context, obj reconc
 		}
 		// TODO: Remove once CMP API name:eq() filter is fixed (issue https://jira.aruba.it/browse/DEV-66643).
 		applyNameFilterToVPCList(cmpVpcList, vpcName, logger)
-		if cmpVpcList.Data.Total == 0 && kubeSR.Status.VpcID != "" {
+		if cmpVpcList.Data.Total == 0 && kubeSR.Status.VPCID != "" {
 			return ctrl.Result{}, fmt.Errorf(
 				"inconsistent data in vpc list: expected: 1, vpc not found: vpc_name: '%s', vpc_filter: '%s'", vpcName, vpcFilter,
 			)
@@ -223,10 +223,10 @@ func (r *SecurityRuleReconciler) HandleReconcile(ctx context.Context, obj reconc
 		vpcID = *(cmpVpcList.Data.Values[0].Metadata.ID)
 	}
 
-	if kubeSR.Status.VpcID != "" && kubeSR.Status.VpcID != vpcID {
+	if kubeSR.Status.VPCID != "" && kubeSR.Status.VPCID != vpcID {
 		return ctrl.Result{}, fmt.Errorf(
 			"inconsistent vpc id in security rule: sr_name: '%s', sr_vpc_id: '%s', vpc_name: '%s', vpc_id: '%s'",
-			srName, kubeSR.Status.VpcID, vpcName, vpcID,
+			srName, kubeSR.Status.VPCID, vpcName, vpcID,
 		)
 	}
 
@@ -574,14 +574,14 @@ func cmpSecurityRuleIsFinal(_ *v1alpha1.SecurityRule, cmpSR *arubatypes.Security
 	if cmpSR == nil || cmpSR.Status.State == nil {
 		return false
 	}
-	return AssesCSPResourceStateNature(&cmpSR.Status) == CSPResourceStateNatureFinal
+	return AssessCSPResourceStateNature(&cmpSR.Status) == CSPResourceStateNatureFinal
 }
 
 func cmpSecurityRuleIsTransitory(_ *v1alpha1.SecurityRule, cmpSR *arubatypes.SecurityRuleResponse) bool {
 	if cmpSR == nil || cmpSR.Status.State == nil {
 		return false
 	}
-	return AssesCSPResourceStateNature(&cmpSR.Status) == CSPResourceStateNatureTransitory
+	return AssessCSPResourceStateNature(&cmpSR.Status) == CSPResourceStateNatureTransitory
 }
 
 func cmpSecurityRuleNotExistsOrTransitory(_ *v1alpha1.SecurityRule, cmpSR *arubatypes.SecurityRuleResponse) bool {
@@ -591,7 +591,7 @@ func cmpSecurityRuleNotExistsOrTransitory(_ *v1alpha1.SecurityRule, cmpSR *aruba
 	if cmpSR.Status.State == nil {
 		return false
 	}
-	return AssesCSPResourceStateNature(&cmpSR.Status) == CSPResourceStateNatureTransitory
+	return AssessCSPResourceStateNature(&cmpSR.Status) == CSPResourceStateNatureTransitory
 }
 
 func cmpSecurityRuleIsActive(_ *v1alpha1.SecurityRule, cmpSR *arubatypes.SecurityRuleResponse) bool {
@@ -610,8 +610,8 @@ func (r *SecurityRuleReconciler) kubeSetPhaseAndCondition(ctx context.Context, k
 		if prjID, ok := ctx.Value(projectIDKey).(string); ok && sr.Status.ProjectID == "" {
 			sr.Status.ProjectID = prjID
 		}
-		if vID, ok := ctx.Value(vpcIDKey).(string); ok && sr.Status.VpcID == "" {
-			sr.Status.VpcID = vID
+		if vID, ok := ctx.Value(vpcIDKey).(string); ok && sr.Status.VPCID == "" {
+			sr.Status.VPCID = vID
 		}
 		if sgID, ok := ctx.Value(securityGroupIDKey).(string); ok && sr.Status.SecurityGroupID == "" {
 			sr.Status.SecurityGroupID = sgID
@@ -668,8 +668,8 @@ func (r *SecurityRuleReconciler) kubeSetActiveAndSetID(ctx context.Context, kube
 		if prjID, ok := ctx.Value(projectIDKey).(string); ok && sr.Status.ProjectID != "" {
 			sr.Status.ProjectID = prjID
 		}
-		if vID, ok := ctx.Value(vpcIDKey).(string); ok && sr.Status.VpcID != "" {
-			sr.Status.VpcID = vID
+		if vID, ok := ctx.Value(vpcIDKey).(string); ok && sr.Status.VPCID != "" {
+			sr.Status.VPCID = vID
 		}
 		if sgID, ok := ctx.Value(securityGroupIDKey).(string); ok && sr.Status.SecurityGroupID != "" {
 			sr.Status.SecurityGroupID = sgID
@@ -682,8 +682,8 @@ func (r *SecurityRuleReconciler) kubeSetFailedOnTimeout(ctx context.Context, kub
 		if prjID, ok := ctx.Value(projectIDKey).(string); ok && sr.Status.ProjectID == "" {
 			sr.Status.ProjectID = prjID
 		}
-		if vID, ok := ctx.Value(vpcIDKey).(string); ok && sr.Status.VpcID == "" {
-			sr.Status.VpcID = vID
+		if vID, ok := ctx.Value(vpcIDKey).(string); ok && sr.Status.VPCID == "" {
+			sr.Status.VPCID = vID
 		}
 		if sgID, ok := ctx.Value(securityGroupIDKey).(string); ok && sr.Status.SecurityGroupID == "" {
 			sr.Status.SecurityGroupID = sgID
@@ -755,7 +755,7 @@ func checkSecurityRuleDeniedChanges(kubeSR *v1alpha1.SecurityRule, cmpSR *arubat
 
 	if cmpSR.Metadata.LocationResponse != nil &&
 		cmpSR.Metadata.LocationResponse.Value != "" &&
-		kubeSR.Spec.Location.Value != cmpSR.Metadata.LocationResponse.Value {
+		kubeSR.Spec.Region != cmpSR.Metadata.LocationResponse.Value {
 		return fmt.Errorf("%w: %w", ErrNotAllowedChanges, errors.New("change the 'location' is not allowed"))
 	}
 
@@ -781,7 +781,7 @@ func kubeSecurityRuleNeedsUpdate(kubeSR *v1alpha1.SecurityRule, cmpSR *arubatype
 	if cmpSR.Properties.Target == nil {
 		return true
 	}
-	if arubatypes.EndpointTypeDto(kubeSR.Spec.Target.Kind) != cmpSR.Properties.Target.Kind {
+	if arubatypes.EndpointTypeDto(kubeSR.Spec.Target.Type) != cmpSR.Properties.Target.Kind {
 		return true
 	}
 	if kubeSR.Spec.Target.Value != cmpSR.Properties.Target.Value {
@@ -800,7 +800,7 @@ func cmpSecurityRuleRequestFromKube(kubeSR *v1alpha1.SecurityRule) *arubatypes.S
 				Tags: tags,
 			},
 			Location: arubatypes.LocationRequest{
-				Value: kubeSR.Spec.Location.Value,
+				Value: kubeSR.Spec.Region,
 			},
 		},
 		Properties: arubatypes.SecurityRulePropertiesRequest{
@@ -808,7 +808,7 @@ func cmpSecurityRuleRequestFromKube(kubeSR *v1alpha1.SecurityRule) *arubatypes.S
 			Port:      kubeSR.Spec.Port,
 			Direction: arubatypes.RuleDirection(kubeSR.Spec.Direction),
 			Target: &arubatypes.RuleTarget{
-				Kind:  arubatypes.EndpointTypeDto(kubeSR.Spec.Target.Kind),
+				Kind:  arubatypes.EndpointTypeDto(kubeSR.Spec.Target.Type),
 				Value: kubeSR.Spec.Target.Value,
 			},
 		},
@@ -866,7 +866,7 @@ func buildSecurityRuleUpdateRequest(kubeSR *v1alpha1.SecurityRule, cmpSR *arubat
 	request.Properties.Port = kubeSR.Spec.Port
 	request.Properties.Direction = arubatypes.RuleDirection(kubeSR.Spec.Direction)
 	request.Properties.Target = &arubatypes.RuleTarget{
-		Kind:  arubatypes.EndpointTypeDto(kubeSR.Spec.Target.Kind),
+		Kind:  arubatypes.EndpointTypeDto(kubeSR.Spec.Target.Type),
 		Value: kubeSR.Spec.Target.Value,
 	}
 	return request

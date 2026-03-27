@@ -8,11 +8,12 @@ metadata:
 spec:
   group: arubacloud.com
   names:
-    kind: ElasticIp
-    listKind: ElasticIpList
+    kind: ElasticIP
+    listKind: ElasticIPList
     plural: elasticips
     shortNames:
     - eip
+    - arueip
     singular: elasticip
   scope: Namespaced
   versions:
@@ -32,7 +33,7 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: ElasticIp is the Schema for the elasticips API.
+        description: ElasticIP is the Schema for the elasticips API.
         properties:
           apiVersion:
             description: |-
@@ -52,30 +53,15 @@ spec:
           metadata:
             type: object
           spec:
-            description: ElasticIpSpec defines the desired state of ElasticIp.
+            description: ElasticIPSpec defines the desired state of ElasticIP.
             properties:
-              billingPlan:
-                description: BillingPlan specifies the billing configuration
-                properties:
-                  billingPeriod:
-                    description: BillingPeriod defines the billing period (Hour, Month,
-                      etc.)
-                    enum:
-                    - Hour
-                    - Month
-                    type: string
-                required:
-                - billingPeriod
-                type: object
-              location:
-                description: Location specifies the location for the elastic IP
-                properties:
-                  value:
-                    description: Value is the location identifier (e.g., "ITBG-Bergamo")
-                    type: string
-                required:
-                - value
-                type: object
+              billingPeriod:
+                default: Hour
+                description: BillingPeriod defines the billing period
+                enum:
+                - Hour
+                - Month
+                type: string
               projectReference:
                 description: ProjectReference references the Project that owns this
                   elastic IP
@@ -90,6 +76,10 @@ spec:
                 - name
                 - namespace
                 type: object
+              region:
+                default: ITBG-Bergamo
+                description: Region specifies the region for the elastic IP
+                type: string
               tags:
                 description: Tags are labels associated with the elastic IP
                 items:
@@ -99,15 +89,15 @@ spec:
                 description: Tenant is the owning account/tenant of this elastic IP
                 type: string
             required:
-            - billingPlan
-            - location
+            - billingPeriod
             - projectReference
+            - region
             type: object
             x-kubernetes-validations:
             - message: tenant is immutable
               rule: self.tenant == oldSelf.tenant
           status:
-            description: ElasticIpStatus defines the observed state of ElasticIp.
+            description: ElasticIPStatus defines the observed state of ElasticIP.
             properties:
               conditions:
                 description: Conditions represent the latest available observations

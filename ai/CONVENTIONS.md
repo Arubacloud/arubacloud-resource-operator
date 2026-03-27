@@ -234,7 +234,7 @@ func init() {
 | File | Content |
 |------|---------|
 | `suite_test.go` | Global `envtest` setup (`BeforeSuite` / `AfterSuite`), shared `k8sClient` and `testEnv` |
-| `common_test.go` | Tests for shared utilities (`AssesCSPResourceStateNature`) |
+| `common_test.go` | Tests for shared utilities (`AssessCSPResourceStateNature`) |
 | `transition_test.go` | Unit tests for the `TransitionSet` state machine |
 | `transition_conditions_test.go` | Unit tests for reusable condition functions |
 | `transition_actions_test.go` | Unit tests for reusable action helpers + `findCondition` utility |

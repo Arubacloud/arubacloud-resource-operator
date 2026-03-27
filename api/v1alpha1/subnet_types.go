@@ -20,14 +20,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// SubnetNetwork defines the network configuration for a subnet
-type SubnetNetwork struct {
-	// Address specifies the network address in CIDR notation
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Pattern=`^([0-9]{1,3}\.){3}[0-9]{1,3}\/[0-9]{1,2}$`
-	Address string `json:"address"`
-}
-
 // SubnetDHCP defines the DHCP configuration for a subnet
 type SubnetDHCP struct {
 	// Enabled indicates whether DHCP is enabled for this subnet
@@ -45,30 +37,28 @@ type SubnetSpec struct {
 	// +kubebuilder:validation:Optional
 	Tags []string `json:"tags,omitempty"`
 
-	// Location specifies the location for the subnet
+	// Region specifies the region for the subnet
 	// +kubebuilder:validation:Required
-	Location Location `json:"location"`
+	// +kubebuilder:default="ITBG-Bergamo"
+	Region string `json:"region"`
 
 	// Type specifies the type of subnet (e.g., "Advanced")
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Enum=Advanced;Basic
 	Type string `json:"type"`
 
-	// Default indicates whether this is a default subnet
-	// +kubebuilder:validation:Optional
-	Default bool `json:"default,omitempty"`
-
-	// Network specifies the network configuration
+	// CIDR specifies the network address in CIDR notation
 	// +kubebuilder:validation:Required
-	Network SubnetNetwork `json:"network"`
+	// +kubebuilder:validation:Pattern=`^([0-9]{1,3}\.){3}[0-9]{1,3}\/[0-9]{1,2}$`
+	CIDR string `json:"cidr"`
 
 	// DHCP specifies the DHCP configuration
 	// +kubebuilder:validation:Required
 	DHCP SubnetDHCP `json:"dhcp"`
 
-	// VpcReference references the ArubaVpc that owns this subnet
+	// VPCReference references the ArubaVpc that owns this subnet
 	// +kubebuilder:validation:Required
-	VpcReference ResourceReference `json:"vpcReference"`
+	VPCReference ResourceReference `json:"vpcReference"`
 
 	// ProjectReference references the Project that owns this block storage
 	// +kubebuilder:validation:Required
@@ -83,14 +73,14 @@ type SubnetStatus struct {
 	// +kubebuilder:validation:Optional
 	ProjectID string `json:"projectID,omitempty"`
 
-	// VpcID is the VPC ID where this subnet is created
+	// VPCID is the VPC ID where this subnet is created
 	// +kubebuilder:validation:Optional
-	VpcID string `json:"vpcID,omitempty"`
+	VPCID string `json:"vpcID,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:scope=Namespaced,shortName=asn
+// +kubebuilder:resource:scope=Namespaced,shortName=sn;arusn
 // +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase"
 // +kubebuilder:printcolumn:name="Resource ID",type="string",JSONPath=".status.resourceID"
 // +kubebuilder:printcolumn:name="Message",type="string",JSONPath=".status.message"

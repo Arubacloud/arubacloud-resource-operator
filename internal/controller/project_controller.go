@@ -40,10 +40,10 @@ import (
 func (r *ProjectReconciler) kubeProjectHasOwnedChildren(k *v1alpha1.Project, _ *arubatypes.ProjectResponse) bool {
 	labelKey, _ := ownerLabelKey(r.Scheme, k)
 	has, err := hasOwnedChildren(context.Background(), r.Client, k, labelKey,
-		&v1alpha1.VpcList{},
+		&v1alpha1.VPCList{},
 		&v1alpha1.BlockStorageList{},
 		&v1alpha1.KeyPairList{},
-		&v1alpha1.ElasticIpList{},
+		&v1alpha1.ElasticIPList{},
 		&v1alpha1.CloudServerList{},
 	)
 	if err != nil {
@@ -58,10 +58,10 @@ func (r *ProjectReconciler) kubeProjectHasOwnedChildren(k *v1alpha1.Project, _ *
 func (r *ProjectReconciler) kubeProjectDeleteOwnedChildren(ctx context.Context, k *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
 	labelKey, _ := ownerLabelKey(r.Scheme, k)
 	return deleteOwnedChildren(ctx, r.Client, k, labelKey,
-		&v1alpha1.VpcList{},
+		&v1alpha1.VPCList{},
 		&v1alpha1.BlockStorageList{},
 		&v1alpha1.KeyPairList{},
-		&v1alpha1.ElasticIpList{},
+		&v1alpha1.ElasticIPList{},
 		&v1alpha1.CloudServerList{},
 	)
 }
@@ -521,7 +521,7 @@ func (r *ProjectReconciler) cmpUpdate(ctx context.Context, kubeProj *v1alpha1.Pr
 	request := cmpProjectRequestFromCMP(cmpProj)
 	request.Metadata.Tags = kubeProj.Spec.Tags
 	request.Properties.Description = &kubeProj.Spec.Description
-	request.Properties.Default = kubeProj.Spec.Default
+	request.Properties.Default = false
 	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
 
 	cmpProjResp, err := arubaClient.FromProject().Update(ctx, kubeProj.Status.ResourceID, *request, nil)
@@ -550,7 +550,6 @@ func kubeProjectNeedsUpdate(kubeProj *v1alpha1.Project, cmpProj *arubatypes.Proj
 	descriptionDiffers := cmpProj.Properties.Description == nil ||
 		kubeProj.Spec.Description != *cmpProj.Properties.Description
 	return descriptionDiffers ||
-		kubeProj.Spec.Default != cmpProj.Properties.Default ||
 		!tagsAreEqual(kubeProj.Spec.Tags, cmpProj.Metadata.Tags)
 }
 
@@ -563,7 +562,7 @@ func cmpProjectRequestFromKube(kubeProj *v1alpha1.Project) *arubatypes.ProjectRe
 
 		Properties: arubatypes.ProjectPropertiesRequest{
 			Description: &kubeProj.Spec.Description,
-			Default:     kubeProj.Spec.Default,
+			Default:     false,
 		},
 	}
 }
@@ -596,9 +595,9 @@ func cmpProjectRequestFromCMP(cmpProj *arubatypes.ProjectResponse) *arubatypes.P
 func (r *ProjectReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.Project{}).
-		Watches(&v1alpha1.Vpc{}, handler.EnqueueRequestsFromMapFunc(
+		Watches(&v1alpha1.VPC{}, handler.EnqueueRequestsFromMapFunc(
 			childToParentMapFunc(func(o client.Object) *v1alpha1.ResourceReference {
-				if v, ok := o.(*v1alpha1.Vpc); ok {
+				if v, ok := o.(*v1alpha1.VPC); ok {
 					return &v.Spec.ProjectReference
 				}
 				return nil
@@ -617,9 +616,9 @@ func (r *ProjectReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				}
 				return nil
 			}))).
-		Watches(&v1alpha1.ElasticIp{}, handler.EnqueueRequestsFromMapFunc(
+		Watches(&v1alpha1.ElasticIP{}, handler.EnqueueRequestsFromMapFunc(
 			childToParentMapFunc(func(o client.Object) *v1alpha1.ResourceReference {
-				if v, ok := o.(*v1alpha1.ElasticIp); ok {
+				if v, ok := o.(*v1alpha1.ElasticIP); ok {
 					return &v.Spec.ProjectReference
 				}
 				return nil

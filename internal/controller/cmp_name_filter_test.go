@@ -67,7 +67,7 @@ var _ = Describe("applyNameFilterToVPCList", func() {
 	})
 
 	It("is a no-op when the list already contains only the matching item", func() {
-		resp := buildVpcList(buildVpcResponse("id1", "target", CSPResourceStateActive))
+		resp := buildVPCList(buildVPCResponse("id1", "target", CSPResourceStateActive))
 		applyNameFilterToVPCList(resp, "target", logger)
 		Expect(resp.Data.Total).To(Equal(int64(1)))
 		Expect(resp.Data.Values).To(HaveLen(1))

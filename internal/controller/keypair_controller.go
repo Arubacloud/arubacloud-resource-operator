@@ -477,7 +477,7 @@ func (r *KeyPairReconciler) kubeRollbackSpecAndSetActive(ctx context.Context, ku
 		kpPatch := kpCopy.DeepCopy()
 		kpPatch.Spec.Tags = cmpKp.Metadata.Tags
 		if cmpKp.Metadata.LocationResponse != nil {
-			kpPatch.Spec.Location.Value = cmpKp.Metadata.LocationResponse.Value
+			kpPatch.Spec.Region = cmpKp.Metadata.LocationResponse.Value
 		}
 		kpPatch.Spec.Value = cmpKp.Properties.Value
 
@@ -526,7 +526,7 @@ func cmpKeyPairRequestFromKube(kubeKp *v1alpha1.KeyPair) arubatypes.KeyPairReque
 				Tags: kubeKp.Spec.Tags,
 			},
 			Location: arubatypes.LocationRequest{
-				Value: kubeKp.Spec.Location.Value,
+				Value: kubeKp.Spec.Region,
 			},
 		},
 		Properties: arubatypes.KeyPairPropertiesRequest{

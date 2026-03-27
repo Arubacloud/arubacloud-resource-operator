@@ -40,7 +40,7 @@ const (
 	CSPResourceStateNatureUndetermined
 )
 
-func AssesCSPResourceStateNature(status *arubatypes.ResourceStatus) CSPResourceStateNature {
+func AssessCSPResourceStateNature(status *arubatypes.ResourceStatus) CSPResourceStateNature {
 	if status == nil {
 		return CSPResourceStateNatureUndetermined
 	}

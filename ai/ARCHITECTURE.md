@@ -182,7 +182,7 @@ This is evaluated after all other transitions so it only fires when nothing else
 
 ## Resource Ownership and Cascade Delete
 
-Resources form a containment hierarchy enforced via Kubernetes **OwnerReferences**. Each child has exactly one controller-owner — the closest lifecycle parent:
+Resources form a containment hierarchy. Each child has exactly one controller-owner — the closest lifecycle parent:
 
 ```
 Project (root)
@@ -198,23 +198,48 @@ Project (root)
 
 CloudServer _uses_ VPC, Subnet, SecurityGroup, KeyPair, BlockStorage, and ElasticIp, but its **owner** is Project. Deleting a VPC does **not** cascade to CloudServer.
 
+### Two-Layer Ownership Model
+
+The operator uses a **custom two-layer ownership system** instead of standard Kubernetes OwnerReferences. Standard OwnerReferences are not used because they have no `Namespace` field — the K8s garbage collector resolves owners in the child's namespace only, making cross-namespace ownership impossible.
+
+| Layer | Annotation / Label Key | Value | Purpose |
+|---|---|---|---|
+| **ArubaOwnerReference annotation** | `arubacloud.com/owner-references` | JSON `[]ArubaOwnerReference` | Source of truth. Contains full identity of the owner: namespace, name, UID, kind, apiVersion. Supports cross-namespace. |
+| **Ownership label** | `arubacloud.com/owner-<lowerkind>` | owner UID | Efficient server-side cluster-wide label queries for `hasOwnedChildren` / `deleteOwnedChildren`. |
+
+#### ArubaOwnerReference
+
+Defined in `api/v1alpha1/common_types.go` as `ArubaOwnerReference`. Mirrors `metav1.OwnerReference` but adds a `Namespace` field. A child stores at most one controller-owner reference (same semantics as K8s OwnerReferences).
+
+Example annotation value:
+```json
+[{"apiVersion":"arubacloud.com/v1alpha1","kind":"Project","namespace":"ns-a","name":"my-project","uid":"abc-123","controller":true,"blockOwnerDeletion":true}]
+```
+
 ### How cascade delete works
 
-Two mechanisms cooperate:
+Three mechanisms cooperate:
 
-1. **OwnerReferences** — Kubernetes records the ownership relationship. The K8s GC uses this to know which objects are owned by which parent.
-2. **Finalizers** — each resource's existing finalizer blocks K8s GC from removing the object from etcd until the CMP-side resource is deleted.
+1. **ArubaOwnerReference annotation** — records the full ownership identity (including namespace) on each child. Source of truth for ownership.
+2. **Ownership label** — `arubacloud.com/owner-<kind>=<uid>` enables cluster-wide label-selector queries to find all children of a given parent, regardless of namespace.
+3. **Finalizers** — each resource's finalizer blocks K8s from removing the object from etcd until the CMP-side resource is deleted.
 
-> **Important GC limitation:** The K8s garbage collector only cascade-deletes children *after* the owner object is fully removed from etcd. While a parent still has a finalizer (i.e., its etcd entry is still present), the GC does **not** set `DeletionTimestamp` on children. This means we cannot rely on the GC to propagate deletion — the parent controller must explicitly delete children itself.
+> **Why not K8s OwnerReferences:** The K8s garbage collector resolves the owner within the child's namespace only. A cross-namespace K8s OwnerReference would be treated as a dangling reference, potentially triggering premature GC of the child. The operator's WaitingChildrenDeletion mechanism handles all cascade deletion explicitly, making K8s GC redundant.
 
-### OwnerReference setup
+### Ownership setup
 
-Each child controller sets the OwnerReference in `HandleReconcile` **before** calling `ts.Run()`. The shared helpers in `internal/controller/owner_reference.go` handle the mechanics:
+Each child controller sets ownership metadata in `HandleReconcile` **before** calling `ts.Run()`. The shared helpers in `internal/controller/owner_reference.go` handle the mechanics:
 
 - `resolveOwnerObject` — fetches the parent K8s object by `ResourceReference` (name + namespace).
-- `ensureOwnerReference` — idempotently sets `controllerutil.SetControllerReference` with `BlockOwnerDeletion: true`. Returns `(needsRequeue=true, nil)` on first set; `(false, nil)` on subsequent calls.
+- `ensureOwnerReference` — idempotently sets both the annotation and label on the child in a single atomic patch. Returns `(needsRequeue=true, nil)` on first set; `(false, nil)` when already present.
+- `setArubaControllerReference` — low-level helper used by `ensureOwnerReference`; upserts the owner entry in the annotation, enforcing the single-controller constraint.
+- `ownerLabelKey(scheme, owner)` — derives the ownership label key from the owner's GVK (e.g. `"arubacloud.com/owner-project"`).
 
-If the parent K8s object is not found (e.g., already deleted), the OwnerReference step is skipped and reconciliation proceeds normally. Self-healing: existing resources created before this feature gain OwnerReferences on their next reconciliation.
+If the parent K8s object is not found (e.g., already deleted), the ownership setup step is skipped and reconciliation proceeds normally.
+
+### Cross-Namespace Ownership
+
+Ownership works identically regardless of namespace topology. A child in `ns-b` with a parent in `ns-a` gets the same annotation + label as a same-namespace child. There are no special cases.
 
 ### WaitingChildrenDeletion transition
 
@@ -222,21 +247,21 @@ Parent controllers (Project, VPC, SecurityGroup) include a `WaitingChildrenDelet
 
 The transition has two responsibilities:
 
-1. **`kAction` — explicitly delete owned children**: calls `deleteOwnedChildren` (`owner_reference.go`), which lists all owned children and issues `c.Delete()` on each that does not yet have a `DeletionTimestamp`. Children have finalizers, so the K8s API sets their `DeletionTimestamp` and they enter their own deletion flow. This is necessary because the GC will not do it while the parent finalizer is present.
-2. **Block CMP deletion**: after kicking off child deletion, requeues with `LongRequeueAfter`. The `hasOwnedChildren` check keeps this transition matched until all children are fully gone (finalizers removed, evicted from etcd), preventing premature CMP deletion that would be rejected by the API.
+1. **`kAction` — explicitly delete owned children**: calls `deleteOwnedChildren` (`owner_reference.go`), which does a cluster-wide label-selector query and issues `c.Delete()` on each child not yet being deleted. Children have finalizers, so the K8s API sets their `DeletionTimestamp` and they enter their own deletion flow.
+2. **Block CMP deletion**: after kicking off child deletion, requeues with `LongRequeueAfter`. The `hasOwnedChildren` check (also cluster-wide label query) keeps this transition matched until all children are fully gone (finalizers removed, evicted from etcd).
 
-### Owns() watches
+### Child watches
 
-Parent controllers register `Owns()` in `SetupWithManager` for each child type, so they are re-reconciled as soon as a child disappears (rather than waiting for the long requeue timer).
+Parent controllers register `Watches()` in `SetupWithManager` for each child type via `childToParentMapFunc`. When a child event fires, `childToParentMapFunc` reads the child's spec reference field (e.g. `Spec.ProjectReference`) to produce the parent's `reconcile.Request`. This works for both same-namespace and cross-namespace children, replacing the `Owns()` mechanism which relied on OwnerReferences.
 
 ### Deletion flow with cascade
 
 When a parent is deleted:
 
 1. K8s sets `DeletionTimestamp` on the parent → parent's `ShouldBeDeleted` marks `Deleting+ShallSynchronize`
-2. `WaitingChildrenDeletion` fires → `kAction` calls `c.Delete()` on each owned child not yet being deleted
+2. `WaitingChildrenDeletion` fires → `kAction` calls `c.Delete()` on each owned child not yet being deleted (found via cluster-wide label query)
 3. Children receive `DeletionTimestamp` (because they have finalizers) → their controllers run the standard deletion flow (CMP delete → finalizer removed → evicted from etcd)
-4. `Owns()` watch triggers a parent reconciliation as each child disappears; `WaitingChildrenDeletion` keeps matching until all children are gone
+4. `Watches()` triggers a parent reconciliation as each child disappears; `WaitingChildrenDeletion` keeps matching until all children are gone
 5. Once no owned children remain, `WaitingChildrenDeletion` no longer matches → `ShouldBeDeletedOnCMP` fires → parent deleted from CMP → finalizer removed → parent evicted from etcd
 
 See `ai/KNOWN_ISSUES.md` for edge cases (concurrent sibling deletion order, stuck children, envtest limitations).

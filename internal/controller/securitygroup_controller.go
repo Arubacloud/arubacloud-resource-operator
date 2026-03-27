@@ -24,6 +24,8 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/Arubacloud/sdk-go/pkg/aruba"
@@ -79,7 +81,13 @@ func (r *SecurityGroupReconciler) Finalizer() string {
 func (r *SecurityGroupReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.SecurityGroup{}).
-		Owns(&v1alpha1.SecurityRule{}).
+		Watches(&v1alpha1.SecurityRule{}, handler.EnqueueRequestsFromMapFunc(
+			childToParentMapFunc(func(o client.Object) *v1alpha1.ResourceReference {
+				if v, ok := o.(*v1alpha1.SecurityRule); ok {
+					return &v.Spec.SecurityGroupReference
+				}
+				return nil
+			}))).
 		Named("securitygroup").
 		Complete(r)
 }
@@ -266,7 +274,8 @@ func (r *SecurityGroupReconciler) HandleReconcile(ctx context.Context, obj recon
 // kubeSecurityGroupHasOwnedChildren returns true when any Kubernetes resource directly owned
 // by the SecurityGroup still exists. Used by the WaitingChildrenDeletion transition.
 func (r *SecurityGroupReconciler) kubeSecurityGroupHasOwnedChildren(k *v1alpha1.SecurityGroup, _ *arubatypes.SecurityGroupResponse) bool {
-	has, err := hasOwnedChildren(context.Background(), r.Client, k,
+	labelKey, _ := ownerLabelKey(r.Scheme, k)
+	has, err := hasOwnedChildren(context.Background(), r.Client, k, labelKey,
 		&v1alpha1.SecurityRuleList{},
 	)
 	if err != nil {
@@ -277,11 +286,10 @@ func (r *SecurityGroupReconciler) kubeSecurityGroupHasOwnedChildren(k *v1alpha1.
 }
 
 // kubeSecurityGroupDeleteOwnedChildren deletes all K8s children of the SecurityGroup that
-// have not yet received a deletionTimestamp. Called by the WaitingChildrenDeletion action
-// because the K8s GC only cascade-deletes children after the owner is fully removed from etcd,
-// which cannot happen while the SecurityGroup finalizer is present.
+// have not yet received a deletionTimestamp. Called by the WaitingChildrenDeletion action.
 func (r *SecurityGroupReconciler) kubeSecurityGroupDeleteOwnedChildren(ctx context.Context, k *v1alpha1.SecurityGroup, _ *arubatypes.SecurityGroupResponse) error {
-	return deleteOwnedChildren(ctx, r.Client, k,
+	labelKey, _ := ownerLabelKey(r.Scheme, k)
+	return deleteOwnedChildren(ctx, r.Client, k, labelKey,
 		&v1alpha1.SecurityRuleList{},
 	)
 }

@@ -53,15 +53,16 @@ Note: in production this is less of an issue than originally thought, because th
 
 ## 4. Cross-Namespace OwnerReferences Not Supported
 
-**Context**: Kubernetes OwnerReferences require the owner and owned objects to be in the same namespace. If a child resource references a parent in a different namespace (via `ResourceReference.Namespace`), the OwnerReference cannot be set.
+**Status**: **Resolved** — see `ai/plans/cross-namespace_cascade_delete.md`.
 
-**Current mitigation**: The `ensureOwnerReference` helper validates the same-namespace constraint. If the namespaces differ, it logs a warning and skips OwnerReference setup. The child resource functions normally but does not participate in cascade deletion — it must be deleted manually.
+**Resolution**: Standard Kubernetes OwnerReferences have been replaced entirely by a two-layer custom ownership model:
 
-**Impact**: Low — the current deployment model places all related resources in the same namespace. Cross-namespace references are technically possible but not a documented or tested pattern.
+1. **`arubacloud.com/owner-references` annotation** — JSON `[]ArubaOwnerReference` storing the full owner identity including `Namespace`. Source of truth. Set by `ensureOwnerReference` via `setArubaControllerReference`.
+2. **`arubacloud.com/owner-<kind>` label** — UID-valued label for efficient cluster-wide label-selector queries in `hasOwnedChildren` / `deleteOwnedChildren`.
 
-**Potential future solutions**:
-- If cross-namespace ownership becomes a requirement, consider using a custom finalizer-based cascade mechanism instead of OwnerReferences (parent's finalizer enumerates and deletes children across namespaces before removing itself)
-- Alternatively, enforce same-namespace constraint via a validating webhook that rejects cross-namespace `ResourceReference` values
+`Owns()` watches in `SetupWithManager` have been replaced by `Watches()` with `childToParentMapFunc`, which reads the parent reference from the child's spec and works for both same and cross-namespace relationships.
+
+Cross-namespace children participate fully in cascade deletion. No special cases.
 
 ---
 
@@ -78,12 +79,12 @@ Note: in production this is less of an issue than originally thought, because th
 
 ---
 
-## 6. OwnerReference Setup Adds a K8s API Call Per Reconciliation
+## 6. Ownership Setup Adds a K8s API Call Per Reconciliation
 
-**Context**: Each child controller's `HandleReconcile` now fetches the parent K8s object (via `resolveOwnerObject`) to set the OwnerReference. This is a local API server call but adds latency to every reconciliation loop, even after the OwnerReference is already set.
+**Context**: Each child controller's `HandleReconcile` fetches the parent K8s object (via `resolveOwnerObject`) to set the ownership annotation and label. This is a local API server call but adds latency to every reconciliation loop, even after the metadata is already set.
 
-**Current mitigation**: The `ensureOwnerReference` helper is idempotent — if the OwnerReference is already present and correct, it returns immediately without patching. The `resolveOwnerObject` call (a `Get` by name) is lightweight. The extra latency is negligible compared to CMP API calls.
+**Current mitigation**: The `ensureOwnerReference` helper is idempotent — if both the annotation and label are already present and correct, it returns immediately without patching. The `resolveOwnerObject` call (a `Get` by name) is lightweight. The extra latency is negligible compared to CMP API calls.
 
 **Potential future solutions**:
-- Skip the parent K8s `Get` call if the child's `OwnerReferences` already contains an entry for the expected parent GVK + name (check locally before fetching). This trades consistency (won't detect parent UID changes) for performance
-- Move OwnerReference setup to a one-time init step (e.g., only during `Creating` phase) instead of every reconciliation. This loses the self-healing property for existing resources but eliminates ongoing overhead
+- Skip the parent K8s `Get` call if the child's annotation already contains an entry for the expected parent UID (check locally before fetching). This trades consistency (won't detect parent UID changes after delete/recreate) for performance.
+- Move ownership setup to a one-time init step (e.g., only during `Creating` phase) instead of every reconciliation. This loses the self-healing property but eliminates ongoing overhead.

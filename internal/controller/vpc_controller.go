@@ -24,6 +24,8 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/Arubacloud/sdk-go/pkg/aruba"
@@ -203,7 +205,8 @@ func (r *VpcReconciler) HandleReconcile(ctx context.Context, obj reconciler.Reso
 // kubeVpcHasOwnedChildren returns true when any Kubernetes resource directly owned
 // by the VPC still exists. Used by the WaitingChildrenDeletion transition.
 func (r *VpcReconciler) kubeVpcHasOwnedChildren(k *v1alpha1.Vpc, _ *arubatypes.VPCResponse) bool {
-	has, err := hasOwnedChildren(context.Background(), r.Client, k,
+	labelKey, _ := ownerLabelKey(r.Scheme, k)
+	has, err := hasOwnedChildren(context.Background(), r.Client, k, labelKey,
 		&v1alpha1.SubnetList{},
 		&v1alpha1.SecurityGroupList{},
 	)
@@ -215,11 +218,10 @@ func (r *VpcReconciler) kubeVpcHasOwnedChildren(k *v1alpha1.Vpc, _ *arubatypes.V
 }
 
 // kubeVpcDeleteOwnedChildren deletes all K8s children of the VPC that have not yet
-// received a deletionTimestamp. Called by the WaitingChildrenDeletion action because
-// the K8s GC only cascade-deletes children after the owner is fully removed from etcd,
-// which cannot happen while the VPC finalizer is present.
+// received a deletionTimestamp. Called by the WaitingChildrenDeletion action.
 func (r *VpcReconciler) kubeVpcDeleteOwnedChildren(ctx context.Context, k *v1alpha1.Vpc, _ *arubatypes.VPCResponse) error {
-	return deleteOwnedChildren(ctx, r.Client, k,
+	labelKey, _ := ownerLabelKey(r.Scheme, k)
+	return deleteOwnedChildren(ctx, r.Client, k, labelKey,
 		&v1alpha1.SubnetList{},
 		&v1alpha1.SecurityGroupList{},
 	)
@@ -730,8 +732,20 @@ func cmpVpcRequestFromKube(kubeVpc *v1alpha1.Vpc) *arubatypes.VPCRequest {
 func (r *VpcReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.Vpc{}).
-		Owns(&v1alpha1.Subnet{}).
-		Owns(&v1alpha1.SecurityGroup{}).
+		Watches(&v1alpha1.Subnet{}, handler.EnqueueRequestsFromMapFunc(
+			childToParentMapFunc(func(o client.Object) *v1alpha1.ResourceReference {
+				if v, ok := o.(*v1alpha1.Subnet); ok {
+					return &v.Spec.VpcReference
+				}
+				return nil
+			}))).
+		Watches(&v1alpha1.SecurityGroup{}, handler.EnqueueRequestsFromMapFunc(
+			childToParentMapFunc(func(o client.Object) *v1alpha1.ResourceReference {
+				if v, ok := o.(*v1alpha1.SecurityGroup); ok {
+					return &v.Spec.VpcReference
+				}
+				return nil
+			}))).
 		Named("vpc").
 		Complete(r)
 }

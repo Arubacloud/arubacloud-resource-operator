@@ -16,7 +16,10 @@ limitations under the License.
 
 package v1alpha1
 
-import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+)
 
 // Common phases for all resources
 type ResourcePhase string
@@ -61,6 +64,31 @@ type Location struct {
 	// Value is the location identifier (e.g., "ITBG-Bergamo")
 	// +kubebuilder:validation:Required
 	Value string `json:"value"`
+}
+
+// ArubaOwnerReference contains the information needed to identify an owning object
+// across namespaces. It mirrors metav1.OwnerReference but adds a Namespace field,
+// enabling cross-namespace ownership relationships that standard Kubernetes
+// OwnerReferences do not support.
+type ArubaOwnerReference struct {
+	// APIVersion is the API version of the referent.
+	APIVersion string `json:"apiVersion"`
+	// Kind is the kind of the referent.
+	Kind string `json:"kind"`
+	// Namespace is the namespace of the referent.
+	Namespace string `json:"namespace"`
+	// Name is the name of the referent.
+	Name string `json:"name"`
+	// UID is the UID of the referent.
+	UID types.UID `json:"uid"`
+	// Controller indicates that this reference designates the managing controller.
+	// +optional
+	Controller *bool `json:"controller,omitempty"`
+	// BlockOwnerDeletion indicates that, if set to true and if the owner has the
+	// "foregroundDeletion" finalizer, the owner cannot be deleted until this reference
+	// is removed.
+	// +optional
+	BlockOwnerDeletion *bool `json:"blockOwnerDeletion,omitempty"`
 }
 
 // ResourceReference represents a reference to another resource

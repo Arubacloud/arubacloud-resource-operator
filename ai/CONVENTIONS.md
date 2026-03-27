@@ -100,6 +100,39 @@ requeueOnError:  SmartRequeueOnError[*v1alpha1.Xxx, *arubatypes.XxxResponse],
 | `createTest<Type>(...)` | Test helper: create and persist a K8s resource | `createTestProject` |
 | `set<Type>Status(...)` | Test helper: put resource in a specific phase/reason | `setBSStatus` |
 
+## Ownership
+
+### Annotation and label conventions
+
+The operator uses a **custom two-layer ownership model** instead of standard Kubernetes OwnerReferences (which do not support cross-namespace). Both layers are set atomically by `ensureOwnerReference` on every child reconciliation.
+
+| Layer | Key | Value | Purpose |
+|---|---|---|---|
+| **Annotation** | `arubacloud.com/owner-references` | JSON `[]ArubaOwnerReference` | Source of truth. Full identity (namespace, name, UID, kind, apiVersion). |
+| **Label** | `arubacloud.com/owner-<lowerkind>` | owner UID | Efficient cluster-wide server-side label queries. |
+
+Both are **operator-managed** — never edit them manually. They self-heal on the next reconcile.
+
+### No K8s OwnerReferences
+
+Standard Kubernetes OwnerReferences (`metadata.ownerReferences`) are **not set** by this operator. This is intentional: K8s OwnerReferences have no `Namespace` field, so the GC resolves owners in the child's namespace only. Cross-namespace OwnerReferences are treated as dangling references by the GC, which may trigger premature deletion. The operator handles all cascade deletion explicitly via `WaitingChildrenDeletion`.
+
+### Ownership infrastructure naming
+
+Ownership helpers in `internal/controller/owner_reference.go` follow the "no prefix = shared infrastructure" convention:
+
+| Function | Purpose |
+|---|---|
+| `ensureOwnerReference` | Idempotent entry point — sets annotation + label in one patch |
+| `setArubaControllerReference` | Upserts the annotation entry for a given owner |
+| `parseArubaOwnerReferences` | Reads and parses the annotation |
+| `marshalArubaOwnerReferences` | Serialises and writes the annotation |
+| `hasArubaOwnerReference` | Checks if the annotation contains a given UID |
+| `ownerLabelKey` | Derives the label key from the owner's GVK |
+| `hasOwnedChildren` | Cluster-wide label query — used in WaitingChildrenDeletion condition |
+| `deleteOwnedChildren` | Cluster-wide label query + delete — used in WaitingChildrenDeletion action |
+| `childToParentMapFunc` | Returns a `handler.MapFunc` for `Watches()` in parent controllers |
+
 ## Context usage
 
 `context.Context` is always the first parameter in functions that perform I/O (API calls, K8s client operations, reconciliation methods).

@@ -23,6 +23,8 @@ import (
 	"net/http"
 
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/Arubacloud/sdk-go/pkg/aruba"
@@ -36,7 +38,8 @@ import (
 // by the project still exists. Used by the WaitingChildrenDeletion transition to prevent
 // CMP deletion before all child CMP resources have been cleaned up.
 func (r *ProjectReconciler) kubeProjectHasOwnedChildren(k *v1alpha1.Project, _ *arubatypes.ProjectResponse) bool {
-	has, err := hasOwnedChildren(context.Background(), r.Client, k,
+	labelKey, _ := ownerLabelKey(r.Scheme, k)
+	has, err := hasOwnedChildren(context.Background(), r.Client, k, labelKey,
 		&v1alpha1.VpcList{},
 		&v1alpha1.BlockStorageList{},
 		&v1alpha1.KeyPairList{},
@@ -51,11 +54,10 @@ func (r *ProjectReconciler) kubeProjectHasOwnedChildren(k *v1alpha1.Project, _ *
 }
 
 // kubeProjectDeleteOwnedChildren deletes all K8s children of the project that have not
-// yet received a deletionTimestamp. Called by the WaitingChildrenDeletion action because
-// the K8s GC only cascade-deletes children after the owner is fully removed from etcd,
-// which cannot happen while the project finalizer is present.
+// yet received a deletionTimestamp. Called by the WaitingChildrenDeletion action.
 func (r *ProjectReconciler) kubeProjectDeleteOwnedChildren(ctx context.Context, k *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
-	return deleteOwnedChildren(ctx, r.Client, k,
+	labelKey, _ := ownerLabelKey(r.Scheme, k)
+	return deleteOwnedChildren(ctx, r.Client, k, labelKey,
 		&v1alpha1.VpcList{},
 		&v1alpha1.BlockStorageList{},
 		&v1alpha1.KeyPairList{},
@@ -594,11 +596,41 @@ func cmpProjectRequestFromCMP(cmpProj *arubatypes.ProjectResponse) *arubatypes.P
 func (r *ProjectReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.Project{}).
-		Owns(&v1alpha1.Vpc{}).
-		Owns(&v1alpha1.BlockStorage{}).
-		Owns(&v1alpha1.KeyPair{}).
-		Owns(&v1alpha1.ElasticIp{}).
-		Owns(&v1alpha1.CloudServer{}).
+		Watches(&v1alpha1.Vpc{}, handler.EnqueueRequestsFromMapFunc(
+			childToParentMapFunc(func(o client.Object) *v1alpha1.ResourceReference {
+				if v, ok := o.(*v1alpha1.Vpc); ok {
+					return &v.Spec.ProjectReference
+				}
+				return nil
+			}))).
+		Watches(&v1alpha1.BlockStorage{}, handler.EnqueueRequestsFromMapFunc(
+			childToParentMapFunc(func(o client.Object) *v1alpha1.ResourceReference {
+				if v, ok := o.(*v1alpha1.BlockStorage); ok {
+					return &v.Spec.ProjectReference
+				}
+				return nil
+			}))).
+		Watches(&v1alpha1.KeyPair{}, handler.EnqueueRequestsFromMapFunc(
+			childToParentMapFunc(func(o client.Object) *v1alpha1.ResourceReference {
+				if v, ok := o.(*v1alpha1.KeyPair); ok {
+					return &v.Spec.ProjectReference
+				}
+				return nil
+			}))).
+		Watches(&v1alpha1.ElasticIp{}, handler.EnqueueRequestsFromMapFunc(
+			childToParentMapFunc(func(o client.Object) *v1alpha1.ResourceReference {
+				if v, ok := o.(*v1alpha1.ElasticIp); ok {
+					return &v.Spec.ProjectReference
+				}
+				return nil
+			}))).
+		Watches(&v1alpha1.CloudServer{}, handler.EnqueueRequestsFromMapFunc(
+			childToParentMapFunc(func(o client.Object) *v1alpha1.ResourceReference {
+				if v, ok := o.(*v1alpha1.CloudServer); ok {
+					return &v.Spec.ProjectReference
+				}
+				return nil
+			}))).
 		Named("project").
 		Complete(r)
 }

@@ -124,15 +124,22 @@ NN=1 QNT=01 ACTION=delete TENANT=my-tenant NAME=my-resource ./test_runner.sh
 | `Test1_00` | Project |
 | `Test1_01` | Project + BlockStorage |
 | `Test2_00` | Project + VPC |
-| `Test3_00` | Project + (see file) |
+| `Test3_00` | Project + VPC + SecurityGroup |
+| `Test4_00` | Project + VPC + SecurityGroup + SecurityRule |
+| `Test5_00` | Project + VPC + SecurityGroup + SecurityRule + Subnet |
 | `Test6_00` | Project + VPC + SecurityGroup + SecurityRule + Subnet + BlockStorage |
-| `Test6_02..06` | Same as Test6_00 + additional BlockStorages |
+| `Test6_02..06` | Same as Test6_00 + N additional BlockStorages (N = variant suffix − 1) |
 | `Test7_00` | Test6_00 + ElasticIP |
+| `Test7_02..06` | Same as Test7_00 + N additional ElasticIPs and BlockStorages |
 | `Test8_00` | Test7_00 + KeyPair |
+| `Test8_02..06` | Same as Test8_00 + N additional ElasticIPs and BlockStorages |
 | `Test9_00` | Test8_00 + CloudServer |
+| `Test9_02..06` | Same as Test9_00 + N additional ElasticIPs, BlockStorages, and CloudServers |
 | `Test10` | Full stack with data-volume CloudServer |
 | `Test11` | Full stack (different ordering — ElasticIP before SecurityGroup) |
 | `Test12_00` | Project + VPC + Subnet |
+| `Test_eip_00` | Project + ElasticIP |
+| `Test_kp_00` | Project + KeyPair |
 
 ### Creating a new fixture file
 

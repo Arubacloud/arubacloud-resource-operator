@@ -29,6 +29,7 @@ type BillingPlan struct {
 }
 
 // ElasticIpSpec defines the desired state of ElasticIp.
+// +kubebuilder:validation:XValidation:rule="self.tenant == oldSelf.tenant",message="tenant is immutable"
 type ElasticIpSpec struct {
 	// Tenant is the owning account/tenant of this elastic IP
 	Tenant string `json:"tenant,omitempty"`

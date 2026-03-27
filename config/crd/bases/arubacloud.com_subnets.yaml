@@ -135,6 +135,9 @@ spec:
             - type
             - vpcReference
             type: object
+            x-kubernetes-validations:
+            - message: tenant is immutable
+              rule: self.tenant == oldSelf.tenant
           status:
             description: SubnetStatus defines the observed state of Subnet.
             properties:

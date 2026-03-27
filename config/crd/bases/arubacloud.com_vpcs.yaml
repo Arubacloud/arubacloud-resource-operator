@@ -89,6 +89,9 @@ spec:
             - location
             - projectReference
             type: object
+            x-kubernetes-validations:
+            - message: tenant is immutable
+              rule: self.tenant == oldSelf.tenant
           status:
             description: VpcStatus defines the observed state of Vpc.
             properties:

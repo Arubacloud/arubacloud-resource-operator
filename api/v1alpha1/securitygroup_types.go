@@ -21,6 +21,7 @@ import (
 )
 
 // SecurityGroupSpec defines the desired state of SecurityGroup.
+// +kubebuilder:validation:XValidation:rule="self.tenant == oldSelf.tenant",message="tenant is immutable"
 type SecurityGroupSpec struct {
 	// Tenant is the owning account/tenant of this security group
 	Tenant string `json:"tenant,omitempty"`

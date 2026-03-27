@@ -94,6 +94,9 @@ spec:
             - projectReference
             - value
             type: object
+            x-kubernetes-validations:
+            - message: tenant is immutable
+              rule: self.tenant == oldSelf.tenant
           status:
             description: KeyPairStatus defines the observed state of KeyPair.
             properties:

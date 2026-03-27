@@ -21,6 +21,7 @@ import (
 )
 
 // CloudServerSpec defines the desired state of CloudServer.
+// +kubebuilder:validation:XValidation:rule="self.tenant == oldSelf.tenant",message="tenant is immutable"
 type CloudServerSpec struct {
 	// Tenant is the owning account/tenant of this cloud server
 	Tenant string `json:"tenant,omitempty"`

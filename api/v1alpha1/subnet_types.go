@@ -36,6 +36,7 @@ type SubnetDHCP struct {
 }
 
 // SubnetSpec defines the desired state of Subnet.
+// +kubebuilder:validation:XValidation:rule="self.tenant == oldSelf.tenant",message="tenant is immutable"
 type SubnetSpec struct {
 	// Tenant is the owning account/tenant of this subnet
 	Tenant string `json:"tenant,omitempty"`

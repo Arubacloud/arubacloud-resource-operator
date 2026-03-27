@@ -21,6 +21,7 @@ import (
 )
 
 // KeyPairSpec defines the desired state of KeyPair.
+// +kubebuilder:validation:XValidation:rule="self.tenant == oldSelf.tenant",message="tenant is immutable"
 type KeyPairSpec struct {
 	// Tenant is the owning account/tenant of this keypair
 	Tenant string `json:"tenant,omitempty"`

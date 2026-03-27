@@ -36,6 +36,7 @@ type SecurityRuleTarget struct {
 }
 
 // SecurityRuleSpec defines the desired state of SecurityRule.
+// +kubebuilder:validation:XValidation:rule="self.tenant == oldSelf.tenant",message="tenant is immutable"
 type SecurityRuleSpec struct {
 	// Tenant is the owning account/tenant of this security rule
 	Tenant string `json:"tenant,omitempty"`

@@ -683,4 +683,17 @@ var _ = Describe("VpcReconciler", func() {
 			Entry("5xx → ShortRequeueAfter, no phase change", "vpc-cmp-err-delete-500", http.StatusInternalServerError, reconciler.ShortRequeueAfter),
 		)
 	})
+
+	Describe("Tenant immutability", func() {
+		It("rejects a tenant change on an existing resource", func() {
+			vpc = createTestVpc(ctx, "test-vpc-immutable-tenant", defaultVpcSpec(vpcProjectName))
+
+			vFetch := &v1alpha1.Vpc{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(vpc), vFetch)).To(Succeed())
+			vFetch.Spec.Tenant = "other-tenant"
+			err := k8sClient.Update(ctx, vFetch)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("tenant is immutable"))
+		})
+	})
 })

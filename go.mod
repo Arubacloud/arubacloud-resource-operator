@@ -3,8 +3,7 @@ module github.com/Arubacloud/arubacloud-resource-operator
 go 1.24.0
 
 require (
-	github.com/Arubacloud/sdk-go v0.1.23
-	github.com/Nerzal/gocloak/v13 v13.9.0
+	github.com/Arubacloud/sdk-go v0.1.24
 	github.com/onsi/ginkgo/v2 v2.22.0
 	github.com/onsi/gomega v1.36.1
 	github.com/stretchr/testify v1.11.1
@@ -17,8 +16,6 @@ require (
 require (
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/go-jose/go-jose/v4 v4.1.1 // indirect
-	github.com/go-resty/resty/v2 v2.7.0 // indirect
-	github.com/golang-jwt/jwt/v5 v5.0.0 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
@@ -30,11 +27,9 @@ require (
 	github.com/hashicorp/hcl v1.0.1-vault-7 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
-	github.com/opentracing/opentracing-go v1.2.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/redis/go-redis/v9 v9.17.1 // indirect
 	github.com/ryanuber/go-glob v1.0.0 // indirect
-	github.com/segmentio/ksuid v1.0.4 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
 	golang.org/x/crypto v0.44.0 // indirect
@@ -62,7 +57,7 @@ require (
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/pprof v0.0.0-20241029153458-d1b30febd7db // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/hashicorp/vault/api v1.22.0
+	github.com/hashicorp/vault/api v1.22.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect

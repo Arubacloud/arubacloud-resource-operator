@@ -23,7 +23,11 @@ import (
 	"net/http"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/Arubacloud/sdk-go/pkg/aruba"
@@ -405,80 +409,37 @@ func (r *SecurityRuleReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Sec
 		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
 	})
 
-	// 8. HasDeniedChanges — surface immutable field violations before attempting update
-	ts.Add(&AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
-		name:       "HasDeniedChanges",
-		kCondition: kubeSecurityRuleHasDeniedChanges,
-		aCondition: cmpSecurityRuleIsFinal,
-		kAction: func(ctx context.Context, kubeSR *v1alpha1.SecurityRule, cmpSR *arubatypes.SecurityRuleResponse) error {
-			return fmt.Errorf("security rule update rejected: %w", checkSecurityRuleDeniedChanges(kubeSR, cmpSR))
-		},
-		requeue:        NoRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		requeueOnError: LongRequeueAndIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-	})
-
-	// 9. SpecAlreadyInSyncWithCMP — generation changed but spec identical to CMP; just re-stamp ObservedGeneration
-	ts.Add(&AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
-		name:           "SpecAlreadyInSyncWithCMP",
-		kCondition:     kubeSecurityRuleSpecInSyncWithCMP,
-		aCondition:     cmpSecurityRuleIsActive,
-		kAction:        r.kubeSetActiveAndSetID,
-		requeue:        NoRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-	})
-
-	// 10. ShouldBeUpdated — spec changed and CMP is ready
+	// 8. ShouldBeUpdated — generation changed while Active → enter Updating phase
 	ts.Add(&AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
 		name:           "ShouldBeUpdated",
-		kCondition:     kubeSecurityRuleShouldUpdate,
-		aCondition:     cmpSecurityRuleIsFinal,
+		kCondition:     kubeActiveAndGenerationChanged[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		aCondition:     cmpSecurityRuleExists,
 		kAction:        r.kubeMarkToUpdate,
 		requeue:        ShortRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
 		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
 	})
 
-	// 11. ShouldBeUpdatedOnCMP — send update to CMP
+	// 9. UpdateNotSupported — Updating+ShallSynchronize + CMP exists → signal failure
 	ts.Add(&AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
-		name:              "ShouldBeUpdatedOnCMP",
-		kCondition:        kubeShouldBeUpdatedOnCMP[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		aCondition:        cmpSecurityRuleIsFinal,
-		aAction:           r.cmpUpdate,
-		kActionOnASuccess: r.kubeMarkUpdating,
-		kActionOnAError:   kubeSetErrorMessageOnCMPError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse](r.Client),
-		requeue:           ShortRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		requeueOnError:    SmartRequeueOnError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-	})
-
-	// 12. WaitingUpdateOnCMP — CMP is still processing the update
-	ts.Add(&AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
-		name:           "WaitingUpdateOnCMP",
-		kCondition:     kubeWaitingUpdateOnCMP[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		aCondition:     cmpSecurityRuleIsTransitory,
-		requeue:        LongRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-	})
-
-	// 13. UpdateConfirmedOnCMP — CMP has settled; advance to Synchronized
-	ts.Add(&AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
-		name:           "UpdateConfirmedOnCMP",
-		kCondition:     kubeWaitingUpdateOnCMP[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		aCondition:     cmpSecurityRuleIsFinal,
-		kAction:        r.kubeMarkUpdatingDone,
+		name:           "UpdateNotSupported",
+		kCondition:     kubeShouldBeUpdatedOnCMP[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		aCondition:     cmpSecurityRuleExists,
+		kAction:        r.kubeMarkUpdatingFailed,
 		requeue:        ShortRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
 		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
 	})
 
-	// 14. UpdateAccomplished — transition back to Active and stamp generation
+	// 10. UpdateRollback — Updating+Failed + CMP exists → rollback spec and return to Active
 	ts.Add(&AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
-		name:           "UpdateAccomplished",
-		kCondition:     kubeUpdateAccomplished[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		aCondition:     cmpSecurityRuleIsActive,
-		kAction:        r.kubeSetActiveAndSetID,
+		name:           "UpdateRollback",
+		kCondition:     kubeSecurityRuleUpdatingFailed,
+		aCondition:     cmpSecurityRuleExists,
+		kAction:        r.kubeRollbackSpecAndSetActive,
 		requeue:        NoRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
 		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
 	})
 
-	// 15. ShouldBeCreated
+	// 11. ShouldBeCreated
 	ts.Add(&AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
 		name:           "ShouldBeCreated",
 		kCondition:     kubeIsFirstReconciliation[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
@@ -488,7 +449,7 @@ func (r *SecurityRuleReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Sec
 		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
 	})
 
-	// 16. ShouldBeCreatedInCMP
+	// 12. ShouldBeCreatedInCMP
 	ts.Add(&AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
 		name:              "ShouldBeCreatedInCMP",
 		kCondition:        kubeShouldBeCreatedOnCMP[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
@@ -500,7 +461,7 @@ func (r *SecurityRuleReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Sec
 		requeueOnError:    SmartRequeueOnError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
 	})
 
-	// 17. WaitingCreationInCMP
+	// 13. WaitingCreationInCMP
 	ts.Add(&AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
 		name:           "WaitingCreationInCMP",
 		kCondition:     kubeWaitingCreationInCMP[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
@@ -509,7 +470,7 @@ func (r *SecurityRuleReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Sec
 		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
 	})
 
-	// 18. CreationConfirmedOnCMP
+	// 14. CreationConfirmedOnCMP
 	ts.Add(&AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
 		name:           "CreationConfirmedOnCMP",
 		kCondition:     kubeWaitingCreationInCMP[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
@@ -519,7 +480,7 @@ func (r *SecurityRuleReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Sec
 		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
 	})
 
-	// 19. CreationAccomplished
+	// 15. CreationAccomplished
 	ts.Add(&AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
 		name:           "CreationAccomplished",
 		kCondition:     kubeIsCreatedOnCMP[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
@@ -529,7 +490,7 @@ func (r *SecurityRuleReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Sec
 		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
 	})
 
-	// 20. IsInError
+	// 16. IsInError
 	ts.Add(&AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
 		name:           "IsInError",
 		kCondition:     AlwaysTrue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
@@ -544,26 +505,22 @@ func (r *SecurityRuleReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Sec
 
 // Resource-specific condition functions
 
-func kubeSecurityRuleHasDeniedChanges(kubeSR *v1alpha1.SecurityRule, cmpSR *arubatypes.SecurityRuleResponse) bool {
-	if !kubeSR.DeletionTimestamp.IsZero() {
+func kubeSecurityRuleUpdatingFailed(kubeSR *v1alpha1.SecurityRule, _ *arubatypes.SecurityRuleResponse) bool {
+	if !kubeSR.GetDeletionTimestamp().IsZero() {
 		return false
 	}
-	if cmpSR == nil {
+	rs := kubeSR.GetResourceStatus()
+	if rs == nil || rs.Phase != v1alpha1.ResourcePhaseUpdating {
 		return false
 	}
-	return checkSecurityRuleDeniedChanges(kubeSR, cmpSR) != nil
+	condition := meta.FindStatusCondition(rs.Conditions, string(v1alpha1.ResourcePhaseUpdating))
+	return condition != nil &&
+		condition.Status == metav1.ConditionTrue &&
+		condition.Reason == v1alpha1.ConditionReasonFailed
 }
 
-func kubeSecurityRuleSpecInSyncWithCMP(kubeSR *v1alpha1.SecurityRule, cmpSR *arubatypes.SecurityRuleResponse) bool {
-	return kubeActiveAndGenerationChanged(kubeSR, cmpSR) &&
-		checkSecurityRuleDeniedChanges(kubeSR, cmpSR) == nil &&
-		!kubeSecurityRuleNeedsUpdate(kubeSR, cmpSR)
-}
-
-func kubeSecurityRuleShouldUpdate(kubeSR *v1alpha1.SecurityRule, cmpSR *arubatypes.SecurityRuleResponse) bool {
-	return kubeActiveAndGenerationChanged(kubeSR, cmpSR) &&
-		checkSecurityRuleDeniedChanges(kubeSR, cmpSR) == nil &&
-		kubeSecurityRuleNeedsUpdate(kubeSR, cmpSR)
+func cmpSecurityRuleExists(_ *v1alpha1.SecurityRule, cmpSR *arubatypes.SecurityRuleResponse) bool {
+	return cmpSR != nil
 }
 
 func cmpSecurityRuleNotExists(_ *v1alpha1.SecurityRule, cmpSR *arubatypes.SecurityRuleResponse) bool {
@@ -605,8 +562,8 @@ func cmpSecurityRuleIsFailed(_ *v1alpha1.SecurityRule, cmpSR *arubatypes.Securit
 
 // Kube action methods
 
-func (r *SecurityRuleReconciler) kubeSetPhaseAndCondition(ctx context.Context, kubeSR *v1alpha1.SecurityRule, phase v1alpha1.ResourcePhase, reason string, _ error) error {
-	return setPhaseAndCondition(r.Client, ctx, kubeSR, phase, reason, nil, func(sr *v1alpha1.SecurityRule) {
+func (r *SecurityRuleReconciler) kubeSetPhaseAndCondition(ctx context.Context, kubeSR *v1alpha1.SecurityRule, phase v1alpha1.ResourcePhase, reason string, actionErr error) error {
+	return setPhaseAndCondition(r.Client, ctx, kubeSR, phase, reason, actionErr, func(sr *v1alpha1.SecurityRule) {
 		if prjID, ok := ctx.Value(projectIDKey).(string); ok && sr.Status.ProjectID == "" {
 			sr.Status.ProjectID = prjID
 		}
@@ -639,12 +596,39 @@ func (r *SecurityRuleReconciler) kubeMarkToUpdate(ctx context.Context, kubeSR *v
 	return r.kubeSetPhaseAndCondition(ctx, kubeSR, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, nil)
 }
 
-func (r *SecurityRuleReconciler) kubeMarkUpdating(ctx context.Context, kubeSR *v1alpha1.SecurityRule, _ *arubatypes.SecurityRuleResponse) error {
-	return r.kubeSetPhaseAndCondition(ctx, kubeSR, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonSynchronizing, nil)
+func (r *SecurityRuleReconciler) kubeMarkUpdatingFailed(ctx context.Context, kubeSR *v1alpha1.SecurityRule, _ *arubatypes.SecurityRuleResponse) error {
+	return r.kubeSetPhaseAndCondition(ctx, kubeSR, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonFailed,
+		errors.New("updating SecurityRule resources is not supported"))
 }
 
-func (r *SecurityRuleReconciler) kubeMarkUpdatingDone(ctx context.Context, kubeSR *v1alpha1.SecurityRule, _ *arubatypes.SecurityRuleResponse) error {
-	return r.kubeSetPhaseAndCondition(ctx, kubeSR, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonSynchronized, nil)
+func (r *SecurityRuleReconciler) kubeRollbackSpecAndSetActive(ctx context.Context, kubeSR *v1alpha1.SecurityRule, cmpSR *arubatypes.SecurityRuleResponse) error {
+	// Step 1: rollback spec to match CMP values (object patch, not status patch)
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		srCopy := kubeSR.DeepCopy()
+		if err := r.Get(ctx, client.ObjectKeyFromObject(kubeSR), srCopy); err != nil {
+			return err
+		}
+
+		srPatch := srCopy.DeepCopy()
+		srPatch.Spec.Tags = cmpSR.Metadata.Tags
+		if cmpSR.Metadata.LocationResponse != nil {
+			srPatch.Spec.Region = cmpSR.Metadata.LocationResponse.Value
+		}
+		srPatch.Spec.Protocol = cmpSR.Properties.Protocol
+		srPatch.Spec.Port = cmpSR.Properties.Port
+		srPatch.Spec.Direction = string(cmpSR.Properties.Direction)
+		if cmpSR.Properties.Target != nil {
+			srPatch.Spec.Target.Type = string(cmpSR.Properties.Target.Kind)
+			srPatch.Spec.Target.Value = cmpSR.Properties.Target.Value
+		}
+
+		return r.Patch(ctx, srPatch, client.MergeFrom(srCopy))
+	}); err != nil {
+		return fmt.Errorf("failed to rollback security rule '%s' spec: %w", kubeSR.Name, err)
+	}
+
+	// Step 2: set Active — reads fresh object (with new generation from spec patch)
+	return r.kubeSetActiveAndSetID(ctx, kubeSR, cmpSR)
 }
 
 func (r *SecurityRuleReconciler) kubeMarkToCreate(ctx context.Context, kubeSR *v1alpha1.SecurityRule, _ *arubatypes.SecurityRuleResponse) error {
@@ -711,27 +695,6 @@ func (r *SecurityRuleReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.Secu
 		http.StatusOK, http.StatusAccepted, http.StatusNoContent, http.StatusNotFound)
 }
 
-func (r *SecurityRuleReconciler) cmpUpdate(ctx context.Context, kubeSR *v1alpha1.SecurityRule, cmpSR *arubatypes.SecurityRuleResponse) error {
-	prjID := ctx.Value(projectIDKey).(string)
-	vID := ctx.Value(vpcIDKey).(string)
-	sgID := ctx.Value(securityGroupIDKey).(string)
-	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
-
-	// Guard: should have been caught by HasDeniedChanges, but double-check.
-	if err := checkSecurityRuleDeniedChanges(kubeSR, cmpSR); err != nil {
-		return err
-	}
-
-	request := buildSecurityRuleUpdateRequest(kubeSR, cmpSR)
-
-	cmpResp, err := arubaClient.FromNetwork().SecurityGroupRules().Update(ctx, prjID, vID, sgID, *cmpSR.Metadata.ID, *request, nil)
-	if err != nil {
-		return cmpTransportError("update", kubeSR.Name, err)
-	}
-	return cmpCheckResponse("update", kubeSR.Name, cmpResp,
-		http.StatusOK, http.StatusAccepted, http.StatusNoContent)
-}
-
 func (r *SecurityRuleReconciler) cmpCreate(ctx context.Context, kubeSR *v1alpha1.SecurityRule, _ *arubatypes.SecurityRuleResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
 	vID := ctx.Value(vpcIDKey).(string)
@@ -747,48 +710,6 @@ func (r *SecurityRuleReconciler) cmpCreate(ctx context.Context, kubeSR *v1alpha1
 }
 
 // Helper functions
-
-func checkSecurityRuleDeniedChanges(kubeSR *v1alpha1.SecurityRule, cmpSR *arubatypes.SecurityRuleResponse) error {
-	if cmpSR == nil {
-		return nil
-	}
-
-	if cmpSR.Metadata.LocationResponse != nil &&
-		cmpSR.Metadata.LocationResponse.Value != "" &&
-		kubeSR.Spec.Region != cmpSR.Metadata.LocationResponse.Value {
-		return fmt.Errorf("%w: %w", ErrNotAllowedChanges, errors.New("change the 'location' is not allowed"))
-	}
-
-	return nil
-}
-
-func kubeSecurityRuleNeedsUpdate(kubeSR *v1alpha1.SecurityRule, cmpSR *arubatypes.SecurityRuleResponse) bool {
-	if cmpSR == nil {
-		return false
-	}
-	if !tagsAreEqual(kubeSR.Spec.Tags, cmpSR.Metadata.Tags) {
-		return true
-	}
-	if kubeSR.Spec.Protocol != cmpSR.Properties.Protocol {
-		return true
-	}
-	if kubeSR.Spec.Port != cmpSR.Properties.Port {
-		return true
-	}
-	if arubatypes.RuleDirection(kubeSR.Spec.Direction) != cmpSR.Properties.Direction {
-		return true
-	}
-	if cmpSR.Properties.Target == nil {
-		return true
-	}
-	if arubatypes.EndpointTypeDto(kubeSR.Spec.Target.Type) != cmpSR.Properties.Target.Kind {
-		return true
-	}
-	if kubeSR.Spec.Target.Value != cmpSR.Properties.Target.Value {
-		return true
-	}
-	return false
-}
 
 func cmpSecurityRuleRequestFromKube(kubeSR *v1alpha1.SecurityRule) *arubatypes.SecurityRuleRequest {
 	tags := make([]string, len(kubeSR.Spec.Tags))
@@ -813,61 +734,4 @@ func cmpSecurityRuleRequestFromKube(kubeSR *v1alpha1.SecurityRule) *arubatypes.S
 			},
 		},
 	}
-}
-
-func cmpSecurityRuleRequestFromCMP(cmpSR *arubatypes.SecurityRuleResponse) *arubatypes.SecurityRuleRequest {
-	if cmpSR == nil {
-		return nil
-	}
-	name := ""
-	if cmpSR.Metadata.Name != nil {
-		name = *cmpSR.Metadata.Name
-	}
-	tags := make([]string, len(cmpSR.Metadata.Tags))
-	copy(tags, cmpSR.Metadata.Tags)
-	locationValue := ""
-	if cmpSR.Metadata.LocationResponse != nil {
-		locationValue = cmpSR.Metadata.LocationResponse.Value
-	}
-	req := &arubatypes.SecurityRuleRequest{
-		Metadata: arubatypes.RegionalResourceMetadataRequest{
-			ResourceMetadataRequest: arubatypes.ResourceMetadataRequest{
-				Name: name,
-				Tags: tags,
-			},
-			Location: arubatypes.LocationRequest{
-				Value: locationValue,
-			},
-		},
-		Properties: arubatypes.SecurityRulePropertiesRequest{
-			Protocol:  cmpSR.Properties.Protocol,
-			Port:      cmpSR.Properties.Port,
-			Direction: cmpSR.Properties.Direction,
-		},
-	}
-	if cmpSR.Properties.Target != nil {
-		req.Properties.Target = &arubatypes.RuleTarget{
-			Kind:  cmpSR.Properties.Target.Kind,
-			Value: cmpSR.Properties.Target.Value,
-		}
-	}
-	return req
-}
-
-func buildSecurityRuleUpdateRequest(kubeSR *v1alpha1.SecurityRule, cmpSR *arubatypes.SecurityRuleResponse) *arubatypes.SecurityRuleRequest {
-	request := cmpSecurityRuleRequestFromCMP(cmpSR)
-	if request == nil {
-		return nil
-	}
-	tags := make([]string, len(kubeSR.Spec.Tags))
-	copy(tags, kubeSR.Spec.Tags)
-	request.Metadata.Tags = tags
-	request.Properties.Protocol = kubeSR.Spec.Protocol
-	request.Properties.Port = kubeSR.Spec.Port
-	request.Properties.Direction = arubatypes.RuleDirection(kubeSR.Spec.Direction)
-	request.Properties.Target = &arubatypes.RuleTarget{
-		Kind:  arubatypes.EndpointTypeDto(kubeSR.Spec.Target.Type),
-		Value: kubeSR.Spec.Target.Value,
-	}
-	return request
 }

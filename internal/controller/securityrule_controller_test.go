@@ -380,82 +380,20 @@ var _ = Describe("SecurityRuleReconciler", func() {
 		})
 	})
 
-	Describe("HasDeniedChanges", func() {
-		It("returns LongRequeue when immutable field (location) is changed", func() {
-			m := newSRReconcilerWithMocks(GinkgoT())
-			sr = createTestSecurityRule(ctx, "test-sr-denied-changes", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
-			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "sr-id-1", srProjectID, srVpcID, srSGID, 1, time.Now())
-
-			// Force generation change with different location
-			srFetch := &v1alpha1.SecurityRule{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), srFetch)).To(Succeed())
-			srFetch.Spec.Region = "IT-MILAN"
-			Expect(k8sClient.Update(ctx, srFetch)).To(Succeed())
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), sr)).To(Succeed())
-
-			// CMP still has original location
-			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-denied-changes", CSPResourceStateActive)
-			cmpSR.Metadata.LocationResponse = &arubatypes.LocationResponse{Value: "ITBG-Bergamo"}
-			m.expectProjectList(srProjectID, srProjectName)
-			m.expectVpcList(srProjectID, srVpcID, srVpcName)
-			m.expectSGList(srProjectID, srVpcID, srSGID, srSGName)
-			m.expectSRList(srProjectID, srVpcID, srSGID, cmpSR)
-
-			result, err := m.r.HandleReconcile(ctx, sr)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
-		})
-	})
-
-	Describe("SpecAlreadyInSyncWithCMP", func() {
-		It("re-stamps ObservedGeneration when spec hasn't actually changed", func() {
-			m := newSRReconcilerWithMocks(GinkgoT())
-			sr = createTestSecurityRule(ctx, "test-sr-spec-in-sync", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
-			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "sr-id-1", srProjectID, srVpcID, srSGID, 1, time.Now())
-
-			// Trigger generation bump with same tags
-			srFetch := &v1alpha1.SecurityRule{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), srFetch)).To(Succeed())
-			srFetch.Spec.Tags = []string{"tag1"}
-			Expect(k8sClient.Update(ctx, srFetch)).To(Succeed())
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), sr)).To(Succeed())
-
-			// CMP matches: same tags, same protocol/port/direction/target
-			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-spec-in-sync", CSPResourceStateActive)
-			cmpSR.Metadata.Tags = []string{"tag1"}
-			cmpSR.Metadata.LocationResponse = &arubatypes.LocationResponse{Value: "ITBG-Bergamo"}
-			m.expectProjectList(srProjectID, srProjectName)
-			m.expectVpcList(srProjectID, srVpcID, srVpcName)
-			m.expectSGList(srProjectID, srVpcID, srSGID, srSGName)
-			m.expectSRList(srProjectID, srVpcID, srSGID, cmpSR)
-
-			_, err := m.r.HandleReconcile(ctx, sr)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.SecurityRule{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseActive))
-			Expect(updated.Status.ObservedGeneration).To(Equal(sr.Generation))
-		})
-	})
-
 	Describe("ShouldBeUpdated", func() {
-		It("transitions to Updating+ShallSynchronize when tags differ", func() {
+		It("transitions to Updating+ShallSynchronize when spec changes", func() {
 			m := newSRReconcilerWithMocks(GinkgoT())
 			sr = createTestSecurityRule(ctx, "test-sr-should-update", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
 			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "sr-id-1", srProjectID, srVpcID, srSGID, 1, time.Now())
 
-			// Change tags to trigger update
+			// Change tags to trigger generation bump
 			srFetch := &v1alpha1.SecurityRule{}
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), srFetch)).To(Succeed())
 			srFetch.Spec.Tags = []string{"tag1", "tag2"}
 			Expect(k8sClient.Update(ctx, srFetch)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), sr)).To(Succeed())
 
-			// CMP has old tags
 			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-should-update", CSPResourceStateActive)
-			cmpSR.Metadata.Tags = []string{"tag1"}
-			cmpSR.Metadata.LocationResponse = &arubatypes.LocationResponse{Value: "ITBG-Bergamo"}
 			m.expectProjectList(srProjectID, srProjectName)
 			m.expectVpcList(srProjectID, srVpcID, srVpcName)
 			m.expectSGList(srProjectID, srVpcID, srSGID, srSGName)
@@ -473,29 +411,17 @@ var _ = Describe("SecurityRuleReconciler", func() {
 		})
 	})
 
-	Describe("Update on CMP", func() {
-		It("transitions to Updating+Synchronizing after successful CMP update", func() {
+	Describe("UpdateNotSupported", func() {
+		It("transitions to Updating+Failed with error message when update is attempted", func() {
 			m := newSRReconcilerWithMocks(GinkgoT())
-			sr = createTestSecurityRule(ctx, "test-sr-update-cmp", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
+			sr = createTestSecurityRule(ctx, "test-sr-update-not-supported", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
 			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, "sr-id-1", srProjectID, srVpcID, srSGID, 1, time.Now())
 
-			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-update-cmp", CSPResourceStateActive)
-			cmpSR.Metadata.LocationResponse = &arubatypes.LocationResponse{Value: "ITBG-Bergamo"}
-
-			m.mockAruba.EXPECT().FromProject().Return(m.mockProject)
-			m.mockProject.EXPECT().List(mock.Anything, mock.Anything).Return(buildProjectListForSG(srProjectID, srProjectName), nil)
-			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
-			m.mockNetwork.EXPECT().VPCs().Return(m.mockVPCs)
-			m.mockVPCs.EXPECT().List(mock.Anything, srProjectID, mock.Anything).Return(buildVpcListForSG(srVpcID, srVpcName), nil)
-			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
-			m.mockNetwork.EXPECT().SecurityGroups().Return(m.mockSecGrps)
-			m.mockSecGrps.EXPECT().List(mock.Anything, srProjectID, srVpcID, mock.Anything).Return(buildSGListForSR(srSGID, srSGName), nil)
-			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
-			m.mockNetwork.EXPECT().SecurityGroupRules().Return(m.mockSRules)
-			m.mockSRules.EXPECT().List(mock.Anything, srProjectID, srVpcID, srSGID, mock.Anything).Return(buildSecurityRuleList(cmpSR), nil)
-			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
-			m.mockNetwork.EXPECT().SecurityGroupRules().Return(m.mockSRules)
-			m.mockSRules.EXPECT().Update(mock.Anything, srProjectID, srVpcID, srSGID, "sr-id-1", mock.Anything, mock.Anything).Return(buildSRCRUDResponse(http.StatusOK), nil)
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-update-not-supported", CSPResourceStateActive)
+			m.expectProjectList(srProjectID, srProjectName)
+			m.expectVpcList(srProjectID, srVpcID, srVpcName)
+			m.expectSGList(srProjectID, srVpcID, srSGID, srSGName)
+			m.expectSRList(srProjectID, srVpcID, srSGID, cmpSR)
 
 			_, err := m.r.HandleReconcile(ctx, sr)
 			Expect(err).To(Succeed())
@@ -505,7 +431,61 @@ var _ = Describe("SecurityRuleReconciler", func() {
 			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseUpdating))
 			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseUpdating))
 			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronizing))
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonFailed))
+			Expect(cond.Message).To(ContainSubstring("updating SecurityRule resources is not supported"))
+		})
+	})
+
+	Describe("UpdateRollback", func() {
+		It("rolls back spec from CMP values and transitions to Active+Synchronized", func() {
+			m := newSRReconcilerWithMocks(GinkgoT())
+			sr = createTestSecurityRule(ctx, "test-sr-update-rollback", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
+			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonFailed, "sr-id-1", srProjectID, srVpcID, srSGID, 1, time.Now())
+
+			// Manually set the Updating condition with Failed reason (as kubeMarkUpdatingFailed would)
+			srFetch := &v1alpha1.SecurityRule{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), srFetch)).To(Succeed())
+			srFetch.Status.Conditions = []metav1.Condition{
+				{
+					Type:               string(v1alpha1.ResourcePhaseUpdating),
+					Status:             metav1.ConditionTrue,
+					Reason:             v1alpha1.ConditionReasonFailed,
+					LastTransitionTime: metav1.Now(),
+					Message:            "updating SecurityRule resources is not supported",
+				},
+			}
+			Expect(k8sClient.Status().Update(ctx, srFetch)).To(Succeed())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), sr)).To(Succeed())
+
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-update-rollback", CSPResourceStateActive)
+			cmpSR.Metadata.Tags = []string{"cmp-tag1"}
+			cmpSR.Metadata.LocationResponse = &arubatypes.LocationResponse{Value: "ITBG-Bergamo"}
+			cmpSR.Properties.Protocol = "UDP"
+			cmpSR.Properties.Port = "53"
+			cmpSR.Properties.Direction = arubatypes.RuleDirection("Egress")
+			cmpSR.Properties.Target = &arubatypes.RuleTarget{
+				Kind:  arubatypes.EndpointTypeDto("Ip"),
+				Value: "10.0.0.0/8",
+			}
+			m.expectProjectList(srProjectID, srProjectName)
+			m.expectVpcList(srProjectID, srVpcID, srVpcName)
+			m.expectSGList(srProjectID, srVpcID, srSGID, srSGName)
+			m.expectSRList(srProjectID, srVpcID, srSGID, cmpSR)
+
+			_, err := m.r.HandleReconcile(ctx, sr)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.SecurityRule{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseActive))
+			// Spec should be rolled back to CMP values
+			Expect(updated.Spec.Tags).To(Equal(cmpSR.Metadata.Tags))
+			Expect(updated.Spec.Region).To(Equal(cmpSR.Metadata.LocationResponse.Value))
+			Expect(updated.Spec.Protocol).To(Equal(cmpSR.Properties.Protocol))
+			Expect(updated.Spec.Port).To(Equal(cmpSR.Properties.Port))
+			Expect(updated.Spec.Direction).To(Equal(string(cmpSR.Properties.Direction)))
+			Expect(updated.Spec.Target.Type).To(Equal(string(cmpSR.Properties.Target.Kind)))
+			Expect(updated.Spec.Target.Value).To(Equal(cmpSR.Properties.Target.Value))
 		})
 	})
 

@@ -594,222 +594,231 @@ func (r *CloudServerReconciler) resolveElasticIPID(
 
 func (r *CloudServerReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse] {
 	ts := &reconciler.TransitionSet[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		DefaultRequeue: reconciler.NoRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		DefaultRequeue:        reconciler.NoRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 		DefaultRequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 	}
 
 	// 0. PhaseTimedOut — safety net: fail if stuck in a transitory phase too long
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name: "PhaseTimedOut",
-		KCondition: reconciler.KubePhaseTimedOut[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition: reconciler.AlwaysTrue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		KAction: r.kubeSetFailedOnTimeout,
-		Requeue: reconciler.NoRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		Name:           "PhaseTimedOut",
+		KCondition:     reconciler.KubePhaseTimedOut[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:     reconciler.AlwaysTrue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		KAction:        r.kubeSetFailedOnTimeout,
+		Requeue:        reconciler.NoRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+	})
+
+	// 0b. PendingAndDeleting — resource deleted while still in Pending; skip CMP entirely
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
+		Name:       "PendingAndDeleting",
+		KCondition: reconciler.KubePendingAndDeleting[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition: reconciler.AlwaysTrue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		KAction:    reconciler.KubeDeleteFromPending[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse](r.Client),
+		Requeue:    reconciler.NoRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 	})
 
 	// 1. ShouldBeDeleted
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name: "ShouldBeDeleted",
-		KCondition: reconciler.KubeShouldDelete[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition: cmpCloudServerIsFinal,
-		KAction: r.kubeMarkToDelete,
-		Requeue: reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		Name:           "ShouldBeDeleted",
+		KCondition:     reconciler.KubeShouldDelete[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:     cmpCloudServerIsFinal,
+		KAction:        r.kubeMarkToDelete,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 	})
 
 	// 2. ShouldDeleteTimedOut
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name: "ShouldDeleteTimedOut",
-		KCondition: reconciler.KubeShouldDeleteTimedOut[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition: reconciler.AlwaysTrue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		KAction: r.kubeMarkToDelete,
-		Requeue: reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		Name:           "ShouldDeleteTimedOut",
+		KCondition:     reconciler.KubeShouldDeleteTimedOut[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:     reconciler.AlwaysTrue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		KAction:        r.kubeMarkToDelete,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 	})
 
 	// 3. ShouldBeDeletedOnCMP
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name: "ShouldBeDeletedOnCMP",
-		KCondition: reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition: cmpCloudServerIsFinal,
-		AAction: r.cmpDelete,
+		Name:              "ShouldBeDeletedOnCMP",
+		KCondition:        reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:        cmpCloudServerIsFinal,
+		AAction:           r.cmpDelete,
 		KActionOnASuccess: r.kubeMarkDeleting,
-		KActionOnAError: reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse](r.Client),
-		Requeue: reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		RequeueOnError: reconciler.SmartRequeueOnError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse](r.Client),
+		Requeue:           reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 	})
 
 	// 4. DeletionOnCMPNotNeeded
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name: "DeletionOnCMPNotNeeded",
-		KCondition: reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition: cmpCloudServerNotExists,
-		KAction: r.kubeMarkDeletingDone,
-		Requeue: reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		Name:           "DeletionOnCMPNotNeeded",
+		KCondition:     reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:     cmpCloudServerNotExists,
+		KAction:        r.kubeMarkDeletingDone,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 	})
 
 	// 5. WaitingDeletionOnCMP
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name: "WaitingDeletionOnCMP",
-		KCondition: reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition: cmpCloudServerIsTransitory,
-		Requeue: reconciler.LongRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		Name:           "WaitingDeletionOnCMP",
+		KCondition:     reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:     cmpCloudServerIsTransitory,
+		Requeue:        reconciler.LongRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 	})
 
 	// 6. DeletionConfirmedOnCMP
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name: "DeletionConfirmedOnCMP",
-		KCondition: reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition: cmpCloudServerNotExists,
-		KAction: r.kubeMarkDeletingDone,
-		Requeue: reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		Name:           "DeletionConfirmedOnCMP",
+		KCondition:     reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:     cmpCloudServerNotExists,
+		KAction:        r.kubeMarkDeletingDone,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 	})
 
 	// 7. DeletionAccomplished
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name: "DeletionAccomplished",
-		KCondition: reconciler.KubeDeletionAccomplished[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition: cmpCloudServerNotExists,
-		KAction: r.kubeMarkDeleted,
-		Requeue: reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		Name:           "DeletionAccomplished",
+		KCondition:     reconciler.KubeDeletionAccomplished[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:     cmpCloudServerNotExists,
+		KAction:        r.kubeMarkDeleted,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 	})
 
 	// 8. HasDeniedChanges — surface immutable field violations before attempting update
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name: "HasDeniedChanges",
+		Name:       "HasDeniedChanges",
 		KCondition: kubeCSHasDeniedChanges,
 		ACondition: cmpCloudServerIsFinal,
 		KAction: func(ctx context.Context, kubeCS *v1alpha1.CloudServer, cmpCS *arubatypes.CloudServerResponse) error {
 			return fmt.Errorf("cloud server update rejected: %w", checkCSDeniedChanges(kubeCS, cmpCS))
 		},
-		Requeue: reconciler.NoRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		Requeue:        reconciler.NoRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 		RequeueOnError: reconciler.LongRequeueAndIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 	})
 
 	// 9. SpecAlreadyInSyncWithCMP — generation changed but spec identical to CMP
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name: "SpecAlreadyInSyncWithCMP",
-		KCondition: kubeCSSpecInSyncWithCMP,
-		ACondition: cmpCloudServerIsActive,
-		KAction: r.kubeSetActiveAndSetID,
-		Requeue: reconciler.NoRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		Name:           "SpecAlreadyInSyncWithCMP",
+		KCondition:     kubeCSSpecInSyncWithCMP,
+		ACondition:     cmpCloudServerIsActive,
+		KAction:        r.kubeSetActiveAndSetID,
+		Requeue:        reconciler.NoRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 	})
 
 	// 10. ShouldBeUpdated
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name: "ShouldBeUpdated",
-		KCondition: kubeCSShouldUpdate,
-		ACondition: cmpCloudServerIsFinal,
-		KAction: r.kubeMarkToUpdate,
-		Requeue: reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		Name:           "ShouldBeUpdated",
+		KCondition:     kubeCSShouldUpdate,
+		ACondition:     cmpCloudServerIsFinal,
+		KAction:        r.kubeMarkToUpdate,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 	})
 
 	// 11. ShouldBeUpdatedOnCMP
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name: "ShouldBeUpdatedOnCMP",
-		KCondition: reconciler.KubeShouldBeUpdatedOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition: cmpCloudServerIsFinal,
-		AAction: r.cmpUpdate,
+		Name:              "ShouldBeUpdatedOnCMP",
+		KCondition:        reconciler.KubeShouldBeUpdatedOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:        cmpCloudServerIsFinal,
+		AAction:           r.cmpUpdate,
 		KActionOnASuccess: r.kubeMarkUpdating,
-		KActionOnAError: reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse](r.Client),
-		Requeue: reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		RequeueOnError: reconciler.SmartRequeueOnError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse](r.Client),
+		Requeue:           reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 	})
 
 	// 12. WaitingUpdateOnCMP
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name: "WaitingUpdateOnCMP",
-		KCondition: reconciler.KubeWaitingUpdateOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition: cmpCloudServerIsTransitory,
-		Requeue: reconciler.LongRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		Name:           "WaitingUpdateOnCMP",
+		KCondition:     reconciler.KubeWaitingUpdateOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:     cmpCloudServerIsTransitory,
+		Requeue:        reconciler.LongRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 	})
 
 	// 13. UpdateConfirmedOnCMP
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name: "UpdateConfirmedOnCMP",
-		KCondition: reconciler.KubeWaitingUpdateOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition: cmpCloudServerIsFinal,
-		KAction: r.kubeMarkUpdatingDone,
-		Requeue: reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		Name:           "UpdateConfirmedOnCMP",
+		KCondition:     reconciler.KubeWaitingUpdateOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:     cmpCloudServerIsFinal,
+		KAction:        r.kubeMarkUpdatingDone,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 	})
 
 	// 14. UpdateAccomplished
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name: "UpdateAccomplished",
-		KCondition: reconciler.KubeUpdateAccomplished[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition: cmpCloudServerIsActive,
-		KAction: r.kubeSetActiveAndSetID,
-		Requeue: reconciler.NoRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		Name:           "UpdateAccomplished",
+		KCondition:     reconciler.KubeUpdateAccomplished[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:     cmpCloudServerIsActive,
+		KAction:        r.kubeSetActiveAndSetID,
+		Requeue:        reconciler.NoRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 	})
 
 	// 15. ShouldBeCreated
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name: "ShouldBeCreated",
-		KCondition: reconciler.KubeIsFirstReconciliation[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition: cmpCloudServerNotExists,
-		KAction: r.kubeMarkToCreate,
-		Requeue: reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		Name:           "ShouldBeCreated",
+		KCondition:     reconciler.KubeIsFirstReconciliation[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:     cmpCloudServerNotExists,
+		KAction:        r.kubeMarkToCreate,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 	})
 
 	// 16. ShouldBeCreatedInCMP
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name: "ShouldBeCreatedInCMP",
-		KCondition: reconciler.KubeShouldBeCreatedOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition: cmpCloudServerNotExists,
-		AAction: r.cmpCreate,
+		Name:              "ShouldBeCreatedInCMP",
+		KCondition:        reconciler.KubeShouldBeCreatedOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:        cmpCloudServerNotExists,
+		AAction:           r.cmpCreate,
 		KActionOnASuccess: r.kubeMarkCreating,
-		KActionOnAError: reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse](r.Client),
-		Requeue: reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		RequeueOnError: reconciler.SmartRequeueOnError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse](r.Client),
+		Requeue:           reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 	})
 
 	// 17. WaitingCreationInCMP
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name: "WaitingCreationInCMP",
-		KCondition: reconciler.KubeWaitingCreationInCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition: cmpCloudServerNotExistsOrTransitory,
-		Requeue: reconciler.LongRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		Name:           "WaitingCreationInCMP",
+		KCondition:     reconciler.KubeWaitingCreationInCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:     cmpCloudServerNotExistsOrTransitory,
+		Requeue:        reconciler.LongRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 	})
 
 	// 18. CreationConfirmedOnCMP
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name: "CreationConfirmedOnCMP",
-		KCondition: reconciler.KubeWaitingCreationInCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition: cmpCloudServerIsActive,
-		KAction: r.kubeMarkCreatingDone,
-		Requeue: reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		Name:           "CreationConfirmedOnCMP",
+		KCondition:     reconciler.KubeWaitingCreationInCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:     cmpCloudServerIsActive,
+		KAction:        r.kubeMarkCreatingDone,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 	})
 
 	// 19. CreationAccomplished
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name: "CreationAccomplished",
-		KCondition: reconciler.KubeIsCreatedOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition: cmpCloudServerIsActive,
-		KAction: r.kubeSetActiveAndSetID,
-		Requeue: reconciler.NoRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		Name:           "CreationAccomplished",
+		KCondition:     reconciler.KubeIsCreatedOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:     cmpCloudServerIsActive,
+		KAction:        r.kubeSetActiveAndSetID,
+		Requeue:        reconciler.NoRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 	})
 
 	// 20. IsInError
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name: "IsInError",
-		KCondition: reconciler.AlwaysTrue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition: cmpCloudServerIsFailed,
-		KAction: r.kubeSetFailed,
-		Requeue: reconciler.NoRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		Name:           "IsInError",
+		KCondition:     reconciler.AlwaysTrue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:     cmpCloudServerIsFailed,
+		KAction:        r.kubeSetFailed,
+		Requeue:        reconciler.NoRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
 	})
 
@@ -888,29 +897,32 @@ func cmpCloudServerIsFailed(_ *v1alpha1.CloudServer, cmpCS *arubatypes.CloudServ
 // --- Kube action methods ---
 
 func (r *CloudServerReconciler) kubeSetPhaseAndCondition(ctx context.Context, kubeCS *v1alpha1.CloudServer, phase v1alpha1.ResourcePhase, reason string, _ error) error {
-	return reconciler.SetPhaseAndCondition(r.Client, ctx, kubeCS, phase, reason, nil, func(cs *v1alpha1.CloudServer) {
-		if prjID, ok := ctx.Value(projectIDKey).(string); ok && cs.Status.ProjectID == "" {
-			cs.Status.ProjectID = prjID
-		}
-		if vID, ok := ctx.Value(vpcIDKey).(string); ok && cs.Status.VPCID == "" {
-			cs.Status.VPCID = vID
-		}
-		if bvID, ok := ctx.Value(bootVolumeIDKey).(string); ok && cs.Status.BootVolumeID == "" {
-			cs.Status.BootVolumeID = bvID
-		}
-		if kpID, ok := ctx.Value(keyPairIDKey).(string); ok && kpID != "" && cs.Status.KeyPairID == "" {
-			cs.Status.KeyPairID = kpID
-		}
-		if eipID, ok := ctx.Value(elasticIPIDKey).(string); ok && eipID != "" && cs.Status.ElasticIPID == "" {
-			cs.Status.ElasticIPID = eipID
-		}
-		if sIDs, ok := ctx.Value(subnetIDsKey).([]string); ok && len(cs.Status.SubnetIDs) == 0 {
-			cs.Status.SubnetIDs = sIDs
-		}
-		if sgIDs, ok := ctx.Value(securityGroupIDsKey).([]string); ok && len(cs.Status.SecurityGroupIDs) == 0 {
-			cs.Status.SecurityGroupIDs = sgIDs
-		}
-	})
+	prePatches := []func(*v1alpha1.CloudServer){
+		func(cs *v1alpha1.CloudServer) {
+			if prjID, ok := ctx.Value(projectIDKey).(string); ok && cs.Status.ProjectID == "" {
+				cs.Status.ProjectID = prjID
+			}
+			if vID, ok := ctx.Value(vpcIDKey).(string); ok && cs.Status.VPCID == "" {
+				cs.Status.VPCID = vID
+			}
+			if bvID, ok := ctx.Value(bootVolumeIDKey).(string); ok && cs.Status.BootVolumeID == "" {
+				cs.Status.BootVolumeID = bvID
+			}
+			if kpID, ok := ctx.Value(keyPairIDKey).(string); ok && kpID != "" && cs.Status.KeyPairID == "" {
+				cs.Status.KeyPairID = kpID
+			}
+			if eipID, ok := ctx.Value(elasticIPIDKey).(string); ok && eipID != "" && cs.Status.ElasticIPID == "" {
+				cs.Status.ElasticIPID = eipID
+			}
+			if sIDs, ok := ctx.Value(subnetIDsKey).([]string); ok && len(cs.Status.SubnetIDs) == 0 {
+				cs.Status.SubnetIDs = sIDs
+			}
+			if sgIDs, ok := ctx.Value(securityGroupIDsKey).([]string); ok && len(cs.Status.SecurityGroupIDs) == 0 {
+				cs.Status.SecurityGroupIDs = sgIDs
+			}
+		},
+	}
+	return reconciler.SetPhaseAndCondition(r.Client, ctx, kubeCS, phase, reason, nil, prePatches...)
 }
 
 func (r *CloudServerReconciler) kubeMarkToDelete(ctx context.Context, kubeCS *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse) error {

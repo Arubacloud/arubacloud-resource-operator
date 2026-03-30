@@ -13,7 +13,7 @@ Throughout the codebase and this documentation, "CMP resource" means the live cl
 The core pattern is a **three-layer reconciliation**:
 
 1. **`internal/reconciler/reconciler.go`** — Base `Reconciler` struct with the shared loop:
-   - Step 1: Register finalizer (requeue on add)
+   - Step 1: Register finalizer + set `Phase=Pending` (requeue on add)
    - Step 2: Delegate to `ResourceReconciler.HandleReconcile()`
    - Step 3: Remove finalizer when phase == `Deleted`
 
@@ -29,7 +29,7 @@ The core pattern is a **three-layer reconciliation**:
 ## Key Types
 
 - **`ResourceObject`** interface (reconciler pkg) — all managed CRDs implement this; provides `GetResourceStatus()` and `GetTenant()`
-- **`ResourcePhase`** — Kubernetes-side state machine phases: `Creating → Provisioning → WaitingCondition → Active → Updating → Deleting → Deleted → Failed`
+- **`ResourcePhase`** — Kubernetes-side state machine phases: `Pending → Creating → Provisioning → WaitingCondition → Active → Updating → Deleting → Deleted → Failed`
 - **`ResourceStatus.Conditions`** — standard `metav1.Condition` list; at any moment exactly one condition has `Status=True` and encodes the current `Phase+Reason` pair
 - **`TransitionSet[K, A]`** — parameterized over the Kubernetes type (K) and CMP API response type (A)
 - Requeue constants: `ShortRequeueAfter` (1s), `LongRequeueAfter` (20s), `MaxPhaseTimeout` (10 min timeout for transitory phases)
@@ -158,13 +158,23 @@ When the CMP provides no update endpoint, spec changes must be rejected and roll
 - The rollback transition uses `NoRequeue` because `reconciler.SetActiveAndSetID` internally stamps `ObservedGeneration` to the new generation, preventing re-entry into `ShouldBeUpdated` on the next reconcile.
 - In tests, the `UpdateRollback` test verifies that `Spec.Tags` and `Spec.Region` (or the resource's equivalent mutable fields) are restored to the CMP response values.
 
-### 3. Creation flow
+### 0b. Deletion from Pending (before CMP resource ever exists)
 
-Triggered on the first reconciliation (empty `ResourceID`, no phase, no conditions).
+When a resource is deleted while still in `Pending` phase (i.e., no CMP resource was ever created), the standard deletion flow is bypassed entirely. This transition must come before `ShouldBeDeleted`.
 
 | Transition | K condition | CMP condition | Action |
 |-----------|-------------|---------------|--------|
-| `ShouldBeCreated` | first reconciliation | CMP not found | Mark `Creating+ShallSynchronize` |
+| `PendingAndDeleting` | `Phase=Pending` + deleting + no `ResourceID` | any (always true) | `KubeDeleteFromPending` — set `Deleted+Synchronized` directly (no CMP interaction; Pending condition was already Synchronized) |
+
+After `KubeDeleteFromPending` sets `Phase=Deleted`, the base reconciler's Step 3 removes the finalizer immediately.
+
+### 3. Creation flow
+
+Triggered on the first reconciliation (`Phase=Pending`, empty `ResourceID`, `Reason=Synchronized`).
+
+| Transition | K condition | CMP condition | Action |
+|-----------|-------------|---------------|--------|
+| `ShouldBeCreated` | `Phase=Pending` + no `ResourceID` + `Reason=Synchronized` | CMP not found | Mark `Creating+ShallSynchronize` |
 | `ShouldBeCreatedInCMP` | `Creating+ShallSynchronize` | CMP not found | Call CMP create → on success mark `Creating+Synchronizing`; on error: `KubeSetErrorMessageOnCMPError` + `SmartRequeueOnError` |
 | `WaitingCreationInCMP` | `Creating+Synchronizing` | CMP not found or transitory | No action, long requeue |
 | `CreationConfirmedOnCMP` | `Creating+Synchronizing` | CMP now found/active | Mark `Creating+Synchronized` |

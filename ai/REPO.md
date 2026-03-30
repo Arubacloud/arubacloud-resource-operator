@@ -22,7 +22,7 @@
 
 Defines all Custom Resource types and the shared status model.
 
-- `common_types.go` — `ResourceStatus`, `ResourcePhase`, condition reason constants (`ShallSynchronize`, `Synchronizing`, `Synchronized`, `Failed`), `ResourcePhaseNature` (Transitory / Final), `ResourceReference`, and `ArubaOwnerReference`.
+- `common_types.go` — `ResourceStatus`, `ResourcePhase` (including `ResourcePhasePending` as the initial phase set alongside the finalizer), condition reason constants (`ShallSynchronize`, `Synchronizing`, `Synchronized`, `Failed`), `ResourcePhaseNature` (Transitory / Final — `Pending` is classified as Final so timeouts never apply), `ResourceReference`, and `ArubaOwnerReference`.
 - `<resource>_types.go` — one file per CRD (Project, BlockStorage, CloudServer, ElasticIP, KeyPair, SecurityGroup, SecurityRule, Subnet, VPC); each contains the `Spec`, `Status`, and list type for that resource. Flat scalar fields are used for `Region string`, `Zone string`, `SizeGB int`, `BillingPeriod string`, and `CIDR string` — no nested structs for these.
 - `zz_generated.deepcopy.go` — generated; do not edit.
 

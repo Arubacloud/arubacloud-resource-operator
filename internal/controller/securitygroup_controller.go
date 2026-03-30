@@ -298,37 +298,46 @@ func (r *SecurityGroupReconciler) kubeSecurityGroupDeleteOwnedChildren(ctx conte
 
 func (r *SecurityGroupReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse] {
 	ts := &reconciler.TransitionSet[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
-		DefaultRequeue: reconciler.NoRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		DefaultRequeue:        reconciler.NoRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 		DefaultRequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 	}
 
 	// 0. PhaseTimedOut — safety net: fail if stuck in a transitory phase too long
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
-		Name: "PhaseTimedOut",
-		KCondition: reconciler.KubePhaseTimedOut[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
-		ACondition: reconciler.AlwaysTrue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
-		KAction: r.kubeSetFailedOnTimeout,
-		Requeue: reconciler.NoRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		Name:           "PhaseTimedOut",
+		KCondition:     reconciler.KubePhaseTimedOut[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:     reconciler.AlwaysTrue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		KAction:        r.kubeSetFailedOnTimeout,
+		Requeue:        reconciler.NoRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+	})
+
+	// 0b. PendingAndDeleting — resource deleted while still in Pending; skip CMP entirely
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
+		Name:       "PendingAndDeleting",
+		KCondition: reconciler.KubePendingAndDeleting[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition: reconciler.AlwaysTrue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		KAction:    reconciler.KubeDeleteFromPending[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse](r.Client),
+		Requeue:    reconciler.NoRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 	})
 
 	// 1. ShouldBeDeleted
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
-		Name: "ShouldBeDeleted",
-		KCondition: reconciler.KubeShouldDelete[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
-		ACondition: cmpSecurityGroupIsFinal,
-		KAction: r.kubeMarkToDelete,
-		Requeue: reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		Name:           "ShouldBeDeleted",
+		KCondition:     reconciler.KubeShouldDelete[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:     cmpSecurityGroupIsFinal,
+		KAction:        r.kubeMarkToDelete,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 	})
 
 	// 2. ShouldDeleteTimedOut — enter deletion flow for timed-out resources (except those that timed out during Deleting)
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
-		Name: "ShouldDeleteTimedOut",
-		KCondition: reconciler.KubeShouldDeleteTimedOut[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
-		ACondition: reconciler.AlwaysTrue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
-		KAction: r.kubeMarkToDelete,
-		Requeue: reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		Name:           "ShouldDeleteTimedOut",
+		KCondition:     reconciler.KubeShouldDeleteTimedOut[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:     reconciler.AlwaysTrue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		KAction:        r.kubeMarkToDelete,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 	})
 
@@ -340,194 +349,194 @@ func (r *SecurityGroupReconciler) newTransitionSet() *reconciler.TransitionSet[*
 		KCondition: func(k *v1alpha1.SecurityGroup, a *arubatypes.SecurityGroupResponse) bool {
 			return reconciler.KubeShouldBeDeletedOnCMP(k, a) && r.kubeSecurityGroupHasOwnedChildren(k, a)
 		},
-		ACondition: cmpSecurityGroupIsFinal,
-		KAction: r.kubeSecurityGroupDeleteOwnedChildren,
-		Requeue: reconciler.LongRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:     cmpSecurityGroupIsFinal,
+		KAction:        r.kubeSecurityGroupDeleteOwnedChildren,
+		Requeue:        reconciler.LongRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 		RequeueOnError: reconciler.ShortRequeueAndIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 	})
 
 	// 4. ShouldBeDeletedOnCMP
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
-		Name: "ShouldBeDeletedOnCMP",
-		KCondition: reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
-		ACondition: cmpSecurityGroupIsFinal,
-		AAction: r.cmpDelete,
+		Name:              "ShouldBeDeletedOnCMP",
+		KCondition:        reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:        cmpSecurityGroupIsFinal,
+		AAction:           r.cmpDelete,
 		KActionOnASuccess: r.kubeMarkDeleting,
-		KActionOnAError: reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse](r.Client),
-		Requeue: reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
-		RequeueOnError: reconciler.SmartRequeueOnError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse](r.Client),
+		Requeue:           reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 	})
 
-	// 4. DeletionOnCMPNotNeeded — resource marked for deletion but CMP resource doesn't exist; skip CMP delete
+	// 5. DeletionOnCMPNotNeeded — resource marked for deletion but CMP resource doesn't exist; skip CMP delete
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
-		Name: "DeletionOnCMPNotNeeded",
-		KCondition: reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
-		ACondition: cmpSecurityGroupNotExists,
-		KAction: r.kubeMarkDeletingDone,
-		Requeue: reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		Name:           "DeletionOnCMPNotNeeded",
+		KCondition:     reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:     cmpSecurityGroupNotExists,
+		KAction:        r.kubeMarkDeletingDone,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 	})
 
-	// 5. WaitingDeletionOnCMP
+	// 6. WaitingDeletionOnCMP
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
-		Name: "WaitingDeletionOnCMP",
-		KCondition: reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
-		ACondition: cmpSecurityGroupIsTransitory,
-		Requeue: reconciler.LongRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		Name:           "WaitingDeletionOnCMP",
+		KCondition:     reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:     cmpSecurityGroupIsTransitory,
+		Requeue:        reconciler.LongRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 	})
 
-	// 6. DeletionConfirmedOnCMP
+	// 7. DeletionConfirmedOnCMP
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
-		Name: "DeletionConfirmedOnCMP",
-		KCondition: reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
-		ACondition: cmpSecurityGroupNotExists,
-		KAction: r.kubeMarkDeletingDone,
-		Requeue: reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		Name:           "DeletionConfirmedOnCMP",
+		KCondition:     reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:     cmpSecurityGroupNotExists,
+		KAction:        r.kubeMarkDeletingDone,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 	})
 
-	// 7. DeletionAccomplished
+	// 8. DeletionAccomplished
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
-		Name: "DeletionAccomplished",
-		KCondition: reconciler.KubeDeletionAccomplished[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
-		ACondition: cmpSecurityGroupNotExists,
-		KAction: r.kubeMarkDeleted,
-		Requeue: reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		Name:           "DeletionAccomplished",
+		KCondition:     reconciler.KubeDeletionAccomplished[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:     cmpSecurityGroupNotExists,
+		KAction:        r.kubeMarkDeleted,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 	})
 
-	// 8. HasDeniedChanges — surface immutable field violations before attempting update
+	// 9. HasDeniedChanges — surface immutable field violations before attempting update
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
-		Name: "HasDeniedChanges",
+		Name:       "HasDeniedChanges",
 		KCondition: kubeSecurityGroupHasDeniedChanges,
 		ACondition: cmpSecurityGroupIsFinal,
 		KAction: func(ctx context.Context, kubeSG *v1alpha1.SecurityGroup, cmpSG *arubatypes.SecurityGroupResponse) error {
 			return fmt.Errorf("security group update rejected: %w", checkSecurityGroupDeniedChanges(kubeSG, cmpSG))
 		},
-		Requeue: reconciler.NoRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		Requeue:        reconciler.NoRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 		RequeueOnError: reconciler.LongRequeueAndIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 	})
 
-	// 9. SpecAlreadyInSyncWithCMP — generation changed but spec identical to CMP; just re-stamp ObservedGeneration
+	// 10. SpecAlreadyInSyncWithCMP — generation changed but spec identical to CMP; just re-stamp ObservedGeneration
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
-		Name: "SpecAlreadyInSyncWithCMP",
-		KCondition: kubeSecurityGroupSpecInSyncWithCMP,
-		ACondition: cmpSecurityGroupIsActive,
-		KAction: r.kubeSetActiveAndSetID,
-		Requeue: reconciler.NoRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		Name:           "SpecAlreadyInSyncWithCMP",
+		KCondition:     kubeSecurityGroupSpecInSyncWithCMP,
+		ACondition:     cmpSecurityGroupIsActive,
+		KAction:        r.kubeSetActiveAndSetID,
+		Requeue:        reconciler.NoRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 	})
 
-	// 10. ShouldBeUpdated — spec changed and CMP is ready
+	// 11. ShouldBeUpdated — spec changed and CMP is ready
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
-		Name: "ShouldBeUpdated",
-		KCondition: kubeSecurityGroupShouldUpdate,
-		ACondition: cmpSecurityGroupIsFinal,
-		KAction: r.kubeMarkToUpdate,
-		Requeue: reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		Name:           "ShouldBeUpdated",
+		KCondition:     kubeSecurityGroupShouldUpdate,
+		ACondition:     cmpSecurityGroupIsFinal,
+		KAction:        r.kubeMarkToUpdate,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 	})
 
-	// 11. ShouldBeUpdatedOnCMP — send update to CMP
+	// 12. ShouldBeUpdatedOnCMP — send update to CMP
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
-		Name: "ShouldBeUpdatedOnCMP",
-		KCondition: reconciler.KubeShouldBeUpdatedOnCMP[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
-		ACondition: cmpSecurityGroupIsFinal,
-		AAction: r.cmpUpdate,
+		Name:              "ShouldBeUpdatedOnCMP",
+		KCondition:        reconciler.KubeShouldBeUpdatedOnCMP[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:        cmpSecurityGroupIsFinal,
+		AAction:           r.cmpUpdate,
 		KActionOnASuccess: r.kubeMarkUpdating,
-		KActionOnAError: reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse](r.Client),
-		Requeue: reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
-		RequeueOnError: reconciler.SmartRequeueOnError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse](r.Client),
+		Requeue:           reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 	})
 
-	// 12. WaitingUpdateOnCMP — CMP is still processing the update
+	// 13. WaitingUpdateOnCMP — CMP is still processing the update
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
-		Name: "WaitingUpdateOnCMP",
-		KCondition: reconciler.KubeWaitingUpdateOnCMP[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
-		ACondition: cmpSecurityGroupIsTransitory,
-		Requeue: reconciler.LongRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		Name:           "WaitingUpdateOnCMP",
+		KCondition:     reconciler.KubeWaitingUpdateOnCMP[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:     cmpSecurityGroupIsTransitory,
+		Requeue:        reconciler.LongRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 	})
 
-	// 13. UpdateConfirmedOnCMP — CMP has settled; advance to Synchronized
+	// 14. UpdateConfirmedOnCMP — CMP has settled; advance to Synchronized
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
-		Name: "UpdateConfirmedOnCMP",
-		KCondition: reconciler.KubeWaitingUpdateOnCMP[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
-		ACondition: cmpSecurityGroupIsFinal,
-		KAction: r.kubeMarkUpdatingDone,
-		Requeue: reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		Name:           "UpdateConfirmedOnCMP",
+		KCondition:     reconciler.KubeWaitingUpdateOnCMP[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:     cmpSecurityGroupIsFinal,
+		KAction:        r.kubeMarkUpdatingDone,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 	})
 
-	// 14. UpdateAccomplished — transition back to Active and stamp generation
+	// 15. UpdateAccomplished — transition back to Active and stamp generation
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
-		Name: "UpdateAccomplished",
-		KCondition: reconciler.KubeUpdateAccomplished[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
-		ACondition: cmpSecurityGroupIsActive,
-		KAction: r.kubeSetActiveAndSetID,
-		Requeue: reconciler.NoRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		Name:           "UpdateAccomplished",
+		KCondition:     reconciler.KubeUpdateAccomplished[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:     cmpSecurityGroupIsActive,
+		KAction:        r.kubeSetActiveAndSetID,
+		Requeue:        reconciler.NoRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 	})
 
-	// 15. ShouldBeCreated
+	// 16. ShouldBeCreated
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
-		Name: "ShouldBeCreated",
-		KCondition: reconciler.KubeIsFirstReconciliation[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
-		ACondition: cmpSecurityGroupNotExists,
-		KAction: r.kubeMarkToCreate,
-		Requeue: reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		Name:           "ShouldBeCreated",
+		KCondition:     reconciler.KubeIsFirstReconciliation[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:     cmpSecurityGroupNotExists,
+		KAction:        r.kubeMarkToCreate,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 	})
 
-	// 16. ShouldBeCreatedInCMP
+	// 17. ShouldBeCreatedInCMP
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
-		Name: "ShouldBeCreatedInCMP",
-		KCondition: reconciler.KubeShouldBeCreatedOnCMP[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
-		ACondition: cmpSecurityGroupNotExists,
-		AAction: r.cmpCreate,
+		Name:              "ShouldBeCreatedInCMP",
+		KCondition:        reconciler.KubeShouldBeCreatedOnCMP[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:        cmpSecurityGroupNotExists,
+		AAction:           r.cmpCreate,
 		KActionOnASuccess: r.kubeMarkCreating,
-		KActionOnAError: reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse](r.Client),
-		Requeue: reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
-		RequeueOnError: reconciler.SmartRequeueOnError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse](r.Client),
+		Requeue:           reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 	})
 
-	// 17. WaitingCreationInCMP
+	// 18. WaitingCreationInCMP
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
-		Name: "WaitingCreationInCMP",
-		KCondition: reconciler.KubeWaitingCreationInCMP[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
-		ACondition: cmpSecurityGroupNotExistsOrTransitory,
-		Requeue: reconciler.LongRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		Name:           "WaitingCreationInCMP",
+		KCondition:     reconciler.KubeWaitingCreationInCMP[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:     cmpSecurityGroupNotExistsOrTransitory,
+		Requeue:        reconciler.LongRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 	})
 
-	// 18. CreationConfirmedOnCMP
+	// 19. CreationConfirmedOnCMP
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
-		Name: "CreationConfirmedOnCMP",
-		KCondition: reconciler.KubeWaitingCreationInCMP[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
-		ACondition: cmpSecurityGroupIsActive,
-		KAction: r.kubeMarkCreatingDone,
-		Requeue: reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		Name:           "CreationConfirmedOnCMP",
+		KCondition:     reconciler.KubeWaitingCreationInCMP[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:     cmpSecurityGroupIsActive,
+		KAction:        r.kubeMarkCreatingDone,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 	})
 
-	// 19. CreationAccomplished
+	// 20. CreationAccomplished
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
-		Name: "CreationAccomplished",
-		KCondition: reconciler.KubeIsCreatedOnCMP[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
-		ACondition: cmpSecurityGroupIsActive,
-		KAction: r.kubeSetActiveAndSetID,
-		Requeue: reconciler.NoRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		Name:           "CreationAccomplished",
+		KCondition:     reconciler.KubeIsCreatedOnCMP[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:     cmpSecurityGroupIsActive,
+		KAction:        r.kubeSetActiveAndSetID,
+		Requeue:        reconciler.NoRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 	})
 
-	// 20. IsInError
+	// 21. IsInError
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
-		Name: "IsInError",
-		KCondition: reconciler.AlwaysTrue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
-		ACondition: cmpSecurityGroupIsFailed,
-		KAction: r.kubeSetFailed,
-		Requeue: reconciler.NoRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		Name:           "IsInError",
+		KCondition:     reconciler.AlwaysTrue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:     cmpSecurityGroupIsFailed,
+		KAction:        r.kubeSetFailed,
+		Requeue:        reconciler.NoRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
 	})
 
@@ -598,14 +607,17 @@ func cmpSecurityGroupIsFailed(_ *v1alpha1.SecurityGroup, cmpSG *arubatypes.Secur
 // Kube action methods
 
 func (r *SecurityGroupReconciler) kubeSetPhaseAndCondition(ctx context.Context, kubeSG *v1alpha1.SecurityGroup, phase v1alpha1.ResourcePhase, reason string, _ error) error {
-	return reconciler.SetPhaseAndCondition(r.Client, ctx, kubeSG, phase, reason, nil, func(sg *v1alpha1.SecurityGroup) {
-		if prjID, ok := ctx.Value(projectIDKey).(string); ok && sg.Status.ProjectID == "" {
-			sg.Status.ProjectID = prjID
-		}
-		if vID, ok := ctx.Value(vpcIDKey).(string); ok && sg.Status.VPCID == "" {
-			sg.Status.VPCID = vID
-		}
-	})
+	prePatches := []func(*v1alpha1.SecurityGroup){
+		func(sg *v1alpha1.SecurityGroup) {
+			if prjID, ok := ctx.Value(projectIDKey).(string); ok && sg.Status.ProjectID == "" {
+				sg.Status.ProjectID = prjID
+			}
+			if vID, ok := ctx.Value(vpcIDKey).(string); ok && sg.Status.VPCID == "" {
+				sg.Status.VPCID = vID
+			}
+		},
+	}
+	return reconciler.SetPhaseAndCondition(r.Client, ctx, kubeSG, phase, reason, nil, prePatches...)
 }
 
 func (r *SecurityGroupReconciler) kubeMarkToDelete(ctx context.Context, kubeSG *v1alpha1.SecurityGroup, _ *arubatypes.SecurityGroupResponse) error {

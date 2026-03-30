@@ -430,6 +430,7 @@ var _ = Describe("CloudServerReconciler", func() {
 		It("transitions to Creating+ShallSynchronize when CMP has no CloudServer", func() {
 			m := newCSReconcilerWithMocks(GinkgoT())
 			cs = createTestCS(ctx, "test-cs-first", defaultCSSpec(csProjectName, csVpcName, csBootVolName, csSubnetName, csSGName))
+			setCSStatus(ctx, cs, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", "", "", nil, nil, 0, time.Now())
 
 			m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, "test-cs-first")
 
@@ -442,6 +443,40 @@ var _ = Describe("CloudServerReconciler", func() {
 			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
+
+			pendingCond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhasePending))
+			Expect(pendingCond).NotTo(BeNil())
+			Expect(pendingCond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(pendingCond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
+		})
+	})
+
+	Describe("PendingAndDeleting", func() {
+		It("transitions directly to Deleted when resource is in Pending and is being deleted", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+			cs = createTestCS(ctx, "test-cs-pending-deleting", defaultCSSpec(csProjectName, csVpcName, csBootVolName, csSubnetName, csSGName))
+			setCSStatus(ctx, cs, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", "", "", nil, nil, 0, time.Now())
+
+			m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, "test-cs-pending-deleting")
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
+			cs.Finalizers = []string{cloudServerFinalizerName}
+			Expect(k8sClient.Update(ctx, cs)).To(Succeed())
+
+			Expect(k8sClient.Delete(ctx, cs)).To(Succeed())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
+
+			_, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleted))
+
+			pendingCond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhasePending))
+			Expect(pendingCond).NotTo(BeNil())
+			Expect(pendingCond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(pendingCond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
 		})
 	})
 
@@ -885,6 +920,7 @@ var _ = Describe("CloudServerReconciler", func() {
 		It("proceeds when boot volume is in Failed CMP state during creation (Final state, no block)", func() {
 			m := newCSReconcilerWithMocks(GinkgoT())
 			cs = createTestCS(ctx, "test-cs-bootvol-failed", defaultCSSpec(csProjectName, csVpcName, csBootVolName, csSubnetName, csSGName))
+			setCSStatus(ctx, cs, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", "", "", nil, nil, 0, time.Now())
 
 			m.expectProjectList(csProjectID, csProjectName)
 			m.expectVpcList(csProjectID, csVpcID, csVpcName)
@@ -958,6 +994,7 @@ var _ = Describe("CloudServerReconciler", func() {
 		It("stamps all parent IDs on status when first transitioning", func() {
 			m := newCSReconcilerWithMocks(GinkgoT())
 			cs = createTestCS(ctx, "test-cs-ids-stamped", defaultCSSpec(csProjectName, csVpcName, csBootVolName, csSubnetName, csSGName))
+			setCSStatus(ctx, cs, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", "", "", nil, nil, 0, time.Now())
 
 			m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, "test-cs-ids-stamped")
 

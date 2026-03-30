@@ -231,37 +231,46 @@ func (r *VPCReconciler) kubeVPCDeleteOwnedChildren(ctx context.Context, k *v1alp
 
 func (r *VPCReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alpha1.VPC, *arubatypes.VPCResponse] {
 	ts := &reconciler.TransitionSet[*v1alpha1.VPC, *arubatypes.VPCResponse]{
-		DefaultRequeue: reconciler.NoRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		DefaultRequeue:        reconciler.NoRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
 		DefaultRequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	}
 
 	// 0. PhaseTimedOut — safety net: fail if stuck in a transitory phase too long
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
-		Name: "PhaseTimedOut",
-		KCondition: reconciler.KubePhaseTimedOut[*v1alpha1.VPC, *arubatypes.VPCResponse],
-		ACondition: reconciler.AlwaysTrue[*v1alpha1.VPC, *arubatypes.VPCResponse],
-		KAction: r.kubeSetFailedOnTimeout,
-		Requeue: reconciler.NoRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		Name:           "PhaseTimedOut",
+		KCondition:     reconciler.KubePhaseTimedOut[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		ACondition:     reconciler.AlwaysTrue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		KAction:        r.kubeSetFailedOnTimeout,
+		Requeue:        reconciler.NoRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
+	})
+
+	// 0b. PendingAndDeleting — resource deleted while still in Pending; skip CMP entirely
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
+		Name:       "PendingAndDeleting",
+		KCondition: reconciler.KubePendingAndDeleting[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		ACondition: reconciler.AlwaysTrue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		KAction:    reconciler.KubeDeleteFromPending[*v1alpha1.VPC, *arubatypes.VPCResponse](r.Client),
+		Requeue:    reconciler.NoRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
 	// 1. ShouldBeDeleted
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
-		Name: "ShouldBeDeleted",
-		KCondition: reconciler.KubeShouldDelete[*v1alpha1.VPC, *arubatypes.VPCResponse],
-		ACondition: cmpVpcIsFinal,
-		KAction: r.kubeMarkToDelete,
-		Requeue: reconciler.ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		Name:           "ShouldBeDeleted",
+		KCondition:     reconciler.KubeShouldDelete[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		ACondition:     cmpVpcIsFinal,
+		KAction:        r.kubeMarkToDelete,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
 	// 2. ShouldDeleteTimedOut — enter deletion flow for timed-out resources (except those that timed out during Deleting)
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
-		Name: "ShouldDeleteTimedOut",
-		KCondition: reconciler.KubeShouldDeleteTimedOut[*v1alpha1.VPC, *arubatypes.VPCResponse],
-		ACondition: reconciler.AlwaysTrue[*v1alpha1.VPC, *arubatypes.VPCResponse],
-		KAction: r.kubeMarkToDelete,
-		Requeue: reconciler.ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		Name:           "ShouldDeleteTimedOut",
+		KCondition:     reconciler.KubeShouldDeleteTimedOut[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		ACondition:     reconciler.AlwaysTrue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		KAction:        r.kubeMarkToDelete,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
@@ -273,194 +282,194 @@ func (r *VPCReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alpha1.V
 		KCondition: func(k *v1alpha1.VPC, a *arubatypes.VPCResponse) bool {
 			return reconciler.KubeShouldBeDeletedOnCMP(k, a) && r.kubeVPCHasOwnedChildren(k, a)
 		},
-		ACondition: cmpVpcIsFinal,
-		KAction: r.kubeVPCDeleteOwnedChildren,
-		Requeue: reconciler.LongRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		ACondition:     cmpVpcIsFinal,
+		KAction:        r.kubeVPCDeleteOwnedChildren,
+		Requeue:        reconciler.LongRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
 		RequeueOnError: reconciler.ShortRequeueAndIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
 	// 4. ShouldBeDeletedOnCMP
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
-		Name: "ShouldBeDeletedOnCMP",
-		KCondition: reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.VPC, *arubatypes.VPCResponse],
-		ACondition: cmpVpcIsFinal,
-		AAction: r.cmpDelete,
+		Name:              "ShouldBeDeletedOnCMP",
+		KCondition:        reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		ACondition:        cmpVpcIsFinal,
+		AAction:           r.cmpDelete,
 		KActionOnASuccess: r.kubeMarkDeleting,
-		KActionOnAError: reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.VPC, *arubatypes.VPCResponse](r.Client),
-		Requeue: reconciler.ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
-		RequeueOnError: reconciler.SmartRequeueOnError[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.VPC, *arubatypes.VPCResponse](r.Client),
+		Requeue:           reconciler.ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
 	// 5. DeletionOnCMPNotNeeded — resource marked for deletion but CMP resource doesn't exist; skip CMP delete
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
-		Name: "DeletionOnCMPNotNeeded",
-		KCondition: reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.VPC, *arubatypes.VPCResponse],
-		ACondition: cmpVPCNotExists,
-		KAction: r.kubeMarkDeletingDone,
-		Requeue: reconciler.ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		Name:           "DeletionOnCMPNotNeeded",
+		KCondition:     reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		ACondition:     cmpVPCNotExists,
+		KAction:        r.kubeMarkDeletingDone,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
 	// 6. WaitingDeletionOnCMP
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
-		Name: "WaitingDeletionOnCMP",
-		KCondition: reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.VPC, *arubatypes.VPCResponse],
-		ACondition: cmpVpcIsTransitory,
-		Requeue: reconciler.LongRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		Name:           "WaitingDeletionOnCMP",
+		KCondition:     reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		ACondition:     cmpVpcIsTransitory,
+		Requeue:        reconciler.LongRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
 	// 7. DeletionConfirmedOnCMP
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
-		Name: "DeletionConfirmedOnCMP",
-		KCondition: reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.VPC, *arubatypes.VPCResponse],
-		ACondition: cmpVPCNotExists,
-		KAction: r.kubeMarkDeletingDone,
-		Requeue: reconciler.ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		Name:           "DeletionConfirmedOnCMP",
+		KCondition:     reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		ACondition:     cmpVPCNotExists,
+		KAction:        r.kubeMarkDeletingDone,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
 	// 8. DeletionAccomplished
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
-		Name: "DeletionAccomplished",
-		KCondition: reconciler.KubeDeletionAccomplished[*v1alpha1.VPC, *arubatypes.VPCResponse],
-		ACondition: cmpVPCNotExists,
-		KAction: r.kubeMarkDeleted,
-		Requeue: reconciler.ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		Name:           "DeletionAccomplished",
+		KCondition:     reconciler.KubeDeletionAccomplished[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		ACondition:     cmpVPCNotExists,
+		KAction:        r.kubeMarkDeleted,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
-	// 8. HasDeniedChanges — surface immutable field violations before attempting update
+	// 9. HasDeniedChanges — surface immutable field violations before attempting update
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
-		Name: "HasDeniedChanges",
+		Name:       "HasDeniedChanges",
 		KCondition: kubeVPCHasDeniedChanges,
 		ACondition: cmpVpcIsFinal,
 		KAction: func(ctx context.Context, kubeVpc *v1alpha1.VPC, cmpVpc *arubatypes.VPCResponse) error {
 			return fmt.Errorf("vpc update rejected: %w", checkVpcDeniedChanges(kubeVpc, cmpVpc))
 		},
-		Requeue: reconciler.NoRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		Requeue:        reconciler.NoRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
 		RequeueOnError: reconciler.LongRequeueAndIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
-	// 9. SpecAlreadyInSyncWithCMP — generation changed but spec identical to CMP; just re-stamp ObservedGeneration
+	// 10. SpecAlreadyInSyncWithCMP — generation changed but spec identical to CMP; just re-stamp ObservedGeneration
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
-		Name: "SpecAlreadyInSyncWithCMP",
-		KCondition: kubeVPCSpecInSyncWithCMP,
-		ACondition: cmpVpcIsActive,
-		KAction: r.kubeSetActiveAndSetID,
-		Requeue: reconciler.NoRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		Name:           "SpecAlreadyInSyncWithCMP",
+		KCondition:     kubeVPCSpecInSyncWithCMP,
+		ACondition:     cmpVpcIsActive,
+		KAction:        r.kubeSetActiveAndSetID,
+		Requeue:        reconciler.NoRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
-	// 10. ShouldBeUpdated — spec changed and CMP is ready
+	// 11. ShouldBeUpdated — spec changed and CMP is ready
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
-		Name: "ShouldBeUpdated",
-		KCondition: kubeVPCShouldUpdate,
-		ACondition: cmpVpcIsFinal,
-		KAction: r.kubeMarkToUpdate,
-		Requeue: reconciler.ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		Name:           "ShouldBeUpdated",
+		KCondition:     kubeVPCShouldUpdate,
+		ACondition:     cmpVpcIsFinal,
+		KAction:        r.kubeMarkToUpdate,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
-	// 11. ShouldBeUpdatedOnCMP — send update to CMP
+	// 12. ShouldBeUpdatedOnCMP — send update to CMP
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
-		Name: "ShouldBeUpdatedOnCMP",
-		KCondition: reconciler.KubeShouldBeUpdatedOnCMP[*v1alpha1.VPC, *arubatypes.VPCResponse],
-		ACondition: cmpVpcIsFinal,
-		AAction: r.cmpUpdate,
+		Name:              "ShouldBeUpdatedOnCMP",
+		KCondition:        reconciler.KubeShouldBeUpdatedOnCMP[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		ACondition:        cmpVpcIsFinal,
+		AAction:           r.cmpUpdate,
 		KActionOnASuccess: r.kubeMarkUpdating,
-		KActionOnAError: reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.VPC, *arubatypes.VPCResponse](r.Client),
-		Requeue: reconciler.ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
-		RequeueOnError: reconciler.SmartRequeueOnError[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.VPC, *arubatypes.VPCResponse](r.Client),
+		Requeue:           reconciler.ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
-	// 12. WaitingUpdateOnCMP — CMP is still processing the update
+	// 13. WaitingUpdateOnCMP — CMP is still processing the update
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
-		Name: "WaitingUpdateOnCMP",
-		KCondition: reconciler.KubeWaitingUpdateOnCMP[*v1alpha1.VPC, *arubatypes.VPCResponse],
-		ACondition: cmpVpcIsTransitory,
-		Requeue: reconciler.LongRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		Name:           "WaitingUpdateOnCMP",
+		KCondition:     reconciler.KubeWaitingUpdateOnCMP[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		ACondition:     cmpVpcIsTransitory,
+		Requeue:        reconciler.LongRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
-	// 13. UpdateConfirmedOnCMP — CMP has settled; advance to Synchronized
+	// 14. UpdateConfirmedOnCMP — CMP has settled; advance to Synchronized
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
-		Name: "UpdateConfirmedOnCMP",
-		KCondition: reconciler.KubeWaitingUpdateOnCMP[*v1alpha1.VPC, *arubatypes.VPCResponse],
-		ACondition: cmpVpcIsFinal,
-		KAction: r.kubeMarkUpdatingDone,
-		Requeue: reconciler.ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		Name:           "UpdateConfirmedOnCMP",
+		KCondition:     reconciler.KubeWaitingUpdateOnCMP[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		ACondition:     cmpVpcIsFinal,
+		KAction:        r.kubeMarkUpdatingDone,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
-	// 14. UpdateAccomplished — transition back to Active and stamp generation
+	// 15. UpdateAccomplished — transition back to Active and stamp generation
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
-		Name: "UpdateAccomplished",
-		KCondition: reconciler.KubeUpdateAccomplished[*v1alpha1.VPC, *arubatypes.VPCResponse],
-		ACondition: cmpVpcIsActive,
-		KAction: r.kubeSetActiveAndSetID,
-		Requeue: reconciler.NoRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		Name:           "UpdateAccomplished",
+		KCondition:     reconciler.KubeUpdateAccomplished[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		ACondition:     cmpVpcIsActive,
+		KAction:        r.kubeSetActiveAndSetID,
+		Requeue:        reconciler.NoRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
-	// 15. ShouldBeCreated
+	// 16. ShouldBeCreated
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
-		Name: "ShouldBeCreated",
-		KCondition: reconciler.KubeIsFirstReconciliation[*v1alpha1.VPC, *arubatypes.VPCResponse],
-		ACondition: cmpVPCNotExists,
-		KAction: r.kubeMarkToCreate,
-		Requeue: reconciler.ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		Name:           "ShouldBeCreated",
+		KCondition:     reconciler.KubeIsFirstReconciliation[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		ACondition:     cmpVPCNotExists,
+		KAction:        r.kubeMarkToCreate,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
-	// 16. ShouldBeCreatedInCMP
+	// 17. ShouldBeCreatedInCMP
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
-		Name: "ShouldBeCreatedInCMP",
-		KCondition: reconciler.KubeShouldBeCreatedOnCMP[*v1alpha1.VPC, *arubatypes.VPCResponse],
-		ACondition: cmpVPCNotExists,
-		AAction: r.cmpCreate,
+		Name:              "ShouldBeCreatedInCMP",
+		KCondition:        reconciler.KubeShouldBeCreatedOnCMP[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		ACondition:        cmpVPCNotExists,
+		AAction:           r.cmpCreate,
 		KActionOnASuccess: r.kubeMarkCreating,
-		KActionOnAError: reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.VPC, *arubatypes.VPCResponse](r.Client),
-		Requeue: reconciler.ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
-		RequeueOnError: reconciler.SmartRequeueOnError[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.VPC, *arubatypes.VPCResponse](r.Client),
+		Requeue:           reconciler.ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
-	// 17. WaitingCreationInCMP
+	// 18. WaitingCreationInCMP
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
-		Name: "WaitingCreationInCMP",
-		KCondition: reconciler.KubeWaitingCreationInCMP[*v1alpha1.VPC, *arubatypes.VPCResponse],
-		ACondition: cmpVPCNotExistsOrTransitory,
-		Requeue: reconciler.LongRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		Name:           "WaitingCreationInCMP",
+		KCondition:     reconciler.KubeWaitingCreationInCMP[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		ACondition:     cmpVPCNotExistsOrTransitory,
+		Requeue:        reconciler.LongRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
-	// 18. CreationConfirmedOnCMP
+	// 19. CreationConfirmedOnCMP
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
-		Name: "CreationConfirmedOnCMP",
-		KCondition: reconciler.KubeWaitingCreationInCMP[*v1alpha1.VPC, *arubatypes.VPCResponse],
-		ACondition: cmpVpcIsActive,
-		KAction: r.kubeMarkCreatingDone,
-		Requeue: reconciler.ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		Name:           "CreationConfirmedOnCMP",
+		KCondition:     reconciler.KubeWaitingCreationInCMP[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		ACondition:     cmpVpcIsActive,
+		KAction:        r.kubeMarkCreatingDone,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
-	// 19. CreationAccomplished
+	// 20. CreationAccomplished
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
-		Name: "CreationAccomplished",
-		KCondition: reconciler.KubeIsCreatedOnCMP[*v1alpha1.VPC, *arubatypes.VPCResponse],
-		ACondition: cmpVpcIsActive,
-		KAction: r.kubeSetActiveAndSetID,
-		Requeue: reconciler.NoRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		Name:           "CreationAccomplished",
+		KCondition:     reconciler.KubeIsCreatedOnCMP[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		ACondition:     cmpVpcIsActive,
+		KAction:        r.kubeSetActiveAndSetID,
+		Requeue:        reconciler.NoRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
-	// 20. IsInError
+	// 21. IsInError
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.VPC, *arubatypes.VPCResponse]{
-		Name: "IsInError",
-		KCondition: reconciler.AlwaysTrue[*v1alpha1.VPC, *arubatypes.VPCResponse],
-		ACondition: cmpVpcIsFailed,
-		KAction: r.kubeSetFailed,
-		Requeue: reconciler.NoRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		Name:           "IsInError",
+		KCondition:     reconciler.AlwaysTrue[*v1alpha1.VPC, *arubatypes.VPCResponse],
+		ACondition:     cmpVpcIsFailed,
+		KAction:        r.kubeSetFailed,
+		Requeue:        reconciler.NoRequeue[*v1alpha1.VPC, *arubatypes.VPCResponse],
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.VPC, *arubatypes.VPCResponse],
 	})
 
@@ -531,11 +540,14 @@ func cmpVpcIsFailed(_ *v1alpha1.VPC, cmpVpc *arubatypes.VPCResponse) bool {
 // Kube action methods
 
 func (r *VPCReconciler) kubeSetPhaseAndCondition(ctx context.Context, kubeVpc *v1alpha1.VPC, phase v1alpha1.ResourcePhase, reason string, _ error) error {
-	return reconciler.SetPhaseAndCondition(r.Client, ctx, kubeVpc, phase, reason, nil, func(vpc *v1alpha1.VPC) {
-		if prjID, ok := ctx.Value(projectIDKey).(string); ok && vpc.Status.ProjectID == "" {
-			vpc.Status.ProjectID = prjID
-		}
-	})
+	prePatches := []func(*v1alpha1.VPC){
+		func(vpc *v1alpha1.VPC) {
+			if prjID, ok := ctx.Value(projectIDKey).(string); ok && vpc.Status.ProjectID == "" {
+				vpc.Status.ProjectID = prjID
+			}
+		},
+	}
+	return reconciler.SetPhaseAndCondition(r.Client, ctx, kubeVpc, phase, reason, nil, prePatches...)
 }
 
 func (r *VPCReconciler) kubeMarkToDelete(ctx context.Context, kubeVpc *v1alpha1.VPC, _ *arubatypes.VPCResponse) error {

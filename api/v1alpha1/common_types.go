@@ -25,6 +25,10 @@ import (
 type ResourcePhase string
 
 const (
+	// ResourcePhasePending indicates the resource has been registered in Kubernetes
+	// but no CMP interaction has started yet. It is the initial phase set alongside
+	// the finalizer, before the first HandleReconcile cycle.
+	ResourcePhasePending ResourcePhase = "Pending"
 	// ResourcePhaseCreating indicates the resource is being created
 	ResourcePhaseCreating ResourcePhase = "Creating"
 	// ResourcePhaseProvisioning indicates the resource is being provisioned remotely
@@ -147,7 +151,8 @@ func (s *ResourceStatus) AssessPhaseNature() ResourcePhaseNature {
 		ResourcePhaseDeleting:
 		return PhaseNatureTransitory
 
-	case ResourcePhaseActive,
+	case ResourcePhasePending,
+		ResourcePhaseActive,
 		ResourcePhaseDeleted,
 		ResourcePhaseFailed:
 		return PhaseNatureFinal

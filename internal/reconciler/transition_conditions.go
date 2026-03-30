@@ -130,7 +130,10 @@ func KubeDeletionAccomplished[K ResourceObject, A any](k K, _ A) bool {
 	return kubeHasPhaseAndReason(k, true, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronized)
 }
 
-// KubeIsFirstReconciliation checks: not deleting, no ResourceID, no Phase, no Conditions.
+// KubeIsFirstReconciliation checks: not deleting, no ResourceID, Phase=Pending,
+// Pending condition with Reason=Synchronized. This matches resources that have
+// had their finalizer and initial Pending status set by the base reconciler but have
+// not yet been processed by HandleReconcile.
 func KubeIsFirstReconciliation[K ResourceObject, A any](k K, _ A) bool {
 	rs := k.GetResourceStatus()
 	if rs == nil {
@@ -138,8 +141,20 @@ func KubeIsFirstReconciliation[K ResourceObject, A any](k K, _ A) bool {
 	}
 	return k.GetDeletionTimestamp().IsZero() &&
 		rs.ResourceID == "" &&
-		rs.Phase == "" &&
-		len(rs.Conditions) == 0
+		kubeHasPhaseAndReason(k, false, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized)
+}
+
+// KubePendingAndDeleting returns true when the resource is being deleted while still in
+// Pending phase (no CMP resource was ever created). The deletion flow can skip all CMP
+// interaction and transition directly to Deleted.
+func KubePendingAndDeleting[K ResourceObject, A any](k K, _ A) bool {
+	rs := k.GetResourceStatus()
+	if rs == nil {
+		return false
+	}
+	return !k.GetDeletionTimestamp().IsZero() &&
+		rs.Phase == v1alpha1.ResourcePhasePending &&
+		rs.ResourceID == ""
 }
 
 // KubeShouldBeCreatedOnCMP checks: not deleting, no ResourceID, Phase=Creating, Reason=ShallSynchronize.

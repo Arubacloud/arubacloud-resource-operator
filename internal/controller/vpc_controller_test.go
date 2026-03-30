@@ -186,6 +186,7 @@ var _ = Describe("VPCReconciler", func() {
 		It("transitions to Creating+ShallSynchronize when CMP has no VPC", func() {
 			m := newVPCReconcilerWithMocks(GinkgoT())
 			vpc = createTestVpc(ctx, "test-vpc-first", defaultVPCSpec(vpcProjectName))
+			setVPCStatus(ctx, vpc, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", 0, time.Now())
 
 			m.expectProjectList(vpcProjectID, vpcProjectName)
 			m.expectVPCList(vpcProjectID)
@@ -199,6 +200,41 @@ var _ = Describe("VPCReconciler", func() {
 			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
+
+			pendingCond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhasePending))
+			Expect(pendingCond).NotTo(BeNil())
+			Expect(pendingCond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(pendingCond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
+		})
+	})
+
+	Describe("PendingAndDeleting", func() {
+		It("transitions directly to Deleted when resource is in Pending and is being deleted", func() {
+			m := newVPCReconcilerWithMocks(GinkgoT())
+			vpc = createTestVpc(ctx, "test-vpc-pending-deleting", defaultVPCSpec(vpcProjectName))
+			setVPCStatus(ctx, vpc, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", 0, time.Now())
+
+			m.expectProjectList(vpcProjectID, vpcProjectName)
+			m.expectVPCList(vpcProjectID)
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(vpc), vpc)).To(Succeed())
+			vpc.Finalizers = []string{vpcFinalizerName}
+			Expect(k8sClient.Update(ctx, vpc)).To(Succeed())
+
+			Expect(k8sClient.Delete(ctx, vpc)).To(Succeed())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(vpc), vpc)).To(Succeed())
+
+			_, err := m.r.HandleReconcile(ctx, vpc)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.VPC{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(vpc), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleted))
+
+			pendingCond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhasePending))
+			Expect(pendingCond).NotTo(BeNil())
+			Expect(pendingCond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(pendingCond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
 		})
 	})
 
@@ -576,6 +612,7 @@ var _ = Describe("VPCReconciler", func() {
 		It("stamps ProjectID on status when first transitioning", func() {
 			m := newVPCReconcilerWithMocks(GinkgoT())
 			vpc = createTestVpc(ctx, "test-vpc-project-id", defaultVPCSpec(vpcProjectName))
+			setVPCStatus(ctx, vpc, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", 0, time.Now())
 
 			m.expectProjectList(vpcProjectID, vpcProjectName)
 			m.expectVPCList(vpcProjectID)

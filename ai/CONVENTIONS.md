@@ -139,7 +139,20 @@ Ownership helpers in `internal/controller/owner_reference.go` follow the "no pre
 
 ## Kubernetes status updates
 
-Always use `retry.RetryOnConflict(retry.DefaultRetry, ...)` with `.Status().Patch(ctx, obj, client.MergeFrom(objCopy))` for optimistic concurrency. The canonical helpers live in `transition_actions.go` (`setPhaseAndCondition`, `setActiveAndSetID`, `setFailedOnTimeout`) — prefer calling these over writing raw status patches.
+Always use `retry.RetryOnConflict(retry.DefaultRetry, ...)` with `.Status().Patch(ctx, obj, client.MergeFrom(objCopy))` for optimistic concurrency. The canonical helpers live in `transition_actions.go` (`SetPhaseAndCondition`, `SetActiveAndSetID`, `SetFailedOnTimeout`) — prefer calling these over writing raw status patches.
+
+### kubeMarkToCreate pattern
+
+Every `kubeMarkToCreate` method marks the resource `Creating+ShallSynchronize`. The `Pending` condition is already `Reason=Synchronized, Status=True` from the base reconciler, so `SetPhaseAndCondition` will automatically flip it to `Status=False` when it sets all existing conditions to False before writing the new Creating condition.
+
+```go
+func (r *XxxReconciler) kubeMarkToCreate(ctx context.Context, kubeXxx *v1alpha1.Xxx, _ *arubatypes.XxxResponse) error {
+    return reconciler.SetPhaseAndCondition(r.Client, ctx, kubeXxx,
+        v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, nil,
+        // resource-specific prePatch (ProjectID, VPCID, etc.) if any
+    )
+}
+```
 
 ## Logging
 

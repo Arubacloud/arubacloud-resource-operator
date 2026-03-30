@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -175,12 +177,75 @@ func (r *Reconciler) ArubaClient(tenant string) (aruba.Client, error) {
 	return arubaClient, nil
 }
 
+// setupResource registers the finalizer and sets the initial Pending status for a new
+// resource. It is called as Step 1 of Reconcile. Both writes (metadata and status) are
+// performed inside a single retry.RetryOnConflict loop. When changes are made it returns
+// a non-zero Result so Reconcile can requeue immediately.
+func (r *Reconciler) setupResource(ctx context.Context, req ctrl.Request, resourceReconciler ResourceReconciler) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+	var result ctrl.Result
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		obj, err := r.getResource(ctx, req, resourceReconciler.Object())
+		if obj == nil || err != nil {
+			return err
+		}
+
+		var mustUpdateMeta, mustUpdateStatus bool
+
+		if obj.GetDeletionTimestamp().IsZero() && !slices.Contains(obj.GetFinalizers(), resourceReconciler.Finalizer()) {
+			obj.SetFinalizers(append(obj.GetFinalizers(), resourceReconciler.Finalizer()))
+			logger.V(2).Info("finalizer added", "finalizer", resourceReconciler.Finalizer())
+			mustUpdateMeta = true
+		}
+
+		if obj.GetResourceStatus().Phase == "" {
+			mustUpdateStatus = true
+		}
+
+		if !mustUpdateMeta && !mustUpdateStatus {
+			return nil
+		}
+
+		// Write metadata (finalizer) first — status subresource is separate
+		if mustUpdateMeta {
+			if err := r.Update(ctx, obj); err != nil {
+				return err
+			}
+		}
+
+		if mustUpdateStatus {
+			if mustUpdateMeta {
+				// Re-GET to pick up the new ResourceVersion from the metadata write
+				if err := r.Get(ctx, req.NamespacedName, obj); err != nil {
+					return err
+				}
+			}
+			rs := obj.GetResourceStatus()
+			rs.Phase = v1alpha1.ResourcePhasePending
+			meta.SetStatusCondition(&rs.Conditions, metav1.Condition{
+				Type:               string(v1alpha1.ResourcePhasePending),
+				Status:             metav1.ConditionTrue,
+				Reason:             v1alpha1.ConditionReasonSynchronized,
+				Message:            "Pending Synchronized - OK",
+				LastTransitionTime: metav1.Now(),
+			})
+			if err := r.Status().Update(ctx, obj); err != nil {
+				return err
+			}
+		}
+
+		result = ctrl.Result{RequeueAfter: ShortRequeueAfter}
+		return nil
+	})
+	return result, err
+}
+
 // Reconcile implements the shared three-step reconciliation loop used by all resource
 // controllers:
 //
 //  1. Finalizer registration — adds the resource-specific finalizer when the object is
 //     not being deleted, then requeues so the next iteration starts with the finalizer
-//     already present.
+//     already present. Also sets Phase=Pending on the first reconciliation.
 //  2. Resource-specific reconciliation — delegates to resourceReconciler.HandleReconcile
 //     which drives phase transitions and interacts with the Aruba cloud API.
 //  3. Finalizer removal — once HandleReconcile reports the resource has reached the
@@ -190,34 +255,9 @@ func (r *Reconciler) ArubaClient(tenant string) (aruba.Client, error) {
 // concurrency conflicts from concurrent writes.
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request, resourceReconciler ResourceReconciler) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
-	var result ctrl.Result
 
-	// 1 - Make sure that the finalizers are in place when resource is not
-	//     being deleted
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		obj, err := r.getResource(ctx, req, resourceReconciler.Object())
-		if obj == nil || err != nil {
-			return err
-		}
-
-		if obj.GetDeletionTimestamp().IsZero() && !slices.Contains(obj.GetFinalizers(), resourceReconciler.Finalizer()) {
-			obj.SetFinalizers(append(obj.GetFinalizers(), resourceReconciler.Finalizer()))
-			if err := r.Update(ctx, obj); err != nil {
-				// The reconcile loop ends in error when it's not possible to set
-				// the finalizar
-				return err
-			}
-
-			logger.V(2).Info("finalizer added", "finalizer", resourceReconciler.Finalizer())
-
-			// The reconciliation is requeued after the finalizer have been set
-			result = ctrl.Result{RequeueAfter: 1 * time.Second}
-
-			return nil // TODO: better RequeueAfter management
-		}
-
-		return nil
-	})
+	// 1 - Register finalizer and set initial Pending status for new resources
+	result, err := r.setupResource(ctx, req, resourceReconciler)
 	if err != nil {
 		return ctrl.Result{}, err
 	} else if !result.IsZero() {

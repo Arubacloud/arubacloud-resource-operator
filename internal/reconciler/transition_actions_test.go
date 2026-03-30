@@ -11,6 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
+	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
 )
 
 var _ = Describe("SetPhaseAndCondition", func() {
@@ -279,6 +280,57 @@ var _ = Describe("TagsAreEqual", func() {
 
 	It("returns false for different lengths", func() {
 		Expect(TagsAreEqual([]string{"a", "b"}, []string{"a"})).To(BeFalse())
+	})
+})
+
+var _ = Describe("KubeDeleteFromPending", func() {
+	var (
+		ctx  context.Context
+		proj *v1alpha1.Project
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		proj = &v1alpha1.Project{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-delete-from-pending",
+				Namespace: "default",
+			},
+			Spec: v1alpha1.ProjectSpec{
+				Tenant: "test-tenant",
+			},
+		}
+		Expect(k8sClient.Create(ctx, proj)).To(Succeed())
+
+		// Set Pending status
+		Expect(SetPhaseAndCondition(k8sClient, ctx, proj, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, nil)).To(Succeed())
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), proj)).To(Succeed())
+	})
+
+	AfterEach(func() {
+		p := &v1alpha1.Project{}
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), p); err == nil {
+			_ = k8sClient.Delete(ctx, p)
+		}
+	})
+
+	It("sets phase to Deleted and flips Pending condition to Synchronized/False", func() {
+		action := KubeDeleteFromPending[*v1alpha1.Project, *arubatypes.ProjectResponse](k8sClient)
+		Expect(action(ctx, proj, nil)).To(Succeed())
+
+		updated := &v1alpha1.Project{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), updated)).To(Succeed())
+		Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleted))
+
+		deletedCond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseDeleted))
+		Expect(deletedCond).NotTo(BeNil())
+		Expect(deletedCond.Status).To(Equal(metav1.ConditionTrue))
+		Expect(deletedCond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
+
+		pendingCond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhasePending))
+		Expect(pendingCond).NotTo(BeNil())
+		Expect(pendingCond.Status).To(Equal(metav1.ConditionFalse))
+		Expect(pendingCond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
 	})
 })
 

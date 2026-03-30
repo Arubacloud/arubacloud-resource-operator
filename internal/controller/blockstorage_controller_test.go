@@ -196,6 +196,7 @@ var _ = Describe("BlockStorageReconciler", func() {
 		It("transitions to Creating+ShallSynchronize when CMP has no BS", func() {
 			m := newBSReconcilerWithMocks(GinkgoT())
 			bs = createTestBlockStorage(ctx, "test-bs-first", defaultBSSpec(bsProjectName))
+			setBSStatus(ctx, bs, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", 0, time.Now())
 
 			m.expectProjectList(bsProjectID, bsProjectName)
 			m.expectBSList(bsProjectID)
@@ -209,6 +210,41 @@ var _ = Describe("BlockStorageReconciler", func() {
 			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
+
+			pendingCond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhasePending))
+			Expect(pendingCond).NotTo(BeNil())
+			Expect(pendingCond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(pendingCond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
+		})
+	})
+
+	Describe("PendingAndDeleting", func() {
+		It("transitions directly to Deleted when resource is in Pending and is being deleted", func() {
+			m := newBSReconcilerWithMocks(GinkgoT())
+			bs = createTestBlockStorage(ctx, "test-bs-pending-deleting", defaultBSSpec(bsProjectName))
+			setBSStatus(ctx, bs, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", 0, time.Now())
+
+			m.expectProjectList(bsProjectID, bsProjectName)
+			m.expectBSList(bsProjectID)
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bs)).To(Succeed())
+			bs.Finalizers = []string{blockStorageFinalizerName}
+			Expect(k8sClient.Update(ctx, bs)).To(Succeed())
+
+			Expect(k8sClient.Delete(ctx, bs)).To(Succeed())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bs)).To(Succeed())
+
+			_, err := m.r.HandleReconcile(ctx, bs)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.BlockStorage{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleted))
+
+			pendingCond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhasePending))
+			Expect(pendingCond).NotTo(BeNil())
+			Expect(pendingCond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(pendingCond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
 		})
 	})
 
@@ -395,6 +431,7 @@ var _ = Describe("BlockStorageReconciler", func() {
 		It("stamps ProjectID on status when first transitioning", func() {
 			m := newBSReconcilerWithMocks(GinkgoT())
 			bs = createTestBlockStorage(ctx, "test-bs-project-id", defaultBSSpec(bsProjectName))
+			setBSStatus(ctx, bs, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", 0, time.Now())
 
 			m.expectProjectList(bsProjectID, bsProjectName)
 			m.expectBSList(bsProjectID)

@@ -244,6 +244,17 @@ func SetFailedOnTimeout[K DeepCopyableObject[K]](
 	})
 }
 
+// KubeDeleteFromPending returns a KAction that transitions a Pending resource directly to
+// Deleted, skipping the entire Deleting flow. This is safe because Pending resources have
+// no CMP-side representation yet.
+func KubeDeleteFromPending[K DeepCopyableObject[K], A any](c client.Client) ActionFunc[K, A] {
+	return func(ctx context.Context, k K, _ A) error {
+		return SetPhaseAndCondition(c, ctx, k,
+			v1alpha1.ResourcePhaseDeleted, v1alpha1.ConditionReasonSynchronized, nil,
+		)
+	}
+}
+
 // TagsAreEqual returns true when both tag slices contain the same elements
 // regardless of order.
 func TagsAreEqual(a, b []string) bool {

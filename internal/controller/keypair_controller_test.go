@@ -206,6 +206,7 @@ var _ = Describe("KeyPairReconciler", func() {
 		It("transitions to Creating+ShallSynchronize when CMP has no KeyPair", func() {
 			m := newKpReconcilerWithMocks(GinkgoT())
 			kp = createTestKeyPair(ctx, "test-kp-first", defaultKeyPairSpec(kpProjectName))
+			setKeyPairStatus(ctx, kp, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", 0, time.Now())
 
 			m.expectProjectList(kpProjectID, kpProjectName)
 			m.expectKeyPairList(kpProjectID)
@@ -219,6 +220,41 @@ var _ = Describe("KeyPairReconciler", func() {
 			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
+
+			pendingCond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhasePending))
+			Expect(pendingCond).NotTo(BeNil())
+			Expect(pendingCond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(pendingCond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
+		})
+	})
+
+	Describe("PendingAndDeleting", func() {
+		It("transitions directly to Deleted when resource is in Pending and is being deleted", func() {
+			m := newKpReconcilerWithMocks(GinkgoT())
+			kp = createTestKeyPair(ctx, "test-kp-pending-deleting", defaultKeyPairSpec(kpProjectName))
+			setKeyPairStatus(ctx, kp, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", 0, time.Now())
+
+			m.expectProjectList(kpProjectID, kpProjectName)
+			m.expectKeyPairList(kpProjectID)
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), kp)).To(Succeed())
+			kp.Finalizers = []string{keyPairFinalizerName}
+			Expect(k8sClient.Update(ctx, kp)).To(Succeed())
+
+			Expect(k8sClient.Delete(ctx, kp)).To(Succeed())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), kp)).To(Succeed())
+
+			_, err := m.r.HandleReconcile(ctx, kp)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.KeyPair{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleted))
+
+			pendingCond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhasePending))
+			Expect(pendingCond).NotTo(BeNil())
+			Expect(pendingCond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(pendingCond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
 		})
 	})
 
@@ -635,6 +671,7 @@ var _ = Describe("KeyPairReconciler", func() {
 		It("stamps ProjectID on status when first transitioning", func() {
 			m := newKpReconcilerWithMocks(GinkgoT())
 			kp = createTestKeyPair(ctx, "test-kp-project-id", defaultKeyPairSpec(kpProjectName))
+			setKeyPairStatus(ctx, kp, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", 0, time.Now())
 
 			m.expectProjectList(kpProjectID, kpProjectName)
 			m.expectKeyPairList(kpProjectID)

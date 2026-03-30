@@ -345,31 +345,89 @@ var _ = Describe("Transition Conditions", func() {
 	})
 
 	Describe("KubeIsFirstReconciliation", func() {
-		It("returns true when not deleting, no ResourceID, no Phase, no Conditions", func() {
-			proj := newTestProject()
+		It("returns true when not deleting, no ResourceID, Phase=Pending, Reason=Synchronized", func() {
+			proj := newTestProject(
+				withPhase(v1alpha1.ResourcePhasePending),
+				withCondition(v1alpha1.ResourcePhasePending, metav1.ConditionTrue, v1alpha1.ConditionReasonSynchronized, time.Now()),
+			)
 			Expect(KubeIsFirstReconciliation[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeTrue())
 		})
 
 		It("returns false when has ResourceID", func() {
-			proj := newTestProject(withResourceID("some-id"))
+			proj := newTestProject(
+				withPhase(v1alpha1.ResourcePhasePending),
+				withCondition(v1alpha1.ResourcePhasePending, metav1.ConditionTrue, v1alpha1.ConditionReasonSynchronized, time.Now()),
+				withResourceID("some-id"),
+			)
 			Expect(KubeIsFirstReconciliation[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
 		})
 
-		It("returns false when has conditions", func() {
+		It("returns false when Phase is empty (no Pending set)", func() {
+			proj := newTestProject()
+			Expect(KubeIsFirstReconciliation[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
+		})
+
+		It("returns false when is deleting", func() {
 			proj := newTestProject(
+				withPhase(v1alpha1.ResourcePhasePending),
+				withCondition(v1alpha1.ResourcePhasePending, metav1.ConditionTrue, v1alpha1.ConditionReasonSynchronized, time.Now()),
+				withDeleting(),
+			)
+			Expect(KubeIsFirstReconciliation[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
+		})
+
+		It("returns false when Phase is not Pending", func() {
+			proj := newTestProject(
+				withPhase(v1alpha1.ResourcePhaseCreating),
 				withCondition(v1alpha1.ResourcePhaseCreating, metav1.ConditionTrue, v1alpha1.ConditionReasonShallSynchronize, time.Now()),
 			)
 			Expect(KubeIsFirstReconciliation[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
 		})
 
-		It("returns false when is deleting", func() {
-			proj := newTestProject(withDeleting())
+		It("returns false when Pending condition Reason is ShallSynchronize (not Synchronized)", func() {
+			proj := newTestProject(
+				withPhase(v1alpha1.ResourcePhasePending),
+				withCondition(v1alpha1.ResourcePhasePending, metav1.ConditionTrue, v1alpha1.ConditionReasonShallSynchronize, time.Now()),
+			)
 			Expect(KubeIsFirstReconciliation[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
 		})
+	})
 
-		It("returns false when has Phase", func() {
-			proj := newTestProject(withPhase(v1alpha1.ResourcePhaseCreating))
-			Expect(KubeIsFirstReconciliation[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
+	Describe("KubePendingAndDeleting", func() {
+		It("returns true when deleting, Phase=Pending, no ResourceID", func() {
+			proj := newTestProject(
+				withPhase(v1alpha1.ResourcePhasePending),
+				withCondition(v1alpha1.ResourcePhasePending, metav1.ConditionTrue, v1alpha1.ConditionReasonSynchronized, time.Now()),
+				withDeleting(),
+			)
+			Expect(KubePendingAndDeleting[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeTrue())
+		})
+
+		It("returns false when not deleting", func() {
+			proj := newTestProject(
+				withPhase(v1alpha1.ResourcePhasePending),
+				withCondition(v1alpha1.ResourcePhasePending, metav1.ConditionTrue, v1alpha1.ConditionReasonSynchronized, time.Now()),
+			)
+			Expect(KubePendingAndDeleting[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
+		})
+
+		It("returns false when Phase is not Pending", func() {
+			proj := newTestProject(
+				withPhase(v1alpha1.ResourcePhaseCreating),
+				withCondition(v1alpha1.ResourcePhaseCreating, metav1.ConditionTrue, v1alpha1.ConditionReasonShallSynchronize, time.Now()),
+				withDeleting(),
+			)
+			Expect(KubePendingAndDeleting[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
+		})
+
+		It("returns false when ResourceID is set", func() {
+			proj := newTestProject(
+				withPhase(v1alpha1.ResourcePhasePending),
+				withCondition(v1alpha1.ResourcePhasePending, metav1.ConditionTrue, v1alpha1.ConditionReasonSynchronized, time.Now()),
+				withResourceID("some-id"),
+				withDeleting(),
+			)
+			Expect(KubePendingAndDeleting[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
 		})
 	})
 

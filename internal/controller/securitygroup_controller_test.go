@@ -240,6 +240,7 @@ var _ = Describe("SecurityGroupReconciler", func() {
 		It("transitions to Creating+ShallSynchronize when CMP has no SecurityGroup", func() {
 			m := newSGReconcilerWithMocks(GinkgoT())
 			sg = createTestSecurityGroup(ctx, "test-sg-first", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
+			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", 0, time.Now())
 
 			m.expectProjectList(sgProjectID, sgProjectName)
 			m.expectVpcList(sgProjectID, sgVpcID, sgVpcName)
@@ -254,6 +255,42 @@ var _ = Describe("SecurityGroupReconciler", func() {
 			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
+
+			pendingCond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhasePending))
+			Expect(pendingCond).NotTo(BeNil())
+			Expect(pendingCond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(pendingCond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
+		})
+	})
+
+	Describe("PendingAndDeleting", func() {
+		It("transitions directly to Deleted when resource is in Pending and is being deleted", func() {
+			m := newSGReconcilerWithMocks(GinkgoT())
+			sg = createTestSecurityGroup(ctx, "test-sg-pending-deleting", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
+			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", 0, time.Now())
+
+			m.expectProjectList(sgProjectID, sgProjectName)
+			m.expectVpcList(sgProjectID, sgVpcID, sgVpcName)
+			m.expectSGList(sgProjectID, sgVpcID)
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
+			sg.Finalizers = []string{securityGroupFinalizerName}
+			Expect(k8sClient.Update(ctx, sg)).To(Succeed())
+
+			Expect(k8sClient.Delete(ctx, sg)).To(Succeed())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
+
+			_, err := m.r.HandleReconcile(ctx, sg)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.SecurityGroup{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleted))
+
+			pendingCond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhasePending))
+			Expect(pendingCond).NotTo(BeNil())
+			Expect(pendingCond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(pendingCond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
 		})
 	})
 
@@ -697,6 +734,7 @@ var _ = Describe("SecurityGroupReconciler", func() {
 		It("stamps ProjectID and VpcID on status when first transitioning", func() {
 			m := newSGReconcilerWithMocks(GinkgoT())
 			sg = createTestSecurityGroup(ctx, "test-sg-ids-stamped", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
+			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", 0, time.Now())
 
 			m.expectProjectList(sgProjectID, sgProjectName)
 			m.expectVpcList(sgProjectID, sgVpcID, sgVpcName)

@@ -59,12 +59,6 @@ jobs:
           docker load -i /tmp/devtools-image.tar
           mkdir -p bin && touch bin/.devtools-image.stamp
 
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: "go.mod"
-          cache: true
-
       - name: Prepare image environment
         run: |
           IMAGE_NAME_LOWER=$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
@@ -79,7 +73,7 @@ jobs:
 
       # === Build Docker image ===
       - name: Build Docker image
-        run: make docker-build-ctzd     # uses $IMG from GITHUB_ENV
+        run: make docker-build     # uses $IMG from GITHUB_ENV
 
       # === Login to GitHub Container Registry ===
       - name: Log in to GitHub Container Registry
@@ -94,7 +88,7 @@ jobs:
         run: docker tag "$IMG" "$IMG_LATEST"
 
       - name: Push Docker image (versioned)
-        run: make docker-push-ctzd           # uses $IMG from GITHUB_ENV
+        run: make docker-push           # uses $IMG from GITHUB_ENV
 
       - name: Push Docker image (latest)
         run: docker push "$IMG_LATEST"

@@ -1,4 +1,4 @@
-package controller
+package reconciler
 
 import (
 	"context"
@@ -13,21 +13,20 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
-	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
 )
 
 // DeepCopyableObject extends ResourceObject with a typed DeepCopy method.
 type DeepCopyableObject[K any] interface {
-	reconciler.ResourceObject
+	ResourceObject
 	DeepCopy() K
 }
 
-// kubeSetErrorMessageOnCMPError returns an ActionOnErrorFunc that surfaces the CMP error
+// KubeSetErrorMessageOnCMPError returns an ActionOnErrorFunc that surfaces the CMP error
 // details in the condition message without changing the resource's phase or reason.
 // The Aruba CMP API does not reliably distinguish transient dependency blockages (e.g. deleting
 // a project with remaining resources) from permanent bad-request errors, so CMP errors must
 // never move a resource to Failed. Only timeouts (PhaseTimedOut) may set the Failed reason.
-func kubeSetErrorMessageOnCMPError[K DeepCopyableObject[K], A any](c client.Client) ActionOnErrorFunc[K, A] {
+func KubeSetErrorMessageOnCMPError[K DeepCopyableObject[K], A any](c client.Client) ActionOnErrorFunc[K, A] {
 	return func(ctx context.Context, k K, _ A, err error) error {
 		logger := log.FromContext(ctx)
 		rs := k.GetResourceStatus()
@@ -52,15 +51,15 @@ func kubeSetErrorMessageOnCMPError[K DeepCopyableObject[K], A any](c client.Clie
 				"phase", string(rs.Phase),
 			)
 		}
-		return setPhaseAndCondition(c, ctx, k, rs.Phase, currentReason, err)
+		return SetPhaseAndCondition(c, ctx, k, rs.Phase, currentReason, err)
 	}
 }
 
-// setPhaseAndCondition performs a retry-on-conflict status patch that sets the
+// SetPhaseAndCondition performs a retry-on-conflict status patch that sets the
 // given phase and condition reason. actionErr carries the AAction outcome:
 // nil means the action succeeded (" - OK"), non-nil appends the error message.
 // Optional prePatch callbacks are applied to the patched copy before the status write.
-func setPhaseAndCondition[K DeepCopyableObject[K]](
+func SetPhaseAndCondition[K DeepCopyableObject[K]](
 	c client.Client, ctx context.Context, obj K,
 	phase v1alpha1.ResourcePhase, reason string,
 	actionErr error,
@@ -125,12 +124,12 @@ func setPhaseAndCondition[K DeepCopyableObject[K]](
 	})
 }
 
-// setActiveAndSetID performs a retry-on-conflict status patch that sets the
+// SetActiveAndSetID performs a retry-on-conflict status patch that sets the
 // resource to Active phase, stamps ObservedGeneration, and optionally sets the
 // ResourceID from the CMP response. actionErr carries the AAction outcome
 // for the condition message. Optional prePatch callbacks are applied to the
 // patched copy before the status write.
-func setActiveAndSetID[K DeepCopyableObject[K]](
+func SetActiveAndSetID[K DeepCopyableObject[K]](
 	c client.Client, ctx context.Context, obj K,
 	cmpResourceID string,
 	actionErr error,
@@ -189,10 +188,10 @@ func setActiveAndSetID[K DeepCopyableObject[K]](
 	})
 }
 
-// setFailedOnTimeout performs a retry-on-conflict status patch that moves a
+// SetFailedOnTimeout performs a retry-on-conflict status patch that moves a
 // resource stuck in a transitory phase to Failed, recording the timeout reason
 // on both the previous phase's condition and the new Failed condition.
-func setFailedOnTimeout[K DeepCopyableObject[K]](
+func SetFailedOnTimeout[K DeepCopyableObject[K]](
 	c client.Client, ctx context.Context, obj K,
 	prePatch ...func(K),
 ) error {
@@ -210,11 +209,11 @@ func setFailedOnTimeout[K DeepCopyableObject[K]](
 
 		rs := objPatch.GetResourceStatus()
 		previousPhase := rs.Phase
-		timeoutMsg := fmt.Sprintf("phase timeout exceeded (%s)", reconciler.MaxPhaseTimeout)
+		timeoutMsg := fmt.Sprintf("phase timeout exceeded (%s)", MaxPhaseTimeout)
 		logger.Info("resource timed out in transitory phase",
 			"resource", fmt.Sprintf("%s/%s", objPatch.GetNamespace(), objPatch.GetName()),
 			"phase", string(previousPhase),
-			"timeout", reconciler.MaxPhaseTimeout.String(),
+			"timeout", MaxPhaseTimeout.String(),
 		)
 
 		// Set ALL existing conditions to ConditionFalse
@@ -245,9 +244,9 @@ func setFailedOnTimeout[K DeepCopyableObject[K]](
 	})
 }
 
-// tagsAreEqual returns true when both tag slices contain the same elements
+// TagsAreEqual returns true when both tag slices contain the same elements
 // regardless of order.
-func tagsAreEqual(a, b []string) bool {
+func TagsAreEqual(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
 	}

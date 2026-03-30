@@ -1,4 +1,4 @@
-package controller
+package reconciler
 
 import (
 	"errors"
@@ -95,26 +95,26 @@ var _ = Describe("CMPError", func() {
 	})
 })
 
-var _ = Describe("cmpTransportError", func() {
+var _ = Describe("CMPTransportError", func() {
 	It("always sets category to Technical", func() {
-		e := cmpTransportError("create", "res", errors.New("timeout"))
+		e := CMPTransportError("create", "res", errors.New("timeout"))
 		Expect(e.Category).To(Equal(CMPErrorCategoryTechnical))
 	})
 
 	It("sets Operation and Resource", func() {
-		e := cmpTransportError("delete", "my-vpc", errors.New("err"))
+		e := CMPTransportError("delete", "my-vpc", errors.New("err"))
 		Expect(e.Operation).To(Equal("delete"))
 		Expect(e.Resource).To(Equal("my-vpc"))
 	})
 
 	It("preserves the original error as Cause", func() {
 		cause := errors.New("network failure")
-		e := cmpTransportError("create", "res", cause)
+		e := CMPTransportError("create", "res", cause)
 		Expect(errors.Is(e, cause)).To(BeTrue())
 	})
 
 	It("sets StatusCode to 0", func() {
-		e := cmpTransportError("list", "res", errors.New("err"))
+		e := CMPTransportError("list", "res", errors.New("err"))
 		Expect(e.StatusCode).To(Equal(0))
 	})
 })
@@ -189,20 +189,20 @@ var _ = Describe("cmpResponseError", func() {
 	})
 })
 
-var _ = Describe("cmpCheckResponse", func() {
+var _ = Describe("CMPCheckResponse", func() {
 	It("returns nil when status code is in successCodes", func() {
 		resp := &arubatypes.Response[struct{}]{StatusCode: http.StatusOK}
-		Expect(cmpCheckResponse("create", "res", resp, http.StatusOK, http.StatusCreated)).To(Succeed())
+		Expect(CMPCheckResponse("create", "res", resp, http.StatusOK, http.StatusCreated)).To(Succeed())
 	})
 
 	It("returns nil for the second success code", func() {
 		resp := &arubatypes.Response[struct{}]{StatusCode: http.StatusCreated}
-		Expect(cmpCheckResponse("create", "res", resp, http.StatusOK, http.StatusCreated)).To(Succeed())
+		Expect(CMPCheckResponse("create", "res", resp, http.StatusOK, http.StatusCreated)).To(Succeed())
 	})
 
 	It("returns a CMPError when status code is not in successCodes", func() {
 		resp := &arubatypes.Response[struct{}]{StatusCode: http.StatusBadRequest}
-		err := cmpCheckResponse("create", "res", resp, http.StatusOK, http.StatusCreated)
+		err := CMPCheckResponse("create", "res", resp, http.StatusOK, http.StatusCreated)
 		Expect(err).To(HaveOccurred())
 		var cmpErr *CMPError
 		Expect(errors.As(err, &cmpErr)).To(BeTrue())
@@ -212,7 +212,7 @@ var _ = Describe("cmpCheckResponse", func() {
 
 	It("returns a Technical CMPError for 5xx", func() {
 		resp := &arubatypes.Response[struct{}]{StatusCode: http.StatusInternalServerError}
-		err := cmpCheckResponse("delete", "res", resp, http.StatusNoContent)
+		err := CMPCheckResponse("delete", "res", resp, http.StatusNoContent)
 		var cmpErr *CMPError
 		Expect(errors.As(err, &cmpErr)).To(BeTrue())
 		Expect(cmpErr.Category).To(Equal(CMPErrorCategoryTechnical))
@@ -224,7 +224,7 @@ var _ = Describe("cmpCheckResponse", func() {
 			StatusCode: http.StatusBadRequest,
 			Error:      &arubatypes.ErrorResponse{Title: &title},
 		}
-		err := cmpCheckResponse("create", "res", resp, http.StatusCreated)
+		err := CMPCheckResponse("create", "res", resp, http.StatusCreated)
 		var cmpErr *CMPError
 		Expect(errors.As(err, &cmpErr)).To(BeTrue())
 		Expect(cmpErr.Title).To(Equal("quota exceeded"))

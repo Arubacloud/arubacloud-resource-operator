@@ -53,7 +53,7 @@ Note: in production this is less of an issue than originally thought, because th
 
 ## 4. Cross-Namespace OwnerReferences Not Supported
 
-**Status**: **Resolved** — see `ai/plans/cross-namespace_cascade_delete.md`.
+**Status**: **Resolved**.
 
 **Resolution**: Standard Kubernetes OwnerReferences have been replaced entirely by a two-layer custom ownership model:
 

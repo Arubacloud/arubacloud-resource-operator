@@ -109,7 +109,7 @@ func buildVpcListForCS(vpcID, vpcName string) *arubatypes.Response[arubatypes.VP
 }
 
 func buildBootVolumeListForCS(volID, volName string) *arubatypes.Response[arubatypes.BlockStorageList] {
-	return buildBootVolumeListForCSWithState(volID, volName, CSPResourceStateActive)
+	return buildBootVolumeListForCSWithState(volID, volName, reconciler.CSPResourceStateActive)
 }
 
 // WORKAROUND: used to test the dependency readiness check.
@@ -136,7 +136,7 @@ func buildBootVolumeListForCSWithState(volID, volName, state string) *arubatypes
 }
 
 func buildSubnetListForCS(subnetID, subnetName string) *arubatypes.Response[arubatypes.SubnetList] {
-	return buildSubnetListForCSWithState(subnetID, subnetName, CSPResourceStateActive)
+	return buildSubnetListForCSWithState(subnetID, subnetName, reconciler.CSPResourceStateActive)
 }
 
 // WORKAROUND: used to test the dependency readiness check.
@@ -491,7 +491,7 @@ var _ = Describe("CloudServerReconciler", func() {
 			setCSStatus(ctx, cs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing,
 				"", "", "", "", "", nil, nil, 0, time.Now())
 
-			cmpCS := buildCSResponse("cs-id-1", "test-cs-wait-create-transitory", CSPResourceStateCreating)
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-wait-create-transitory", reconciler.CSPResourceStateCreating)
 			m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, "test-cs-wait-create-transitory", cmpCS)
 
 			result, err := m.r.HandleReconcile(ctx, cs)
@@ -507,7 +507,7 @@ var _ = Describe("CloudServerReconciler", func() {
 			setCSStatus(ctx, cs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing,
 				"", "", "", "", "", nil, nil, 0, time.Now())
 
-			cmpCS := buildCSResponse("cs-id-1", "test-cs-creation-confirmed", CSPResourceStateActive)
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-creation-confirmed", reconciler.CSPResourceStateActive)
 			m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, "test-cs-creation-confirmed", cmpCS)
 
 			_, err := m.r.HandleReconcile(ctx, cs)
@@ -529,7 +529,7 @@ var _ = Describe("CloudServerReconciler", func() {
 			setCSStatus(ctx, cs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronized,
 				"", "", "", "", "", nil, nil, 0, time.Now())
 
-			cmpCS := buildCSResponse("cs-id-1", "test-cs-creation-accomplished", CSPResourceStateActive)
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-creation-accomplished", reconciler.CSPResourceStateActive)
 			m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, "test-cs-creation-accomplished", cmpCS)
 
 			_, err := m.r.HandleReconcile(ctx, cs)
@@ -563,7 +563,7 @@ var _ = Describe("CloudServerReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
 
 			// CMP still has original flavor name "gp1.small"
-			cmpCS := buildCSResponse("cs-id-1", "test-cs-denied-changes", CSPResourceStateActive)
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-denied-changes", reconciler.CSPResourceStateActive)
 			m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, "test-cs-denied-changes", cmpCS)
 
 			result, err := m.r.HandleReconcile(ctx, cs)
@@ -588,7 +588,7 @@ var _ = Describe("CloudServerReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
 
 			// CMP matches: same tags, same flavor
-			cmpCS := buildCSResponse("cs-id-1", "test-cs-spec-in-sync", CSPResourceStateActive)
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-spec-in-sync", reconciler.CSPResourceStateActive)
 			cmpCS.Metadata.Tags = []string{"tag1"}
 			m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, "test-cs-spec-in-sync", cmpCS)
 
@@ -618,7 +618,7 @@ var _ = Describe("CloudServerReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
 
 			// CMP has old tags
-			cmpCS := buildCSResponse("cs-id-1", "test-cs-should-update", CSPResourceStateActive)
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-should-update", reconciler.CSPResourceStateActive)
 			cmpCS.Metadata.Tags = []string{"tag1"}
 			m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, "test-cs-should-update", cmpCS)
 
@@ -642,7 +642,7 @@ var _ = Describe("CloudServerReconciler", func() {
 				"cs-id-1", csProjectID, csVpcID, csBootVolID, csKPID,
 				[]string{csSubnetID}, []string{csSGID}, 1, time.Now())
 
-			cmpCS := buildCSResponse("cs-id-1", "test-cs-update-cmp", CSPResourceStateActive)
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-update-cmp", reconciler.CSPResourceStateActive)
 			m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, "test-cs-update-cmp", cmpCS)
 			m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
 			m.mockCompute.EXPECT().CloudServers().Return(m.mockCSs)
@@ -675,7 +675,7 @@ var _ = Describe("CloudServerReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
 
 			// During deletion, cached IDs are used — only CS list is called
-			cmpCS := buildCSResponse("cs-id-1", "test-cs-should-delete", CSPResourceStateActive)
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-should-delete", reconciler.CSPResourceStateActive)
 			m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
 			m.mockCompute.EXPECT().CloudServers().Return(m.mockCSs)
 			m.mockCSs.EXPECT().List(mock.Anything, csProjectID, mock.Anything).Return(buildCSList(cmpCS), nil)
@@ -706,7 +706,7 @@ var _ = Describe("CloudServerReconciler", func() {
 			Expect(k8sClient.Delete(ctx, cs)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
 
-			cmpCS := buildCSResponse("cs-id-1", "test-cs-delete-cmp", CSPResourceStateActive)
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-delete-cmp", reconciler.CSPResourceStateActive)
 			m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
 			m.mockCompute.EXPECT().CloudServers().Return(m.mockCSs)
 			m.mockCSs.EXPECT().List(mock.Anything, csProjectID, mock.Anything).Return(buildCSList(cmpCS), nil)
@@ -792,7 +792,7 @@ var _ = Describe("CloudServerReconciler", func() {
 				"", csProjectID, csVpcID, csBootVolID, "", nil, nil,
 				0, time.Now().Add(-(reconciler.MaxPhaseTimeout + time.Minute)))
 
-			cmpCS := buildCSResponse("cs-id-1", "test-cs-timeout", CSPResourceStateActive)
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-timeout", reconciler.CSPResourceStateActive)
 			m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, "test-cs-timeout", cmpCS)
 
 			_, err := m.r.HandleReconcile(ctx, cs)
@@ -812,7 +812,7 @@ var _ = Describe("CloudServerReconciler", func() {
 				"cs-id-1", csProjectID, csVpcID, csBootVolID, csKPID,
 				[]string{csSubnetID}, []string{csSGID}, 1, time.Now())
 
-			cmpCS := buildCSResponse("cs-id-1", "test-cs-in-error", CSPResourceStateFailed)
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-in-error", reconciler.CSPResourceStateFailed)
 			m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, "test-cs-in-error", cmpCS)
 
 			_, err := m.r.HandleReconcile(ctx, cs)
@@ -875,7 +875,7 @@ var _ = Describe("CloudServerReconciler", func() {
 			m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
 			m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
 			m.mockVolumes.EXPECT().List(mock.Anything, csProjectID, mock.Anything).
-				Return(buildBootVolumeListForCSWithState(csBootVolID, csBootVolName, CSPResourceStateInCreation), nil)
+				Return(buildBootVolumeListForCSWithState(csBootVolID, csBootVolName, reconciler.CSPResourceStateInCreation), nil)
 
 			result, err := m.r.HandleReconcile(ctx, cs)
 			Expect(err).To(Succeed())
@@ -891,7 +891,7 @@ var _ = Describe("CloudServerReconciler", func() {
 			m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
 			m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
 			m.mockVolumes.EXPECT().List(mock.Anything, csProjectID, mock.Anything).
-				Return(buildBootVolumeListForCSWithState(csBootVolID, csBootVolName, CSPResourceStateFailed), nil)
+				Return(buildBootVolumeListForCSWithState(csBootVolID, csBootVolName, reconciler.CSPResourceStateFailed), nil)
 			m.expectSubnetList(csProjectID, csVpcID, csSubnetID, csSubnetName)
 			m.expectSGList(csProjectID, csVpcID, csSGID, csSGName)
 			m.expectKeyPairList(csProjectID, csKPID, csKPName)
@@ -912,13 +912,13 @@ var _ = Describe("CloudServerReconciler", func() {
 				"cs-id-1", csProjectID, csVpcID, csBootVolID, csKPID,
 				[]string{csSubnetID}, []string{csSGID}, 1, time.Now())
 
-			cmpCS := buildCSResponse("cs-id-1", "test-cs-bootvol-update-no-block", CSPResourceStateActive)
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-bootvol-update-no-block", reconciler.CSPResourceStateActive)
 			m.expectProjectList(csProjectID, csProjectName)
 			m.expectVpcList(csProjectID, csVpcID, csVpcName)
 			m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
 			m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
 			m.mockVolumes.EXPECT().List(mock.Anything, csProjectID, mock.Anything).
-				Return(buildBootVolumeListForCSWithState(csBootVolID, csBootVolName, CSPResourceStateInCreation), nil)
+				Return(buildBootVolumeListForCSWithState(csBootVolID, csBootVolName, reconciler.CSPResourceStateInCreation), nil)
 			m.expectSubnetList(csProjectID, csVpcID, csSubnetID, csSubnetName)
 			m.expectSGList(csProjectID, csVpcID, csSGID, csSGName)
 			m.expectKeyPairList(csProjectID, csKPID, csKPName)
@@ -946,7 +946,7 @@ var _ = Describe("CloudServerReconciler", func() {
 			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
 			m.mockNetwork.EXPECT().Subnets().Return(m.mockSubnets)
 			m.mockSubnets.EXPECT().List(mock.Anything, csProjectID, csVpcID, mock.Anything).
-				Return(buildSubnetListForCSWithState(csSubnetID, csSubnetName, CSPResourceStateCreating), nil)
+				Return(buildSubnetListForCSWithState(csSubnetID, csSubnetName, reconciler.CSPResourceStateCreating), nil)
 
 			result, err := m.r.HandleReconcile(ctx, cs)
 			Expect(err).To(Succeed())
@@ -1011,7 +1011,7 @@ var _ = Describe("CloudServerReconciler", func() {
 					"cs-id-1", csProjectID, csVpcID, csBootVolID, csKPID,
 					[]string{csSubnetID}, []string{csSGID}, 1, time.Now())
 
-				cmpCS := buildCSResponse("cs-id-1", name, CSPResourceStateActive)
+				cmpCS := buildCSResponse("cs-id-1", name, reconciler.CSPResourceStateActive)
 				m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, name, cmpCS)
 				m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
 				m.mockCompute.EXPECT().CloudServers().Return(m.mockCSs)
@@ -1047,7 +1047,7 @@ var _ = Describe("CloudServerReconciler", func() {
 				Expect(k8sClient.Delete(ctx, cs)).To(Succeed())
 				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
 
-				cmpCS := buildCSResponse("cs-id-1", name, CSPResourceStateActive)
+				cmpCS := buildCSResponse("cs-id-1", name, reconciler.CSPResourceStateActive)
 				m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
 				m.mockCompute.EXPECT().CloudServers().Return(m.mockCSs)
 				m.mockCSs.EXPECT().List(mock.Anything, csProjectID, mock.Anything).Return(buildCSList(cmpCS), nil)

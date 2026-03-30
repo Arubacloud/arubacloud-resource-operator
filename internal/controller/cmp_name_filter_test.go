@@ -8,6 +8,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
+
+	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
 )
 
 var _ = Describe("filterByName", func() {
@@ -67,7 +69,7 @@ var _ = Describe("applyNameFilterToVPCList", func() {
 	})
 
 	It("is a no-op when the list already contains only the matching item", func() {
-		resp := buildVPCList(buildVPCResponse("id1", "target", CSPResourceStateActive))
+		resp := buildVPCList(buildVPCResponse("id1", "target", reconciler.CSPResourceStateActive))
 		applyNameFilterToVPCList(resp, "target", logger)
 		Expect(resp.Data.Total).To(Equal(int64(1)))
 		Expect(resp.Data.Values).To(HaveLen(1))

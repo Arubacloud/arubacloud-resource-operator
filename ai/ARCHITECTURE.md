@@ -21,10 +21,10 @@ The core pattern is a **three-layer reconciliation**:
    - Fetches the CMP resource from the Aruba API (nil if not found)
    - Passes both the Kubernetes object and the CMP response to `TransitionSet.Run()`
 
-3. **`internal/controller/transition.go`** — Generic state machine (`TransitionSet[K, A]`):
+3. **`internal/reconciler/transition.go`** — Generic state machine (`TransitionSet[K, A]`):
    - Evaluates transitions in order; executes the first whose condition matches
    - Each `AbstractTransition` has: `KCondition`, `ACondition`, `KAction`, `AAction`, `KActionOnASuccess`, `KActionOnAError`, `Requeue`, `RequeueOnError`
-   - Falls back to `DefaultAction`/`DefaultRequeue` if no transition matches
+   - Falls back to `DefaultKAction`/`DefaultRequeue` if no transition matches
 
 ## Key Types
 
@@ -96,7 +96,7 @@ KAction and AAction are mutually exclusive by design to avoid double side-effect
 
 **Standard error-handling wiring** for CMP-facing transitions (`ShouldBeCreatedInCMP`, `ShouldBeUpdatedOnCMP`, `ShouldBeDeletedOnCMP`):
 
-- `KActionOnAError`: `kubeSetErrorMessageOnCMPError[K, A](r.Client)` — surfaces the CMP error details in the condition message without changing the resource's phase or reason. The Aruba CMP API does not reliably distinguish transient dependency blockages from permanent errors, so CMP errors never move a resource to `Failed` — only timeouts do.
+- `KActionOnAError`: `KubeSetErrorMessageOnCMPError[K, A](r.Client)` — surfaces the CMP error details in the condition message without changing the resource's phase or reason. The Aruba CMP API does not reliably distinguish transient dependency blockages from permanent errors, so CMP errors never move a resource to `Failed` — only timeouts do.
 - `RequeueOnError`: `SmartRequeueOnError[K, A]` — uses `ShortRequeueAfter` for technical errors (fast infrastructure retry) and `LongRequeueAfter` for semantic errors (wait for manual fix).
 
 ## Transition Patterns
@@ -116,7 +116,7 @@ Triggered by Kubernetes setting `DeletionTimestamp`. Steps:
 | `ShouldBeDeleted` | deleting + Active/Synchronized | CMP resource exists in a final state | Mark `Deleting+ShallSynchronize` |
 | `ShouldDeleteTimedOut` | deleting + Failed (timed-out, not during Deleting) | any | Mark `Deleting+ShallSynchronize` |
 | `WaitingChildrenDeletion` *(parent controllers only)* | `Deleting+ShallSynchronize` + owned K8s children still exist | CMP exists | **kAction**: `deleteOwnedChildren` — issues `c.Delete()` on each child not yet being deleted; then long requeue until all children are gone |
-| `ShouldBeDeletedOnCMP` | `Deleting+ShallSynchronize` | CMP exists | Call CMP delete → on success mark `Deleting+Synchronizing`; on error: `kubeSetErrorMessageOnCMPError` + `SmartRequeueOnError` |
+| `ShouldBeDeletedOnCMP` | `Deleting+ShallSynchronize` | CMP exists | Call CMP delete → on success mark `Deleting+Synchronizing`; on error: `KubeSetErrorMessageOnCMPError` + `SmartRequeueOnError` |
 | `DeletionOnCMPNotNeeded` | `Deleting+ShallSynchronize` | CMP not found | Skip CMP call, mark `Deleting+Synchronized` directly |
 | `WaitingDeletionOnCMP` | `Deleting+Synchronizing` | CMP still exists | No action, long requeue |
 | `DeletionConfirmedOnCMP` | `Deleting+Synchronizing` | CMP gone | Mark `Deleting+Synchronized` |
@@ -133,10 +133,10 @@ Triggered when `ObservedGeneration != Generation` (spec changed). Resources may 
 | `HasDeniedChanges` *(optional)* | `Active` + generation changed + immutable field differs | CMP exists in final state | Return error (surfaced as status message); long requeue |
 | `SpecAlreadyInSyncWithCMP` | `Active` + generation changed + no actual diff | CMP exists | Re-stamp `ObservedGeneration`, stay `Active+Synchronized` |
 | `ShouldBeUpdated` | `Active` + generation changed + real diff | CMP exists in final state | Mark `Updating+ShallSynchronize` |
-| `ShouldBeUpdatedOnCMP` | `Updating+ShallSynchronize` | CMP exists in final state | Call CMP update → on success mark `Updating+Synchronizing`; on error: `kubeSetErrorMessageOnCMPError` + `SmartRequeueOnError` |
+| `ShouldBeUpdatedOnCMP` | `Updating+ShallSynchronize` | CMP exists in final state | Call CMP update → on success mark `Updating+Synchronizing`; on error: `KubeSetErrorMessageOnCMPError` + `SmartRequeueOnError` |
 | `WaitingUpdateOnCMP` | `Updating+Synchronizing` + spec still differs | CMP exists (transitory or diverged) | No action, long requeue |
 | `UpdateConfirmedOnCMP` | `Updating+Synchronizing` + spec converged | CMP exists | Mark `Updating+Synchronized` |
-| `UpdateAccomplished` | `Updating+Synchronized` | CMP in final/active state | `setActive+setID` |
+| `UpdateAccomplished` | `Updating+Synchronized` | CMP in final/active state | `SetActiveAndSetID` |
 
 #### 2b. Update-not-supported rollback (CMP has no update API)
 
@@ -146,16 +146,16 @@ When the CMP provides no update endpoint, spec changes must be rejected and roll
 |-----------|-------------|---------------|--------|
 | `ShouldBeUpdated` | `Active` + `ObservedGeneration != Generation` | CMP exists | Mark `Updating+ShallSynchronize` |
 | `UpdateNotSupported` | `Updating+ShallSynchronize` | CMP exists | `kubeMarkUpdatingFailed` — set `Updating+Failed` condition with message `"updating <Resource> resources is not supported"` |
-| `UpdateRollback` | `kube<Resource>UpdatingFailed` (phase=Updating + condition reason=Failed) | CMP exists | `kubeRollbackSpecAndSetActive` — restore spec fields from CMP response (object patch), then call `setActiveAndSetID` (status patch) |
+| `UpdateRollback` | `kube<Resource>UpdatingFailed` (phase=Updating + condition reason=Failed) | CMP exists | `kubeRollbackSpecAndSetActive` — restore spec fields from CMP response (object patch), then call `reconciler.SetActiveAndSetID` (status patch) |
 
 **Key implementation details:**
 
-- `kubeMarkUpdatingFailed` is a thin wrapper over `setPhaseAndCondition` with `phase=Updating`, `reason=Failed`, and a resource-specific error message.
+- `kubeMarkUpdatingFailed` is a thin wrapper over `reconciler.SetPhaseAndCondition` with `phase=Updating`, `reason=Failed`, and a resource-specific error message.
 - `kube<Resource>UpdatingFailed` is a custom KCondition that checks `phase == Updating` AND `condition.Reason == Failed` (guards against matching other Updating sub-states).
 - `kubeRollbackSpecAndSetActive` is a two-step action:
   1. **Spec rollback** (object patch via `retry.RetryOnConflict`): read a fresh copy, restore mutable spec fields from the CMP response, patch the object. This produces a new `Generation`.
-  2. **Set Active** (`setActiveAndSetID`): reads fresh object (capturing the new generation from step 1), stamps `ObservedGeneration`, writes `Active+Synchronized`.
-- The rollback transition uses `NoRequeue` because `setActiveAndSetID` internally stamps `ObservedGeneration` to the new generation, preventing re-entry into `ShouldBeUpdated` on the next reconcile.
+  2. **Set Active** (`reconciler.SetActiveAndSetID`): reads fresh object (capturing the new generation from step 1), stamps `ObservedGeneration`, writes `Active+Synchronized`.
+- The rollback transition uses `NoRequeue` because `reconciler.SetActiveAndSetID` internally stamps `ObservedGeneration` to the new generation, preventing re-entry into `ShouldBeUpdated` on the next reconcile.
 - In tests, the `UpdateRollback` test verifies that `Spec.Tags` and `Spec.Region` (or the resource's equivalent mutable fields) are restored to the CMP response values.
 
 ### 3. Creation flow
@@ -165,10 +165,10 @@ Triggered on the first reconciliation (empty `ResourceID`, no phase, no conditio
 | Transition | K condition | CMP condition | Action |
 |-----------|-------------|---------------|--------|
 | `ShouldBeCreated` | first reconciliation | CMP not found | Mark `Creating+ShallSynchronize` |
-| `ShouldBeCreatedInCMP` | `Creating+ShallSynchronize` | CMP not found | Call CMP create → on success mark `Creating+Synchronizing`; on error: `kubeSetErrorMessageOnCMPError` + `SmartRequeueOnError` |
+| `ShouldBeCreatedInCMP` | `Creating+ShallSynchronize` | CMP not found | Call CMP create → on success mark `Creating+Synchronizing`; on error: `KubeSetErrorMessageOnCMPError` + `SmartRequeueOnError` |
 | `WaitingCreationInCMP` | `Creating+Synchronizing` | CMP not found or transitory | No action, long requeue |
 | `CreationConfirmedOnCMP` | `Creating+Synchronizing` | CMP now found/active | Mark `Creating+Synchronized` |
-| `CreationAccomplished` | `Creating+Synchronized` | CMP active | `setActive+setID` (stores `ResourceID`, stamps `ObservedGeneration`) |
+| `CreationAccomplished` | `Creating+Synchronized` | CMP active | `SetActiveAndSetID` (stores `ResourceID`, stamps `ObservedGeneration`) |
 
 ### 4. CMP-side failure detection (resources with CMP failure states)
 
@@ -299,7 +299,7 @@ Every CRD type has a `Spec.Tenant` field and satisfies `ResourceObject.GetTenant
 - Ginkgo v2 + Gomega for BDD-style tests; Testify for mocks
 - Mocks live in `internal/mocks/` and are generated by mockery — regenerate with `make generate`
 - Integration tests use `controller-runtime/envtest` (fake K8s API server)
-- Test helpers and fixtures are in `common_test.go`; builder functions follow the pattern `build<Resource>Response(...)` and `default<Resource>Spec(...)`
+- Test helpers and fixtures are in `common_test.go` in each package; builder functions follow the pattern `build<Resource>Response(...)` and `default<Resource>Spec(...)`; the `controller` package's `common_test.go` provides `newTestReconciler`, `strPtr`, and `findCondition`
 - Controller tests inject a mock `aruba.Client` via `reconciler.NewReconcilerForTest` + a pre-seeded `arubamt.New()` cache (see `CONVENTIONS.md` for the pattern)
 
 ## Adding a New Controller
@@ -307,5 +307,5 @@ Every CRD type has a `Spec.Tenant` field and satisfies `ResourceObject.GetTenant
 1. Define the CRD type in `api/v1alpha1/` and run `make manifests generate`
 2. Create `internal/controller/<resource>_controller.go` embedding `*reconciler.Reconciler`
 3. Implement `Object()`, `Finalizer()`, `HandleReconcile()` to satisfy `ResourceReconciler`
-4. Build a `TransitionSet` covering all expected phase transitions
+4. Build a `reconciler.TransitionSet` covering all expected phase transitions
 5. Register the controller in `cmd/main.go`

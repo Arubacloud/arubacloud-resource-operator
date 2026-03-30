@@ -45,7 +45,7 @@ const (
 // SecurityRuleReconciler reconciles a SecurityRule object
 type SecurityRuleReconciler struct {
 	*reconciler.Reconciler
-	ts *TransitionSet[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]
+	ts *reconciler.TransitionSet[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]
 }
 
 // NewSecurityRuleReconciler creates a new SecurityRuleReconciler
@@ -322,182 +322,182 @@ func (r *SecurityRuleReconciler) HandleReconcile(ctx context.Context, obj reconc
 
 // Transition Set Builder
 
-func (r *SecurityRuleReconciler) newTransitionSet() *TransitionSet[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse] {
-	ts := &TransitionSet[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
-		defaultRequeue:        NoRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		defaultRequeueOnError: NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+func (r *SecurityRuleReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse] {
+	ts := &reconciler.TransitionSet[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
+		DefaultRequeue: reconciler.NoRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		DefaultRequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
 	}
 
 	// 0. PhaseTimedOut — safety net: fail if stuck in a transitory phase too long
-	ts.Add(&AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
-		name:           "PhaseTimedOut",
-		kCondition:     kubePhaseTimedOut[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		aCondition:     AlwaysTrue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		kAction:        r.kubeSetFailedOnTimeout,
-		requeue:        NoRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
+		Name: "PhaseTimedOut",
+		KCondition: reconciler.KubePhaseTimedOut[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		ACondition: reconciler.AlwaysTrue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		KAction: r.kubeSetFailedOnTimeout,
+		Requeue: reconciler.NoRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
 	})
 
 	// 1. ShouldBeDeleted
-	ts.Add(&AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
-		name:           "ShouldBeDeleted",
-		kCondition:     kubeShouldDelete[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		aCondition:     cmpSecurityRuleIsFinal,
-		kAction:        r.kubeMarkToDelete,
-		requeue:        ShortRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
+		Name: "ShouldBeDeleted",
+		KCondition: reconciler.KubeShouldDelete[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		ACondition: cmpSecurityRuleIsFinal,
+		KAction: r.kubeMarkToDelete,
+		Requeue: reconciler.ShortRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
 	})
 
 	// 2. ShouldDeleteTimedOut — enter deletion flow for timed-out resources (except those that timed out during Deleting)
-	ts.Add(&AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
-		name:           "ShouldDeleteTimedOut",
-		kCondition:     kubeShouldDeleteTimedOut[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		aCondition:     AlwaysTrue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		kAction:        r.kubeMarkToDelete,
-		requeue:        ShortRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
+		Name: "ShouldDeleteTimedOut",
+		KCondition: reconciler.KubeShouldDeleteTimedOut[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		ACondition: reconciler.AlwaysTrue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		KAction: r.kubeMarkToDelete,
+		Requeue: reconciler.ShortRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
 	})
 
 	// 3. ShouldBeDeletedOnCMP
-	ts.Add(&AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
-		name:              "ShouldBeDeletedOnCMP",
-		kCondition:        kubeShouldBeDeletedOnCMP[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		aCondition:        cmpSecurityRuleIsFinal,
-		aAction:           r.cmpDelete,
-		kActionOnASuccess: r.kubeMarkDeleting,
-		kActionOnAError:   kubeSetErrorMessageOnCMPError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse](r.Client),
-		requeue:           ShortRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		requeueOnError:    SmartRequeueOnError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
+		Name: "ShouldBeDeletedOnCMP",
+		KCondition: reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		ACondition: cmpSecurityRuleIsFinal,
+		AAction: r.cmpDelete,
+		KActionOnASuccess: r.kubeMarkDeleting,
+		KActionOnAError: reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse](r.Client),
+		Requeue: reconciler.ShortRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		RequeueOnError: reconciler.SmartRequeueOnError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
 	})
 
 	// 4. DeletionOnCMPNotNeeded — resource marked for deletion but CMP resource doesn't exist; skip CMP delete
-	ts.Add(&AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
-		name:           "DeletionOnCMPNotNeeded",
-		kCondition:     kubeShouldBeDeletedOnCMP[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		aCondition:     cmpSecurityRuleNotExists,
-		kAction:        r.kubeMarkDeletingDone,
-		requeue:        ShortRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
+		Name: "DeletionOnCMPNotNeeded",
+		KCondition: reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		ACondition: cmpSecurityRuleNotExists,
+		KAction: r.kubeMarkDeletingDone,
+		Requeue: reconciler.ShortRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
 	})
 
 	// 5. WaitingDeletionOnCMP
-	ts.Add(&AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
-		name:           "WaitingDeletionOnCMP",
-		kCondition:     kubeWaitingDeletionOnCMP[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		aCondition:     cmpSecurityRuleIsTransitory,
-		requeue:        LongRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
+		Name: "WaitingDeletionOnCMP",
+		KCondition: reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		ACondition: cmpSecurityRuleIsTransitory,
+		Requeue: reconciler.LongRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
 	})
 
 	// 6. DeletionConfirmedOnCMP
-	ts.Add(&AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
-		name:           "DeletionConfirmedOnCMP",
-		kCondition:     kubeWaitingDeletionOnCMP[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		aCondition:     cmpSecurityRuleNotExists,
-		kAction:        r.kubeMarkDeletingDone,
-		requeue:        ShortRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
+		Name: "DeletionConfirmedOnCMP",
+		KCondition: reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		ACondition: cmpSecurityRuleNotExists,
+		KAction: r.kubeMarkDeletingDone,
+		Requeue: reconciler.ShortRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
 	})
 
 	// 7. DeletionAccomplished
-	ts.Add(&AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
-		name:           "DeletionAccomplished",
-		kCondition:     kubeDeletionAccomplished[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		aCondition:     cmpSecurityRuleNotExists,
-		kAction:        r.kubeMarkDeleted,
-		requeue:        ShortRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
+		Name: "DeletionAccomplished",
+		KCondition: reconciler.KubeDeletionAccomplished[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		ACondition: cmpSecurityRuleNotExists,
+		KAction: r.kubeMarkDeleted,
+		Requeue: reconciler.ShortRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
 	})
 
 	// 8. ShouldBeUpdated — generation changed while Active → enter Updating phase
-	ts.Add(&AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
-		name:           "ShouldBeUpdated",
-		kCondition:     kubeActiveAndGenerationChanged[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		aCondition:     cmpSecurityRuleExists,
-		kAction:        r.kubeMarkToUpdate,
-		requeue:        ShortRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
+		Name: "ShouldBeUpdated",
+		KCondition: reconciler.KubeActiveAndGenerationChanged[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		ACondition: cmpSecurityRuleExists,
+		KAction: r.kubeMarkToUpdate,
+		Requeue: reconciler.ShortRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
 	})
 
 	// 9. UpdateNotSupported — Updating+ShallSynchronize + CMP exists → signal failure
-	ts.Add(&AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
-		name:           "UpdateNotSupported",
-		kCondition:     kubeShouldBeUpdatedOnCMP[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		aCondition:     cmpSecurityRuleExists,
-		kAction:        r.kubeMarkUpdatingFailed,
-		requeue:        ShortRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
+		Name: "UpdateNotSupported",
+		KCondition: reconciler.KubeShouldBeUpdatedOnCMP[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		ACondition: cmpSecurityRuleExists,
+		KAction: r.kubeMarkUpdatingFailed,
+		Requeue: reconciler.ShortRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
 	})
 
 	// 10. UpdateRollback — Updating+Failed + CMP exists → rollback spec and return to Active
-	ts.Add(&AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
-		name:           "UpdateRollback",
-		kCondition:     kubeSecurityRuleUpdatingFailed,
-		aCondition:     cmpSecurityRuleExists,
-		kAction:        r.kubeRollbackSpecAndSetActive,
-		requeue:        NoRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
+		Name: "UpdateRollback",
+		KCondition: kubeSecurityRuleUpdatingFailed,
+		ACondition: cmpSecurityRuleExists,
+		KAction: r.kubeRollbackSpecAndSetActive,
+		Requeue: reconciler.NoRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
 	})
 
 	// 11. ShouldBeCreated
-	ts.Add(&AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
-		name:           "ShouldBeCreated",
-		kCondition:     kubeIsFirstReconciliation[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		aCondition:     cmpSecurityRuleNotExists,
-		kAction:        r.kubeMarkToCreate,
-		requeue:        ShortRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
+		Name: "ShouldBeCreated",
+		KCondition: reconciler.KubeIsFirstReconciliation[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		ACondition: cmpSecurityRuleNotExists,
+		KAction: r.kubeMarkToCreate,
+		Requeue: reconciler.ShortRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
 	})
 
 	// 12. ShouldBeCreatedInCMP
-	ts.Add(&AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
-		name:              "ShouldBeCreatedInCMP",
-		kCondition:        kubeShouldBeCreatedOnCMP[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		aCondition:        cmpSecurityRuleNotExists,
-		aAction:           r.cmpCreate,
-		kActionOnASuccess: r.kubeMarkCreating,
-		kActionOnAError:   kubeSetErrorMessageOnCMPError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse](r.Client),
-		requeue:           ShortRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		requeueOnError:    SmartRequeueOnError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
+		Name: "ShouldBeCreatedInCMP",
+		KCondition: reconciler.KubeShouldBeCreatedOnCMP[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		ACondition: cmpSecurityRuleNotExists,
+		AAction: r.cmpCreate,
+		KActionOnASuccess: r.kubeMarkCreating,
+		KActionOnAError: reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse](r.Client),
+		Requeue: reconciler.ShortRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		RequeueOnError: reconciler.SmartRequeueOnError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
 	})
 
 	// 13. WaitingCreationInCMP
-	ts.Add(&AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
-		name:           "WaitingCreationInCMP",
-		kCondition:     kubeWaitingCreationInCMP[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		aCondition:     cmpSecurityRuleNotExistsOrTransitory,
-		requeue:        LongRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
+		Name: "WaitingCreationInCMP",
+		KCondition: reconciler.KubeWaitingCreationInCMP[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		ACondition: cmpSecurityRuleNotExistsOrTransitory,
+		Requeue: reconciler.LongRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
 	})
 
 	// 14. CreationConfirmedOnCMP
-	ts.Add(&AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
-		name:           "CreationConfirmedOnCMP",
-		kCondition:     kubeWaitingCreationInCMP[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		aCondition:     cmpSecurityRuleIsActive,
-		kAction:        r.kubeMarkCreatingDone,
-		requeue:        ShortRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
+		Name: "CreationConfirmedOnCMP",
+		KCondition: reconciler.KubeWaitingCreationInCMP[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		ACondition: cmpSecurityRuleIsActive,
+		KAction: r.kubeMarkCreatingDone,
+		Requeue: reconciler.ShortRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
 	})
 
 	// 15. CreationAccomplished
-	ts.Add(&AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
-		name:           "CreationAccomplished",
-		kCondition:     kubeIsCreatedOnCMP[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		aCondition:     cmpSecurityRuleIsActive,
-		kAction:        r.kubeSetActiveAndSetID,
-		requeue:        NoRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
+		Name: "CreationAccomplished",
+		KCondition: reconciler.KubeIsCreatedOnCMP[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		ACondition: cmpSecurityRuleIsActive,
+		KAction: r.kubeSetActiveAndSetID,
+		Requeue: reconciler.NoRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
 	})
 
 	// 16. IsInError
-	ts.Add(&AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
-		name:           "IsInError",
-		kCondition:     AlwaysTrue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		aCondition:     cmpSecurityRuleIsFailed,
-		kAction:        r.kubeSetFailed,
-		requeue:        NoRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse]{
+		Name: "IsInError",
+		KCondition: reconciler.AlwaysTrue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		ACondition: cmpSecurityRuleIsFailed,
+		KAction: r.kubeSetFailed,
+		Requeue: reconciler.NoRequeue[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityRule, *arubatypes.SecurityRuleResponse],
 	})
 
 	return ts
@@ -531,14 +531,14 @@ func cmpSecurityRuleIsFinal(_ *v1alpha1.SecurityRule, cmpSR *arubatypes.Security
 	if cmpSR == nil || cmpSR.Status.State == nil {
 		return false
 	}
-	return AssessCSPResourceStateNature(&cmpSR.Status) == CSPResourceStateNatureFinal
+	return reconciler.AssessCSPResourceStateNature(&cmpSR.Status) == reconciler.CSPResourceStateNatureFinal
 }
 
 func cmpSecurityRuleIsTransitory(_ *v1alpha1.SecurityRule, cmpSR *arubatypes.SecurityRuleResponse) bool {
 	if cmpSR == nil || cmpSR.Status.State == nil {
 		return false
 	}
-	return AssessCSPResourceStateNature(&cmpSR.Status) == CSPResourceStateNatureTransitory
+	return reconciler.AssessCSPResourceStateNature(&cmpSR.Status) == reconciler.CSPResourceStateNatureTransitory
 }
 
 func cmpSecurityRuleNotExistsOrTransitory(_ *v1alpha1.SecurityRule, cmpSR *arubatypes.SecurityRuleResponse) bool {
@@ -548,22 +548,22 @@ func cmpSecurityRuleNotExistsOrTransitory(_ *v1alpha1.SecurityRule, cmpSR *aruba
 	if cmpSR.Status.State == nil {
 		return false
 	}
-	return AssessCSPResourceStateNature(&cmpSR.Status) == CSPResourceStateNatureTransitory
+	return reconciler.AssessCSPResourceStateNature(&cmpSR.Status) == reconciler.CSPResourceStateNatureTransitory
 }
 
 func cmpSecurityRuleIsActive(_ *v1alpha1.SecurityRule, cmpSR *arubatypes.SecurityRuleResponse) bool {
 	return cmpSR != nil && cmpSR.Status.State != nil &&
-		*cmpSR.Status.State == CSPResourceStateActive
+		*cmpSR.Status.State == reconciler.CSPResourceStateActive
 }
 
 func cmpSecurityRuleIsFailed(_ *v1alpha1.SecurityRule, cmpSR *arubatypes.SecurityRuleResponse) bool {
-	return cmpSR != nil && cmpSR.Status.State != nil && *cmpSR.Status.State == CSPResourceStateFailed
+	return cmpSR != nil && cmpSR.Status.State != nil && *cmpSR.Status.State == reconciler.CSPResourceStateFailed
 }
 
 // Kube action methods
 
 func (r *SecurityRuleReconciler) kubeSetPhaseAndCondition(ctx context.Context, kubeSR *v1alpha1.SecurityRule, phase v1alpha1.ResourcePhase, reason string, actionErr error) error {
-	return setPhaseAndCondition(r.Client, ctx, kubeSR, phase, reason, actionErr, func(sr *v1alpha1.SecurityRule) {
+	return reconciler.SetPhaseAndCondition(r.Client, ctx, kubeSR, phase, reason, actionErr, func(sr *v1alpha1.SecurityRule) {
 		if prjID, ok := ctx.Value(projectIDKey).(string); ok && sr.Status.ProjectID == "" {
 			sr.Status.ProjectID = prjID
 		}
@@ -648,7 +648,7 @@ func (r *SecurityRuleReconciler) kubeSetActiveAndSetID(ctx context.Context, kube
 	if cmpSR != nil && cmpSR.Metadata.ID != nil {
 		cmpID = *cmpSR.Metadata.ID
 	}
-	return setActiveAndSetID(r.Client, ctx, kubeSR, cmpID, nil, func(sr *v1alpha1.SecurityRule) {
+	return reconciler.SetActiveAndSetID(r.Client, ctx, kubeSR, cmpID, nil, func(sr *v1alpha1.SecurityRule) {
 		if prjID, ok := ctx.Value(projectIDKey).(string); ok && sr.Status.ProjectID != "" {
 			sr.Status.ProjectID = prjID
 		}
@@ -662,7 +662,7 @@ func (r *SecurityRuleReconciler) kubeSetActiveAndSetID(ctx context.Context, kube
 }
 
 func (r *SecurityRuleReconciler) kubeSetFailedOnTimeout(ctx context.Context, kubeSR *v1alpha1.SecurityRule, _ *arubatypes.SecurityRuleResponse) error {
-	return setFailedOnTimeout(r.Client, ctx, kubeSR, func(sr *v1alpha1.SecurityRule) {
+	return reconciler.SetFailedOnTimeout(r.Client, ctx, kubeSR, func(sr *v1alpha1.SecurityRule) {
 		if prjID, ok := ctx.Value(projectIDKey).(string); ok && sr.Status.ProjectID == "" {
 			sr.Status.ProjectID = prjID
 		}
@@ -689,9 +689,9 @@ func (r *SecurityRuleReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.Secu
 
 	cmpResp, err := arubaClient.FromNetwork().SecurityGroupRules().Delete(ctx, prjID, vID, sgID, *cmpSR.Metadata.ID, nil)
 	if err != nil {
-		return cmpTransportError("delete", *cmpSR.Metadata.Name, err)
+		return reconciler.CMPTransportError("delete", *cmpSR.Metadata.Name, err)
 	}
-	return cmpCheckResponse("delete", *cmpSR.Metadata.Name, cmpResp,
+	return reconciler.CMPCheckResponse("delete", *cmpSR.Metadata.Name, cmpResp,
 		http.StatusOK, http.StatusAccepted, http.StatusNoContent, http.StatusNotFound)
 }
 
@@ -703,9 +703,9 @@ func (r *SecurityRuleReconciler) cmpCreate(ctx context.Context, kubeSR *v1alpha1
 
 	cmpResp, err := arubaClient.FromNetwork().SecurityGroupRules().Create(ctx, prjID, vID, sgID, *cmpSecurityRuleRequestFromKube(kubeSR), nil)
 	if err != nil {
-		return cmpTransportError("create", kubeSR.Name, err)
+		return reconciler.CMPTransportError("create", kubeSR.Name, err)
 	}
-	return cmpCheckResponse("create", kubeSR.Name, cmpResp,
+	return reconciler.CMPCheckResponse("create", kubeSR.Name, cmpResp,
 		http.StatusOK, http.StatusCreated, http.StatusAccepted)
 }
 

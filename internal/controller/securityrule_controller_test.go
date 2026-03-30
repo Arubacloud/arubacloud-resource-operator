@@ -76,7 +76,7 @@ func buildSRCRUDResponse(statusCode int) *arubatypes.Response[arubatypes.Securit
 
 func buildSGListForSR(sgID, sgName string) *arubatypes.Response[arubatypes.SecurityGroupList] {
 	defaultVal := false
-	state := CSPResourceStateActive
+	state := reconciler.CSPResourceStateActive
 	sg := arubatypes.SecurityGroupResponse{
 		Metadata: arubatypes.ResourceMetadataResponse{
 			ID:   &sgID,
@@ -323,7 +323,7 @@ var _ = Describe("SecurityRuleReconciler", func() {
 			sr = createTestSecurityRule(ctx, "test-sr-wait-create-transitory", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
 			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "", "", "", "", 0, time.Now())
 
-			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-wait-create-transitory", CSPResourceStateCreating)
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-wait-create-transitory", reconciler.CSPResourceStateCreating)
 			m.expectProjectList(srProjectID, srProjectName)
 			m.expectVpcList(srProjectID, srVpcID, srVpcName)
 			m.expectSGList(srProjectID, srVpcID, srSGID, srSGName)
@@ -341,7 +341,7 @@ var _ = Describe("SecurityRuleReconciler", func() {
 			sr = createTestSecurityRule(ctx, "test-sr-creation-confirmed", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
 			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "", "", "", "", 0, time.Now())
 
-			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-creation-confirmed", CSPResourceStateActive)
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-creation-confirmed", reconciler.CSPResourceStateActive)
 			m.expectProjectList(srProjectID, srProjectName)
 			m.expectVpcList(srProjectID, srVpcID, srVpcName)
 			m.expectSGList(srProjectID, srVpcID, srSGID, srSGName)
@@ -364,7 +364,7 @@ var _ = Describe("SecurityRuleReconciler", func() {
 			sr = createTestSecurityRule(ctx, "test-sr-creation-accomplished", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
 			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronized, "", "", "", "", 0, time.Now())
 
-			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-creation-accomplished", CSPResourceStateActive)
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-creation-accomplished", reconciler.CSPResourceStateActive)
 			m.expectProjectList(srProjectID, srProjectName)
 			m.expectVpcList(srProjectID, srVpcID, srVpcName)
 			m.expectSGList(srProjectID, srVpcID, srSGID, srSGName)
@@ -393,7 +393,7 @@ var _ = Describe("SecurityRuleReconciler", func() {
 			Expect(k8sClient.Update(ctx, srFetch)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), sr)).To(Succeed())
 
-			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-should-update", CSPResourceStateActive)
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-should-update", reconciler.CSPResourceStateActive)
 			m.expectProjectList(srProjectID, srProjectName)
 			m.expectVpcList(srProjectID, srVpcID, srVpcName)
 			m.expectSGList(srProjectID, srVpcID, srSGID, srSGName)
@@ -417,7 +417,7 @@ var _ = Describe("SecurityRuleReconciler", func() {
 			sr = createTestSecurityRule(ctx, "test-sr-update-not-supported", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
 			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, "sr-id-1", srProjectID, srVpcID, srSGID, 1, time.Now())
 
-			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-update-not-supported", CSPResourceStateActive)
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-update-not-supported", reconciler.CSPResourceStateActive)
 			m.expectProjectList(srProjectID, srProjectName)
 			m.expectVpcList(srProjectID, srVpcID, srVpcName)
 			m.expectSGList(srProjectID, srVpcID, srSGID, srSGName)
@@ -457,7 +457,7 @@ var _ = Describe("SecurityRuleReconciler", func() {
 			Expect(k8sClient.Status().Update(ctx, srFetch)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), sr)).To(Succeed())
 
-			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-update-rollback", CSPResourceStateActive)
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-update-rollback", reconciler.CSPResourceStateActive)
 			cmpSR.Metadata.Tags = []string{"cmp-tag1"}
 			cmpSR.Metadata.LocationResponse = &arubatypes.LocationResponse{Value: "ITBG-Bergamo"}
 			cmpSR.Properties.Protocol = "UDP"
@@ -502,7 +502,7 @@ var _ = Describe("SecurityRuleReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), sr)).To(Succeed())
 
 			// All 3 parent IDs cached → only SR list called
-			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-should-delete", CSPResourceStateActive)
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-should-delete", reconciler.CSPResourceStateActive)
 			m.expectSRList(srProjectID, srVpcID, srSGID, cmpSR)
 
 			_, err := m.r.HandleReconcile(ctx, sr)
@@ -530,7 +530,7 @@ var _ = Describe("SecurityRuleReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), sr)).To(Succeed())
 
 			// All 3 parent IDs cached → only SR list called, then delete
-			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-delete-cmp", CSPResourceStateActive)
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-delete-cmp", reconciler.CSPResourceStateActive)
 			m.expectSRList(srProjectID, srVpcID, srSGID, cmpSR)
 			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
 			m.mockNetwork.EXPECT().SecurityGroupRules().Return(m.mockSRules)
@@ -586,7 +586,7 @@ var _ = Describe("SecurityRuleReconciler", func() {
 			Expect(k8sClient.Delete(ctx, sr)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), sr)).To(Succeed())
 
-			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-deleting-transitory", CSPResourceStateDeleting)
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-deleting-transitory", reconciler.CSPResourceStateDeleting)
 			m.expectSRList(srProjectID, srVpcID, srSGID, cmpSR)
 
 			result, err := m.r.HandleReconcile(ctx, sr)
@@ -624,7 +624,7 @@ var _ = Describe("SecurityRuleReconciler", func() {
 			sr = createTestSecurityRule(ctx, "test-sr-in-error", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
 			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "sr-id-1", srProjectID, srVpcID, srSGID, 1, time.Now())
 
-			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-in-error", CSPResourceStateFailed)
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-in-error", reconciler.CSPResourceStateFailed)
 			m.expectProjectList(srProjectID, srProjectName)
 			m.expectVpcList(srProjectID, srVpcID, srVpcName)
 			m.expectSGList(srProjectID, srVpcID, srSGID, srSGName)
@@ -649,7 +649,7 @@ var _ = Describe("SecurityRuleReconciler", func() {
 			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, "", srProjectID, srVpcID, srSGID,
 				0, time.Now().Add(-(reconciler.MaxPhaseTimeout + time.Minute)))
 
-			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-timeout", CSPResourceStateActive)
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-timeout", reconciler.CSPResourceStateActive)
 			m.expectProjectList(srProjectID, srProjectName)
 			m.expectVpcList(srProjectID, srVpcID, srVpcName)
 			m.expectSGList(srProjectID, srVpcID, srSGID, srSGName)

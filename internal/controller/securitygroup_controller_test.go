@@ -304,7 +304,7 @@ var _ = Describe("SecurityGroupReconciler", func() {
 			sg = createTestSecurityGroup(ctx, "test-sg-wait-create-transitory", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
 			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "", "", "", 0, time.Now())
 
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-wait-create-transitory", CSPResourceStateCreating)
+			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-wait-create-transitory", reconciler.CSPResourceStateCreating)
 			m.expectProjectList(sgProjectID, sgProjectName)
 			m.expectVpcList(sgProjectID, sgVpcID, sgVpcName)
 			m.expectSGList(sgProjectID, sgVpcID, cmpSG)
@@ -321,7 +321,7 @@ var _ = Describe("SecurityGroupReconciler", func() {
 			sg = createTestSecurityGroup(ctx, "test-sg-creation-confirmed", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
 			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "", "", "", 0, time.Now())
 
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-creation-confirmed", CSPResourceStateActive)
+			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-creation-confirmed", reconciler.CSPResourceStateActive)
 			m.expectProjectList(sgProjectID, sgProjectName)
 			m.expectVpcList(sgProjectID, sgVpcID, sgVpcName)
 			m.expectSGList(sgProjectID, sgVpcID, cmpSG)
@@ -343,7 +343,7 @@ var _ = Describe("SecurityGroupReconciler", func() {
 			sg = createTestSecurityGroup(ctx, "test-sg-creation-accomplished", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
 			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronized, "", "", "", 0, time.Now())
 
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-creation-accomplished", CSPResourceStateActive)
+			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-creation-accomplished", reconciler.CSPResourceStateActive)
 			m.expectProjectList(sgProjectID, sgProjectName)
 			m.expectVpcList(sgProjectID, sgVpcID, sgVpcName)
 			m.expectSGList(sgProjectID, sgVpcID, cmpSG)
@@ -372,7 +372,7 @@ var _ = Describe("SecurityGroupReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
 
 			// CMP still has original location
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-denied-changes", CSPResourceStateActive)
+			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-denied-changes", reconciler.CSPResourceStateActive)
 			cmpSG.Metadata.LocationResponse = &arubatypes.LocationResponse{Value: "ITBG-Bergamo"}
 			m.expectProjectList(sgProjectID, sgProjectName)
 			m.expectVpcList(sgProjectID, sgVpcID, sgVpcName)
@@ -398,7 +398,7 @@ var _ = Describe("SecurityGroupReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
 
 			// CMP matches: same tags, same Default
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-spec-in-sync", CSPResourceStateActive)
+			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-spec-in-sync", reconciler.CSPResourceStateActive)
 			cmpSG.Metadata.Tags = []string{"tag1"}
 			m.expectProjectList(sgProjectID, sgProjectName)
 			m.expectVpcList(sgProjectID, sgVpcID, sgVpcName)
@@ -428,7 +428,7 @@ var _ = Describe("SecurityGroupReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
 
 			// CMP has old tags
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-should-update", CSPResourceStateActive)
+			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-should-update", reconciler.CSPResourceStateActive)
 			cmpSG.Metadata.Tags = []string{"tag1"}
 			m.expectProjectList(sgProjectID, sgProjectName)
 			m.expectVpcList(sgProjectID, sgVpcID, sgVpcName)
@@ -452,7 +452,7 @@ var _ = Describe("SecurityGroupReconciler", func() {
 			sg = createTestSecurityGroup(ctx, "test-sg-update-cmp", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
 			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, "sg-id-1", sgProjectID, sgVpcID, 1, time.Now())
 
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-update-cmp", CSPResourceStateActive)
+			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-update-cmp", reconciler.CSPResourceStateActive)
 			m.mockAruba.EXPECT().FromProject().Return(m.mockProject)
 			m.mockProject.EXPECT().List(mock.Anything, mock.Anything).Return(buildProjectListForSG(sgProjectID, sgProjectName), nil)
 			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
@@ -489,7 +489,7 @@ var _ = Describe("SecurityGroupReconciler", func() {
 			Expect(k8sClient.Delete(ctx, sg)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
 
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-should-delete", CSPResourceStateActive)
+			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-should-delete", reconciler.CSPResourceStateActive)
 			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
 			m.mockNetwork.EXPECT().SecurityGroups().Return(m.mockSecGroups)
 			m.mockSecGroups.EXPECT().List(mock.Anything, sgProjectID, sgVpcID, mock.Anything).Return(buildSecurityGroupList(cmpSG), nil)
@@ -518,7 +518,7 @@ var _ = Describe("SecurityGroupReconciler", func() {
 			Expect(k8sClient.Delete(ctx, sg)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
 
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-delete-cmp", CSPResourceStateActive)
+			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-delete-cmp", reconciler.CSPResourceStateActive)
 			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
 			m.mockNetwork.EXPECT().SecurityGroups().Return(m.mockSecGroups)
 			m.mockSecGroups.EXPECT().List(mock.Anything, sgProjectID, sgVpcID, mock.Anything).Return(buildSecurityGroupList(cmpSG), nil)
@@ -578,7 +578,7 @@ var _ = Describe("SecurityGroupReconciler", func() {
 			Expect(k8sClient.Delete(ctx, sg)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
 
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-deleting-transitory", CSPResourceStateDeleting)
+			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-deleting-transitory", reconciler.CSPResourceStateDeleting)
 			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
 			m.mockNetwork.EXPECT().SecurityGroups().Return(m.mockSecGroups)
 			m.mockSecGroups.EXPECT().List(mock.Anything, sgProjectID, sgVpcID, mock.Anything).Return(buildSecurityGroupList(cmpSG), nil)
@@ -620,7 +620,7 @@ var _ = Describe("SecurityGroupReconciler", func() {
 			sg = createTestSecurityGroup(ctx, "test-sg-in-error", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
 			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "sg-id-1", sgProjectID, sgVpcID, 1, time.Now())
 
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-in-error", CSPResourceStateFailed)
+			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-in-error", reconciler.CSPResourceStateFailed)
 			m.expectProjectList(sgProjectID, sgProjectName)
 			m.expectVpcList(sgProjectID, sgVpcID, sgVpcName)
 			m.expectSGList(sgProjectID, sgVpcID, cmpSG)
@@ -644,7 +644,7 @@ var _ = Describe("SecurityGroupReconciler", func() {
 			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, "", sgProjectID, sgVpcID,
 				0, time.Now().Add(-(reconciler.MaxPhaseTimeout + time.Minute)))
 
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-timeout", CSPResourceStateActive)
+			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-timeout", reconciler.CSPResourceStateActive)
 			m.expectProjectList(sgProjectID, sgProjectName)
 			m.expectVpcList(sgProjectID, sgVpcID, sgVpcName)
 			m.expectSGList(sgProjectID, sgVpcID, cmpSG)

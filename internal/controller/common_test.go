@@ -1,12 +1,11 @@
 package controller
 
 import (
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-
 	"github.com/Arubacloud/sdk-go/pkg/aruba"
 	arubamt "github.com/Arubacloud/sdk-go/pkg/multitenant"
-	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	. "github.com/onsi/ginkgo/v2"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
 )
@@ -23,73 +22,12 @@ func newTestReconciler(_ GinkgoTInterface, mockArubaClient aruba.Client) *reconc
 
 func strPtr(s string) *string { return &s }
 
-var _ = Describe("AssessCSPResourceStateNature", func() {
-	It("returns Undetermined for nil status", func() {
-		Expect(AssessCSPResourceStateNature(nil)).To(Equal(CSPResourceStateNatureUndetermined))
-	})
-
-	It("returns Undetermined when State is nil", func() {
-		s := &arubatypes.ResourceStatus{}
-		Expect(AssessCSPResourceStateNature(s)).To(Equal(CSPResourceStateNatureUndetermined))
-	})
-
-	DescribeTable("transitory states",
-		func(state string) {
-			s := &arubatypes.ResourceStatus{State: strPtr(state)}
-			Expect(AssessCSPResourceStateNature(s)).To(Equal(CSPResourceStateNatureTransitory))
-		},
-		Entry("InCreation", CSPResourceStateInCreation),
-		Entry("Creating", CSPResourceStateCreating),
-		Entry("Updating", CSPResourceStateUpdating),
-		Entry("Deleting", CSPResourceStateDeleting),
-		Entry("Provisioning", CSPResourceStateProvisioning),
-		Entry("Disabling", CSPResourceStateDisabling),
-		Entry("Enabling", CSPResourceStateEnabling),
-	)
-
-	DescribeTable("final states",
-		func(state string) {
-			s := &arubatypes.ResourceStatus{State: strPtr(state)}
-			Expect(AssessCSPResourceStateNature(s)).To(Equal(CSPResourceStateNatureFinal))
-		},
-		Entry("Active", CSPResourceStateActive),
-		Entry("NotUsed", CSPResourceStateNotUsed),
-		Entry("InUse", CSPResourceStateInUse),
-		Entry("Used", CSPResourceStateUsed),
-		Entry("Stopped", CSPResourceStateStopped),
-		Entry("Running", CSPResourceStateRunning),
-		Entry("Disabled", CSPResourceStateDisabled),
-		Entry("Failed", CSPResourceStateFailed),
-	)
-
-	It("returns Invalid for unknown state", func() {
-		s := &arubatypes.ResourceStatus{State: strPtr("UnknownState")}
-		Expect(AssessCSPResourceStateNature(s)).To(Equal(CSPResourceStateNatureInvalid))
-	})
-})
-
-var _ = Describe("tagsAreEqual", func() {
-	It("returns true for same order", func() {
-		Expect(tagsAreEqual([]string{"a", "b", "c"}, []string{"a", "b", "c"})).To(BeTrue())
-	})
-
-	It("returns true for different order", func() {
-		Expect(tagsAreEqual([]string{"c", "a", "b"}, []string{"a", "b", "c"})).To(BeTrue())
-	})
-
-	It("returns false for different tags", func() {
-		Expect(tagsAreEqual([]string{"a", "b"}, []string{"a", "c"})).To(BeFalse())
-	})
-
-	It("returns true for both empty", func() {
-		Expect(tagsAreEqual([]string{}, []string{})).To(BeTrue())
-	})
-
-	It("returns true for both nil", func() {
-		Expect(tagsAreEqual(nil, nil)).To(BeTrue())
-	})
-
-	It("returns false for different lengths", func() {
-		Expect(tagsAreEqual([]string{"a", "b"}, []string{"a"})).To(BeFalse())
-	})
-})
+// findCondition is a test helper.
+func findCondition(conditions []metav1.Condition, condType string) *metav1.Condition {
+	for i := range conditions {
+		if conditions[i].Type == condType {
+			return &conditions[i]
+		}
+	}
+	return nil
+}

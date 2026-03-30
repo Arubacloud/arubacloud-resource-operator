@@ -1,8 +1,9 @@
-package controller
+package reconciler
 
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
@@ -84,9 +85,9 @@ func sanitizeCMPString(s string) string {
 	return strings.TrimSpace(s)
 }
 
-// cmpTransportError creates a CMPError for a Go-level transport or network failure
+// CMPTransportError creates a CMPError for a Go-level transport or network failure
 // (e.g., connection refused, context cancellation). Always classified as Technical.
-func cmpTransportError(operation, resource string, err error) *CMPError {
+func CMPTransportError(operation, resource string, err error) *CMPError {
 	return &CMPError{
 		Category:  CMPErrorCategoryTechnical,
 		Operation: operation,
@@ -127,14 +128,12 @@ func cmpResponseError(operation, resource string, statusCode int, errResp *aruba
 	}
 }
 
-// cmpCheckResponse inspects a CMP API response and returns nil if the status code
+// CMPCheckResponse inspects a CMP API response and returns nil if the status code
 // is in successCodes, or a *CMPError otherwise. This replaces the repeated
 // status-code switch blocks in cmpCreate / cmpUpdate / cmpDelete methods.
-func cmpCheckResponse[T any](operation, resource string, resp *arubatypes.Response[T], successCodes ...int) error {
-	for _, code := range successCodes {
-		if resp.StatusCode == code {
-			return nil
-		}
+func CMPCheckResponse[T any](operation, resource string, resp *arubatypes.Response[T], successCodes ...int) error {
+	if slices.Contains(successCodes, resp.StatusCode) {
+		return nil
 	}
 	return cmpResponseError(operation, resource, resp.StatusCode, resp.Error)
 }

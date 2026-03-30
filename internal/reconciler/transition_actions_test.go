@@ -1,4 +1,4 @@
-package controller
+package reconciler
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
 )
 
-var _ = Describe("setPhaseAndCondition", func() {
+var _ = Describe("SetPhaseAndCondition", func() {
 	var (
 		ctx  context.Context
 		proj *v1alpha1.Project
@@ -41,7 +41,7 @@ var _ = Describe("setPhaseAndCondition", func() {
 	})
 
 	It("sets the correct phase and condition", func() {
-		err := setPhaseAndCondition(k8sClient, ctx, proj, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, nil)
+		err := SetPhaseAndCondition(k8sClient, ctx, proj, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, nil)
 		Expect(err).To(Succeed())
 
 		updated := &v1alpha1.Project{}
@@ -56,13 +56,13 @@ var _ = Describe("setPhaseAndCondition", func() {
 
 	It("sets previous conditions to Status=False", func() {
 		// First set one condition
-		Expect(setPhaseAndCondition(k8sClient, ctx, proj, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, nil)).To(Succeed())
+		Expect(SetPhaseAndCondition(k8sClient, ctx, proj, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, nil)).To(Succeed())
 
 		// Re-fetch proj for the next call
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), proj)).To(Succeed())
 
 		// Now transition to a different phase
-		Expect(setPhaseAndCondition(k8sClient, ctx, proj, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, nil)).To(Succeed())
+		Expect(SetPhaseAndCondition(k8sClient, ctx, proj, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, nil)).To(Succeed())
 
 		updated := &v1alpha1.Project{}
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), updated)).To(Succeed())
@@ -79,7 +79,7 @@ var _ = Describe("setPhaseAndCondition", func() {
 	})
 
 	It("includes ' - OK' in message when actionErr is nil", func() {
-		Expect(setPhaseAndCondition(k8sClient, ctx, proj, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, nil)).To(Succeed())
+		Expect(SetPhaseAndCondition(k8sClient, ctx, proj, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, nil)).To(Succeed())
 
 		updated := &v1alpha1.Project{}
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), updated)).To(Succeed())
@@ -89,7 +89,7 @@ var _ = Describe("setPhaseAndCondition", func() {
 
 	It("includes ' - ERROR' in message when actionErr is non-nil", func() {
 		testErr := errors.New("cmp failed")
-		Expect(setPhaseAndCondition(k8sClient, ctx, proj, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, testErr)).To(Succeed())
+		Expect(SetPhaseAndCondition(k8sClient, ctx, proj, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, testErr)).To(Succeed())
 
 		updated := &v1alpha1.Project{}
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), updated)).To(Succeed())
@@ -100,7 +100,7 @@ var _ = Describe("setPhaseAndCondition", func() {
 
 	It("applies prePatch callbacks before writing", func() {
 		prePatchCalled := false
-		err := setPhaseAndCondition(k8sClient, ctx, proj, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, nil,
+		err := SetPhaseAndCondition(k8sClient, ctx, proj, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, nil,
 			func(p *v1alpha1.Project) {
 				prePatchCalled = true
 				p.Spec.Description = "patched"
@@ -111,7 +111,7 @@ var _ = Describe("setPhaseAndCondition", func() {
 	})
 })
 
-var _ = Describe("setActiveAndSetID", func() {
+var _ = Describe("SetActiveAndSetID", func() {
 	var (
 		ctx  context.Context
 		proj *v1alpha1.Project
@@ -139,7 +139,7 @@ var _ = Describe("setActiveAndSetID", func() {
 	})
 
 	It("sets phase to Active and condition to Active+Synchronized", func() {
-		Expect(setActiveAndSetID(k8sClient, ctx, proj, "cmp-id-1", nil)).To(Succeed())
+		Expect(SetActiveAndSetID(k8sClient, ctx, proj, "cmp-id-1", nil)).To(Succeed())
 
 		updated := &v1alpha1.Project{}
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), updated)).To(Succeed())
@@ -152,7 +152,7 @@ var _ = Describe("setActiveAndSetID", func() {
 	})
 
 	It("sets ResourceID from cmpResourceID when empty", func() {
-		Expect(setActiveAndSetID(k8sClient, ctx, proj, "cmp-id-1", nil)).To(Succeed())
+		Expect(SetActiveAndSetID(k8sClient, ctx, proj, "cmp-id-1", nil)).To(Succeed())
 
 		updated := &v1alpha1.Project{}
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), updated)).To(Succeed())
@@ -166,7 +166,7 @@ var _ = Describe("setActiveAndSetID", func() {
 		Expect(k8sClient.Status().Update(ctx, p)).To(Succeed())
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), proj)).To(Succeed())
 
-		Expect(setActiveAndSetID(k8sClient, ctx, proj, "new-id", nil)).To(Succeed())
+		Expect(SetActiveAndSetID(k8sClient, ctx, proj, "new-id", nil)).To(Succeed())
 
 		updated := &v1alpha1.Project{}
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), updated)).To(Succeed())
@@ -174,7 +174,7 @@ var _ = Describe("setActiveAndSetID", func() {
 	})
 
 	It("stamps ObservedGeneration to Generation", func() {
-		Expect(setActiveAndSetID(k8sClient, ctx, proj, "cmp-id-1", nil)).To(Succeed())
+		Expect(SetActiveAndSetID(k8sClient, ctx, proj, "cmp-id-1", nil)).To(Succeed())
 
 		updated := &v1alpha1.Project{}
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), updated)).To(Succeed())
@@ -182,7 +182,7 @@ var _ = Describe("setActiveAndSetID", func() {
 	})
 })
 
-var _ = Describe("setFailedOnTimeout", func() {
+var _ = Describe("SetFailedOnTimeout", func() {
 	var (
 		ctx  context.Context
 		proj *v1alpha1.Project
@@ -202,7 +202,7 @@ var _ = Describe("setFailedOnTimeout", func() {
 		Expect(k8sClient.Create(ctx, proj)).To(Succeed())
 
 		// Put it in Creating+ShallSynchronize first
-		Expect(setPhaseAndCondition(k8sClient, ctx, proj, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, nil)).To(Succeed())
+		Expect(SetPhaseAndCondition(k8sClient, ctx, proj, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, nil)).To(Succeed())
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), proj)).To(Succeed())
 	})
 
@@ -214,7 +214,7 @@ var _ = Describe("setFailedOnTimeout", func() {
 	})
 
 	It("sets phase to Failed", func() {
-		Expect(setFailedOnTimeout(k8sClient, ctx, proj)).To(Succeed())
+		Expect(SetFailedOnTimeout(k8sClient, ctx, proj)).To(Succeed())
 
 		updated := &v1alpha1.Project{}
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), updated)).To(Succeed())
@@ -222,7 +222,7 @@ var _ = Describe("setFailedOnTimeout", func() {
 	})
 
 	It("sets previous phase condition to Status=False, Reason=Failed", func() {
-		Expect(setFailedOnTimeout(k8sClient, ctx, proj)).To(Succeed())
+		Expect(SetFailedOnTimeout(k8sClient, ctx, proj)).To(Succeed())
 
 		updated := &v1alpha1.Project{}
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), updated)).To(Succeed())
@@ -234,7 +234,7 @@ var _ = Describe("setFailedOnTimeout", func() {
 	})
 
 	It("sets Failed condition to Status=True, Reason=Failed", func() {
-		Expect(setFailedOnTimeout(k8sClient, ctx, proj)).To(Succeed())
+		Expect(SetFailedOnTimeout(k8sClient, ctx, proj)).To(Succeed())
 
 		updated := &v1alpha1.Project{}
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), updated)).To(Succeed())
@@ -246,13 +246,39 @@ var _ = Describe("setFailedOnTimeout", func() {
 	})
 
 	It("message references timeout", func() {
-		Expect(setFailedOnTimeout(k8sClient, ctx, proj)).To(Succeed())
+		Expect(SetFailedOnTimeout(k8sClient, ctx, proj)).To(Succeed())
 
 		updated := &v1alpha1.Project{}
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), updated)).To(Succeed())
 
 		failedCond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
 		Expect(strings.ToLower(failedCond.Message)).To(ContainSubstring("timeout"))
+	})
+})
+
+var _ = Describe("TagsAreEqual", func() {
+	It("returns true for same order", func() {
+		Expect(TagsAreEqual([]string{"a", "b", "c"}, []string{"a", "b", "c"})).To(BeTrue())
+	})
+
+	It("returns true for different order", func() {
+		Expect(TagsAreEqual([]string{"c", "a", "b"}, []string{"a", "b", "c"})).To(BeTrue())
+	})
+
+	It("returns false for different tags", func() {
+		Expect(TagsAreEqual([]string{"a", "b"}, []string{"a", "c"})).To(BeFalse())
+	})
+
+	It("returns true for both empty", func() {
+		Expect(TagsAreEqual([]string{}, []string{})).To(BeTrue())
+	})
+
+	It("returns true for both nil", func() {
+		Expect(TagsAreEqual(nil, nil)).To(BeTrue())
+	})
+
+	It("returns false for different lengths", func() {
+		Expect(TagsAreEqual([]string{"a", "b"}, []string{"a"})).To(BeFalse())
 	})
 })
 

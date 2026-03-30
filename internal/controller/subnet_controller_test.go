@@ -299,7 +299,7 @@ var _ = Describe("SubnetReconciler", func() {
 			subnet = createTestSubnet(ctx, "test-subnet-wait-create-transitory", defaultSubnetSpec(subnetProjectName, subnetVpcName))
 			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "", "", "", 0, time.Now())
 
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-wait-create-transitory", CSPResourceStateCreating)
+			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-wait-create-transitory", reconciler.CSPResourceStateCreating)
 			m.expectProjectList(subnetProjectID, subnetProjectName)
 			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
 			m.expectSubnetList(subnetProjectID, subnetVpcID, cmpSubnet)
@@ -316,7 +316,7 @@ var _ = Describe("SubnetReconciler", func() {
 			subnet = createTestSubnet(ctx, "test-subnet-creation-confirmed", defaultSubnetSpec(subnetProjectName, subnetVpcName))
 			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "", "", "", 0, time.Now())
 
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-creation-confirmed", CSPResourceStateActive)
+			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-creation-confirmed", reconciler.CSPResourceStateActive)
 			m.expectProjectList(subnetProjectID, subnetProjectName)
 			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
 			m.expectSubnetList(subnetProjectID, subnetVpcID, cmpSubnet)
@@ -338,7 +338,7 @@ var _ = Describe("SubnetReconciler", func() {
 			subnet = createTestSubnet(ctx, "test-subnet-creation-accomplished", defaultSubnetSpec(subnetProjectName, subnetVpcName))
 			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronized, "", "", "", 0, time.Now())
 
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-creation-accomplished", CSPResourceStateActive)
+			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-creation-accomplished", reconciler.CSPResourceStateActive)
 			m.expectProjectList(subnetProjectID, subnetProjectName)
 			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
 			m.expectSubnetList(subnetProjectID, subnetVpcID, cmpSubnet)
@@ -367,7 +367,7 @@ var _ = Describe("SubnetReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
 
 			// CMP still has original location ITBG-Bergamo
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-denied-location", CSPResourceStateActive)
+			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-denied-location", reconciler.CSPResourceStateActive)
 			m.expectProjectList(subnetProjectID, subnetProjectName)
 			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
 			m.expectSubnetList(subnetProjectID, subnetVpcID, cmpSubnet)
@@ -390,7 +390,7 @@ var _ = Describe("SubnetReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
 
 			// CMP still has original network address 192.168.1.0/24
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-denied-changes", CSPResourceStateActive)
+			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-denied-changes", reconciler.CSPResourceStateActive)
 			m.expectProjectList(subnetProjectID, subnetProjectName)
 			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
 			m.expectSubnetList(subnetProjectID, subnetVpcID, cmpSubnet)
@@ -415,7 +415,7 @@ var _ = Describe("SubnetReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
 
 			// CMP matches: same tags, same DHCP
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-spec-in-sync", CSPResourceStateActive)
+			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-spec-in-sync", reconciler.CSPResourceStateActive)
 			cmpSubnet.Metadata.Tags = []string{"tag1"}
 			m.expectProjectList(subnetProjectID, subnetProjectName)
 			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
@@ -445,7 +445,7 @@ var _ = Describe("SubnetReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
 
 			// CMP has old tags
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-should-update", CSPResourceStateActive)
+			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-should-update", reconciler.CSPResourceStateActive)
 			cmpSubnet.Metadata.Tags = []string{"tag1"}
 			m.expectProjectList(subnetProjectID, subnetProjectName)
 			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
@@ -469,7 +469,7 @@ var _ = Describe("SubnetReconciler", func() {
 			subnet = createTestSubnet(ctx, "test-subnet-update-cmp", defaultSubnetSpec(subnetProjectName, subnetVpcName))
 			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, "subnet-id-1", subnetProjectID, subnetVpcID, 1, time.Now())
 
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-update-cmp", CSPResourceStateActive)
+			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-update-cmp", reconciler.CSPResourceStateActive)
 			m.expectProjectList(subnetProjectID, subnetProjectName)
 			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
 			m.expectSubnetList(subnetProjectID, subnetVpcID, cmpSubnet)
@@ -501,7 +501,7 @@ var _ = Describe("SubnetReconciler", func() {
 			Expect(k8sClient.Delete(ctx, subnet)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
 
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-should-delete", CSPResourceStateActive)
+			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-should-delete", reconciler.CSPResourceStateActive)
 			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
 			m.mockNetwork.EXPECT().Subnets().Return(m.mockSubnets)
 			m.mockSubnets.EXPECT().List(mock.Anything, subnetProjectID, subnetVpcID, mock.Anything).Return(buildSubnetList(cmpSubnet), nil)
@@ -530,7 +530,7 @@ var _ = Describe("SubnetReconciler", func() {
 			Expect(k8sClient.Delete(ctx, subnet)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
 
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-delete-cmp", CSPResourceStateActive)
+			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-delete-cmp", reconciler.CSPResourceStateActive)
 			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
 			m.mockNetwork.EXPECT().Subnets().Return(m.mockSubnets)
 			m.mockSubnets.EXPECT().List(mock.Anything, subnetProjectID, subnetVpcID, mock.Anything).Return(buildSubnetList(cmpSubnet), nil)
@@ -562,7 +562,7 @@ var _ = Describe("SubnetReconciler", func() {
 			Expect(k8sClient.Delete(ctx, subnet)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
 
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-deleting-transitory", CSPResourceStateDeleting)
+			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-deleting-transitory", reconciler.CSPResourceStateDeleting)
 			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
 			m.mockNetwork.EXPECT().Subnets().Return(m.mockSubnets)
 			m.mockSubnets.EXPECT().List(mock.Anything, subnetProjectID, subnetVpcID, mock.Anything).Return(buildSubnetList(cmpSubnet), nil)
@@ -604,7 +604,7 @@ var _ = Describe("SubnetReconciler", func() {
 			subnet = createTestSubnet(ctx, "test-subnet-in-error", defaultSubnetSpec(subnetProjectName, subnetVpcName))
 			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "subnet-id-1", subnetProjectID, subnetVpcID, 1, time.Now())
 
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-in-error", CSPResourceStateFailed)
+			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-in-error", reconciler.CSPResourceStateFailed)
 			m.expectProjectList(subnetProjectID, subnetProjectName)
 			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
 			m.expectSubnetList(subnetProjectID, subnetVpcID, cmpSubnet)
@@ -628,7 +628,7 @@ var _ = Describe("SubnetReconciler", func() {
 			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, "", subnetProjectID, subnetVpcID,
 				0, time.Now().Add(-(reconciler.MaxPhaseTimeout + time.Minute)))
 
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-timeout", CSPResourceStateActive)
+			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-timeout", reconciler.CSPResourceStateActive)
 			m.expectProjectList(subnetProjectID, subnetProjectName)
 			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
 			m.expectSubnetList(subnetProjectID, subnetVpcID, cmpSubnet)
@@ -732,7 +732,7 @@ var _ = Describe("SubnetReconciler", func() {
 				subnet = createTestSubnet(ctx, name, defaultSubnetSpec(subnetProjectName, subnetVpcName))
 				setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, "subnet-id-1", subnetProjectID, subnetVpcID, 1, time.Now())
 
-				cmpSubnet := buildSubnetResponse("subnet-id-1", name, CSPResourceStateActive)
+				cmpSubnet := buildSubnetResponse("subnet-id-1", name, reconciler.CSPResourceStateActive)
 				m.expectProjectList(subnetProjectID, subnetProjectName)
 				m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
 				m.expectSubnetList(subnetProjectID, subnetVpcID, cmpSubnet)
@@ -768,7 +768,7 @@ var _ = Describe("SubnetReconciler", func() {
 				Expect(k8sClient.Delete(ctx, subnet)).To(Succeed())
 				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
 
-				cmpSubnet := buildSubnetResponse("subnet-id-1", name, CSPResourceStateActive)
+				cmpSubnet := buildSubnetResponse("subnet-id-1", name, reconciler.CSPResourceStateActive)
 				m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
 				m.mockNetwork.EXPECT().Subnets().Return(m.mockSubnets)
 				m.mockSubnets.EXPECT().List(mock.Anything, subnetProjectID, subnetVpcID, mock.Anything).Return(buildSubnetList(cmpSubnet), nil)

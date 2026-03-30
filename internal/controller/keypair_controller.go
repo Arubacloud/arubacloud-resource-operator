@@ -44,7 +44,7 @@ const (
 // KeyPairReconciler reconciles a KeyPair object
 type KeyPairReconciler struct {
 	*reconciler.Reconciler
-	ts *TransitionSet[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]
+	ts *reconciler.TransitionSet[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]
 }
 
 // NewKeyPairReconciler creates a new KeyPairReconciler
@@ -198,172 +198,172 @@ func (r *KeyPairReconciler) HandleReconcile(ctx context.Context, obj reconciler.
 
 // Transition Set Builder
 
-func (r *KeyPairReconciler) newTransitionSet() *TransitionSet[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse] {
-	ts := &TransitionSet[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]{
-		defaultRequeue:        NoRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		defaultRequeueOnError: NoRequeueButIgnoreError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+func (r *KeyPairReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse] {
+	ts := &reconciler.TransitionSet[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]{
+		DefaultRequeue: reconciler.NoRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		DefaultRequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
 	}
 
 	// 0. PhaseTimedOut — safety net: fail if stuck in a transitory phase too long
-	ts.Add(&AbstractTransition[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]{
-		name:           "PhaseTimedOut",
-		kCondition:     kubePhaseTimedOut[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		aCondition:     AlwaysTrue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		kAction:        r.kubeSetFailedOnTimeout,
-		requeue:        NoRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]{
+		Name: "PhaseTimedOut",
+		KCondition: reconciler.KubePhaseTimedOut[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		ACondition: reconciler.AlwaysTrue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		KAction: r.kubeSetFailedOnTimeout,
+		Requeue: reconciler.NoRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
 	})
 
 	// 1. ShouldBeDeleted — DeletionTimestamp set + active → mark Deleting+ShallSynchronize
-	ts.Add(&AbstractTransition[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]{
-		name:           "ShouldBeDeleted",
-		kCondition:     kubeShouldDelete[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		aCondition:     cmpKeyPairExists,
-		kAction:        r.kubeMarkToDelete,
-		requeue:        ShortRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]{
+		Name: "ShouldBeDeleted",
+		KCondition: reconciler.KubeShouldDelete[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		ACondition: cmpKeyPairExists,
+		KAction: r.kubeMarkToDelete,
+		Requeue: reconciler.ShortRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
 	})
 
 	// 2. ShouldDeleteTimedOut — enter deletion flow for timed-out resources
-	ts.Add(&AbstractTransition[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]{
-		name:           "ShouldDeleteTimedOut",
-		kCondition:     kubeShouldDeleteTimedOut[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		aCondition:     AlwaysTrue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		kAction:        r.kubeMarkToDelete,
-		requeue:        ShortRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]{
+		Name: "ShouldDeleteTimedOut",
+		KCondition: reconciler.KubeShouldDeleteTimedOut[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		ACondition: reconciler.AlwaysTrue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		KAction: r.kubeMarkToDelete,
+		Requeue: reconciler.ShortRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
 	})
 
 	// 3. ShouldBeDeletedOnCMP — marked Deleting+ShallSynchronize + CMP exists → dispatch delete
-	ts.Add(&AbstractTransition[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]{
-		name:              "ShouldBeDeletedOnCMP",
-		kCondition:        kubeShouldBeDeletedOnCMP[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		aCondition:        cmpKeyPairExists,
-		aAction:           r.cmpDelete,
-		kActionOnASuccess: r.kubeMarkDeleting,
-		kActionOnAError:   kubeSetErrorMessageOnCMPError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse](r.Client),
-		requeue:           ShortRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		requeueOnError:    SmartRequeueOnError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]{
+		Name: "ShouldBeDeletedOnCMP",
+		KCondition: reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		ACondition: cmpKeyPairExists,
+		AAction: r.cmpDelete,
+		KActionOnASuccess: r.kubeMarkDeleting,
+		KActionOnAError: reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse](r.Client),
+		Requeue: reconciler.ShortRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		RequeueOnError: reconciler.SmartRequeueOnError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
 	})
 
 	// 4. DeletionOnCMPNotNeeded — marked Deleting+ShallSynchronize but CMP already gone
-	ts.Add(&AbstractTransition[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]{
-		name:           "DeletionOnCMPNotNeeded",
-		kCondition:     kubeShouldBeDeletedOnCMP[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		aCondition:     cmpKeyPairNotExists,
-		kAction:        r.kubeMarkDeletingDone,
-		requeue:        ShortRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]{
+		Name: "DeletionOnCMPNotNeeded",
+		KCondition: reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		ACondition: cmpKeyPairNotExists,
+		KAction: r.kubeMarkDeletingDone,
+		Requeue: reconciler.ShortRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
 	})
 
 	// 5. WaitingDeletionOnCMP — marked Deleting+Synchronizing + CMP still exists → poll
-	ts.Add(&AbstractTransition[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]{
-		name:           "WaitingDeletionOnCMP",
-		kCondition:     kubeWaitingDeletionOnCMP[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		aCondition:     cmpKeyPairExists,
-		requeue:        LongRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]{
+		Name: "WaitingDeletionOnCMP",
+		KCondition: reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		ACondition: cmpKeyPairExists,
+		Requeue: reconciler.LongRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
 	})
 
 	// 6. DeletionConfirmedOnCMP — marked Deleting+Synchronizing + CMP gone → advance to Synchronized
-	ts.Add(&AbstractTransition[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]{
-		name:           "DeletionConfirmedOnCMP",
-		kCondition:     kubeWaitingDeletionOnCMP[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		aCondition:     cmpKeyPairNotExists,
-		kAction:        r.kubeMarkDeletingDone,
-		requeue:        ShortRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]{
+		Name: "DeletionConfirmedOnCMP",
+		KCondition: reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		ACondition: cmpKeyPairNotExists,
+		KAction: r.kubeMarkDeletingDone,
+		Requeue: reconciler.ShortRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
 	})
 
 	// 7. DeletionAccomplished — marked Deleting+Synchronized + CMP gone → mark Deleted
-	ts.Add(&AbstractTransition[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]{
-		name:           "DeletionAccomplished",
-		kCondition:     kubeDeletionAccomplished[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		aCondition:     cmpKeyPairNotExists,
-		kAction:        r.kubeMarkDeleted,
-		requeue:        ShortRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]{
+		Name: "DeletionAccomplished",
+		KCondition: reconciler.KubeDeletionAccomplished[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		ACondition: cmpKeyPairNotExists,
+		KAction: r.kubeMarkDeleted,
+		Requeue: reconciler.ShortRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
 	})
 
 	// 8. ShouldBeUpdated — generation changed while Active → enter Updating phase
-	ts.Add(&AbstractTransition[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]{
-		name:           "ShouldBeUpdated",
-		kCondition:     kubeActiveAndGenerationChanged[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		aCondition:     cmpKeyPairExists,
-		kAction:        r.kubeMarkToUpdate,
-		requeue:        ShortRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]{
+		Name: "ShouldBeUpdated",
+		KCondition: reconciler.KubeActiveAndGenerationChanged[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		ACondition: cmpKeyPairExists,
+		KAction: r.kubeMarkToUpdate,
+		Requeue: reconciler.ShortRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
 	})
 
 	// 9. UpdateNotSupported — Updating+ShallSynchronize + CMP exists → signal failure
-	ts.Add(&AbstractTransition[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]{
-		name:           "UpdateNotSupported",
-		kCondition:     kubeShouldBeUpdatedOnCMP[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		aCondition:     cmpKeyPairExists,
-		kAction:        r.kubeMarkUpdatingFailed,
-		requeue:        ShortRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]{
+		Name: "UpdateNotSupported",
+		KCondition: reconciler.KubeShouldBeUpdatedOnCMP[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		ACondition: cmpKeyPairExists,
+		KAction: r.kubeMarkUpdatingFailed,
+		Requeue: reconciler.ShortRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
 	})
 
 	// 10. UpdateRollback — Updating+Failed + CMP exists → rollback spec and return to Active
-	ts.Add(&AbstractTransition[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]{
-		name:           "UpdateRollback",
-		kCondition:     kubeKeyPairUpdatingFailed,
-		aCondition:     cmpKeyPairExists,
-		kAction:        r.kubeRollbackSpecAndSetActive,
-		requeue:        NoRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]{
+		Name: "UpdateRollback",
+		KCondition: kubeKeyPairUpdatingFailed,
+		ACondition: cmpKeyPairExists,
+		KAction: r.kubeRollbackSpecAndSetActive,
+		Requeue: reconciler.NoRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
 	})
 
 	// 11. ShouldBeCreated — first reconciliation + CMP not found → mark Creating+ShallSynchronize
-	ts.Add(&AbstractTransition[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]{
-		name:           "ShouldBeCreated",
-		kCondition:     kubeIsFirstReconciliation[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		aCondition:     cmpKeyPairNotExists,
-		kAction:        r.kubeMarkToCreate,
-		requeue:        ShortRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]{
+		Name: "ShouldBeCreated",
+		KCondition: reconciler.KubeIsFirstReconciliation[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		ACondition: cmpKeyPairNotExists,
+		KAction: r.kubeMarkToCreate,
+		Requeue: reconciler.ShortRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
 	})
 
 	// 12. ShouldBeCreatedInCMP — Creating+ShallSynchronize + CMP not found → dispatch create
-	ts.Add(&AbstractTransition[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]{
-		name:              "ShouldBeCreatedInCMP",
-		kCondition:        kubeShouldBeCreatedOnCMP[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		aCondition:        cmpKeyPairNotExists,
-		aAction:           r.cmpCreate,
-		kActionOnASuccess: r.kubeMarkCreating,
-		kActionOnAError:   kubeSetErrorMessageOnCMPError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse](r.Client),
-		requeue:           ShortRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		requeueOnError:    SmartRequeueOnError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]{
+		Name: "ShouldBeCreatedInCMP",
+		KCondition: reconciler.KubeShouldBeCreatedOnCMP[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		ACondition: cmpKeyPairNotExists,
+		AAction: r.cmpCreate,
+		KActionOnASuccess: r.kubeMarkCreating,
+		KActionOnAError: reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse](r.Client),
+		Requeue: reconciler.ShortRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		RequeueOnError: reconciler.SmartRequeueOnError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
 	})
 
 	// 13. WaitingCreationInCMP — Creating+Synchronizing + CMP not found yet → poll
-	ts.Add(&AbstractTransition[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]{
-		name:           "WaitingCreationInCMP",
-		kCondition:     kubeWaitingCreationInCMP[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		aCondition:     cmpKeyPairNotExists,
-		requeue:        LongRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]{
+		Name: "WaitingCreationInCMP",
+		KCondition: reconciler.KubeWaitingCreationInCMP[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		ACondition: cmpKeyPairNotExists,
+		Requeue: reconciler.LongRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
 	})
 
 	// 14. CreationConfirmedOnCMP — Creating+Synchronizing + CMP found → mark Creating+Synchronized
-	ts.Add(&AbstractTransition[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]{
-		name:           "CreationConfirmedOnCMP",
-		kCondition:     kubeWaitingCreationInCMP[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		aCondition:     cmpKeyPairExists,
-		kAction:        r.kubeMarkCreatingDone,
-		requeue:        ShortRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]{
+		Name: "CreationConfirmedOnCMP",
+		KCondition: reconciler.KubeWaitingCreationInCMP[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		ACondition: cmpKeyPairExists,
+		KAction: r.kubeMarkCreatingDone,
+		Requeue: reconciler.ShortRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
 	})
 
 	// 15. CreationAccomplished — Creating+Synchronized + CMP found → set Active + store ResourceID
-	ts.Add(&AbstractTransition[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]{
-		name:           "CreationAccomplished",
-		kCondition:     kubeIsCreatedOnCMP[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		aCondition:     cmpKeyPairExists,
-		kAction:        r.kubeSetActiveAndSetID,
-		requeue:        NoRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse]{
+		Name: "CreationAccomplished",
+		KCondition: reconciler.KubeIsCreatedOnCMP[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		ACondition: cmpKeyPairExists,
+		KAction: r.kubeSetActiveAndSetID,
+		Requeue: reconciler.NoRequeue[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.KeyPair, *arubatypes.KeyPairResponse],
 	})
 
 	return ts
@@ -398,7 +398,7 @@ func kubeKeyPairUpdatingFailed(kubeKp *v1alpha1.KeyPair, _ *arubatypes.KeyPairRe
 // Kube action methods
 
 func (r *KeyPairReconciler) kubeSetPhaseAndCondition(ctx context.Context, kubeKp *v1alpha1.KeyPair, phase v1alpha1.ResourcePhase, reason string, actionErr error) error {
-	return setPhaseAndCondition(r.Client, ctx, kubeKp, phase, reason, actionErr, func(kp *v1alpha1.KeyPair) {
+	return reconciler.SetPhaseAndCondition(r.Client, ctx, kubeKp, phase, reason, actionErr, func(kp *v1alpha1.KeyPair) {
 		if prjID, ok := ctx.Value(projectIDKey).(string); ok && kp.Status.ProjectID == "" {
 			kp.Status.ProjectID = prjID
 		}
@@ -406,7 +406,7 @@ func (r *KeyPairReconciler) kubeSetPhaseAndCondition(ctx context.Context, kubeKp
 }
 
 func (r *KeyPairReconciler) kubeSetFailedOnTimeout(ctx context.Context, kubeKp *v1alpha1.KeyPair, _ *arubatypes.KeyPairResponse) error {
-	return setFailedOnTimeout(r.Client, ctx, kubeKp, func(kp *v1alpha1.KeyPair) {
+	return reconciler.SetFailedOnTimeout(r.Client, ctx, kubeKp, func(kp *v1alpha1.KeyPair) {
 		if prjID, ok := ctx.Value(projectIDKey).(string); ok && kp.Status.ProjectID == "" {
 			kp.Status.ProjectID = prjID
 		}
@@ -457,7 +457,7 @@ func (r *KeyPairReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeKp *v
 	if cmpKp != nil && cmpKp.Metadata.ID != nil {
 		cmpID = *cmpKp.Metadata.ID
 	}
-	return setActiveAndSetID(r.Client, ctx, kubeKp, cmpID, nil, func(kp *v1alpha1.KeyPair) {
+	return reconciler.SetActiveAndSetID(r.Client, ctx, kubeKp, cmpID, nil, func(kp *v1alpha1.KeyPair) {
 		if prjID, ok := ctx.Value(projectIDKey).(string); ok && kp.Status.ProjectID == "" {
 			kp.Status.ProjectID = prjID
 		}
@@ -498,9 +498,9 @@ func (r *KeyPairReconciler) cmpCreate(ctx context.Context, kubeKp *v1alpha1.KeyP
 
 	cmpKpResp, err := arubaClient.FromCompute().KeyPairs().Create(ctx, prjID, cmpKeyPairRequestFromKube(kubeKp), nil)
 	if err != nil {
-		return cmpTransportError("create", kubeKp.Name, err)
+		return reconciler.CMPTransportError("create", kubeKp.Name, err)
 	}
-	return cmpCheckResponse("create", kubeKp.Name, cmpKpResp,
+	return reconciler.CMPCheckResponse("create", kubeKp.Name, cmpKpResp,
 		http.StatusOK, http.StatusCreated, http.StatusAccepted)
 }
 
@@ -510,9 +510,9 @@ func (r *KeyPairReconciler) cmpDelete(ctx context.Context, kubeKp *v1alpha1.KeyP
 
 	cmpKpResp, err := arubaClient.FromCompute().KeyPairs().Delete(ctx, prjID, *cmpKp.Metadata.ID, nil)
 	if err != nil {
-		return cmpTransportError("delete", *cmpKp.Metadata.Name, err)
+		return reconciler.CMPTransportError("delete", *cmpKp.Metadata.Name, err)
 	}
-	return cmpCheckResponse("delete", *cmpKp.Metadata.Name, cmpKpResp,
+	return reconciler.CMPCheckResponse("delete", *cmpKp.Metadata.Name, cmpKpResp,
 		http.StatusOK, http.StatusAccepted, http.StatusNoContent, http.StatusNotFound)
 }
 

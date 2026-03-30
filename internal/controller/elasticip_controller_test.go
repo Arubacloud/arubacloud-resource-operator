@@ -250,7 +250,7 @@ var _ = Describe("ElasticIPReconciler", func() {
 			eip = createTestElasticIP(ctx, "test-eip-wait-create-transitory", defaultElasticIPSpec(eipProjectName))
 			setElasticIPStatus(ctx, eip, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "", "", 0, time.Now())
 
-			cmpEip := buildElasticIPResponse("eip-id-1", "test-eip-wait-create-transitory", CSPResourceStateCreating)
+			cmpEip := buildElasticIPResponse("eip-id-1", "test-eip-wait-create-transitory", reconciler.CSPResourceStateCreating)
 			m.expectProjectList(eipProjectID, eipProjectName)
 			m.expectElasticIPList(eipProjectID, cmpEip)
 
@@ -266,7 +266,7 @@ var _ = Describe("ElasticIPReconciler", func() {
 			eip = createTestElasticIP(ctx, "test-eip-creation-confirmed", defaultElasticIPSpec(eipProjectName))
 			setElasticIPStatus(ctx, eip, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "", "", 0, time.Now())
 
-			cmpEip := buildElasticIPResponse("eip-id-1", "test-eip-creation-confirmed", CSPResourceStateNotUsed)
+			cmpEip := buildElasticIPResponse("eip-id-1", "test-eip-creation-confirmed", reconciler.CSPResourceStateNotUsed)
 			m.expectProjectList(eipProjectID, eipProjectName)
 			m.expectElasticIPList(eipProjectID, cmpEip)
 
@@ -287,7 +287,7 @@ var _ = Describe("ElasticIPReconciler", func() {
 			eip = createTestElasticIP(ctx, "test-eip-creation-accomplished", defaultElasticIPSpec(eipProjectName))
 			setElasticIPStatus(ctx, eip, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronized, "", "", 0, time.Now())
 
-			cmpEip := buildElasticIPResponse("eip-id-1", "test-eip-creation-accomplished", CSPResourceStateNotUsed)
+			cmpEip := buildElasticIPResponse("eip-id-1", "test-eip-creation-accomplished", reconciler.CSPResourceStateNotUsed)
 			m.expectProjectList(eipProjectID, eipProjectName)
 			m.expectElasticIPList(eipProjectID, cmpEip)
 
@@ -315,7 +315,7 @@ var _ = Describe("ElasticIPReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(eip), eip)).To(Succeed())
 
 			// CMP still has original location ITBG-Bergamo
-			cmpEip := buildElasticIPResponse("eip-id-1", "test-eip-denied-changes", CSPResourceStateNotUsed)
+			cmpEip := buildElasticIPResponse("eip-id-1", "test-eip-denied-changes", reconciler.CSPResourceStateNotUsed)
 			m.expectProjectList(eipProjectID, eipProjectName)
 			m.expectElasticIPList(eipProjectID, cmpEip)
 
@@ -339,7 +339,7 @@ var _ = Describe("ElasticIPReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(eip), eip)).To(Succeed())
 
 			// CMP matches: same tags, same location, same billing period
-			cmpEip := buildElasticIPResponse("eip-id-1", "test-eip-spec-in-sync", CSPResourceStateNotUsed)
+			cmpEip := buildElasticIPResponse("eip-id-1", "test-eip-spec-in-sync", reconciler.CSPResourceStateNotUsed)
 			cmpEip.Metadata.Tags = []string{"tag1"}
 			cmpEip.Properties.BillingPlan = arubatypes.BillingPeriodResource{BillingPeriod: "Hour"}
 			m.expectProjectList(eipProjectID, eipProjectName)
@@ -369,7 +369,7 @@ var _ = Describe("ElasticIPReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(eip), eip)).To(Succeed())
 
 			// CMP has old tags
-			cmpEip := buildElasticIPResponse("eip-id-1", "test-eip-should-update", CSPResourceStateNotUsed)
+			cmpEip := buildElasticIPResponse("eip-id-1", "test-eip-should-update", reconciler.CSPResourceStateNotUsed)
 			cmpEip.Metadata.Tags = []string{"tag1"}
 			cmpEip.Properties.BillingPlan = arubatypes.BillingPeriodResource{BillingPeriod: "Hour"}
 			m.expectProjectList(eipProjectID, eipProjectName)
@@ -393,7 +393,7 @@ var _ = Describe("ElasticIPReconciler", func() {
 			eip = createTestElasticIP(ctx, "test-eip-update-cmp", defaultElasticIPSpec(eipProjectName))
 			setElasticIPStatus(ctx, eip, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, "eip-id-1", eipProjectID, 1, time.Now())
 
-			cmpEip := buildElasticIPResponse("eip-id-1", "test-eip-update-cmp", CSPResourceStateNotUsed)
+			cmpEip := buildElasticIPResponse("eip-id-1", "test-eip-update-cmp", reconciler.CSPResourceStateNotUsed)
 			m.expectProjectList(eipProjectID, eipProjectName)
 			m.expectElasticIPList(eipProjectID, cmpEip)
 			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
@@ -424,7 +424,7 @@ var _ = Describe("ElasticIPReconciler", func() {
 			Expect(k8sClient.Delete(ctx, eip)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(eip), eip)).To(Succeed())
 
-			cmpEip := buildElasticIPResponse("eip-id-1", "test-eip-should-delete", CSPResourceStateNotUsed)
+			cmpEip := buildElasticIPResponse("eip-id-1", "test-eip-should-delete", reconciler.CSPResourceStateNotUsed)
 			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
 			m.mockNetwork.EXPECT().ElasticIPs().Return(m.mockElasticIPs)
 			m.mockElasticIPs.EXPECT().List(mock.Anything, eipProjectID, mock.Anything).Return(buildElasticIPList(cmpEip), nil)
@@ -453,7 +453,7 @@ var _ = Describe("ElasticIPReconciler", func() {
 			Expect(k8sClient.Delete(ctx, eip)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(eip), eip)).To(Succeed())
 
-			cmpEip := buildElasticIPResponse("eip-id-1", "test-eip-delete-cmp", CSPResourceStateNotUsed)
+			cmpEip := buildElasticIPResponse("eip-id-1", "test-eip-delete-cmp", reconciler.CSPResourceStateNotUsed)
 			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
 			m.mockNetwork.EXPECT().ElasticIPs().Return(m.mockElasticIPs)
 			m.mockElasticIPs.EXPECT().List(mock.Anything, eipProjectID, mock.Anything).Return(buildElasticIPList(cmpEip), nil)
@@ -485,7 +485,7 @@ var _ = Describe("ElasticIPReconciler", func() {
 			Expect(k8sClient.Delete(ctx, eip)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(eip), eip)).To(Succeed())
 
-			cmpEip := buildElasticIPResponse("eip-id-1", "test-eip-deleting-transitory", CSPResourceStateDeleting)
+			cmpEip := buildElasticIPResponse("eip-id-1", "test-eip-deleting-transitory", reconciler.CSPResourceStateDeleting)
 			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
 			m.mockNetwork.EXPECT().ElasticIPs().Return(m.mockElasticIPs)
 			m.mockElasticIPs.EXPECT().List(mock.Anything, eipProjectID, mock.Anything).Return(buildElasticIPList(cmpEip), nil)
@@ -527,7 +527,7 @@ var _ = Describe("ElasticIPReconciler", func() {
 			eip = createTestElasticIP(ctx, "test-eip-in-error", defaultElasticIPSpec(eipProjectName))
 			setElasticIPStatus(ctx, eip, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "eip-id-1", eipProjectID, 1, time.Now())
 
-			cmpEip := buildElasticIPResponse("eip-id-1", "test-eip-in-error", CSPResourceStateFailed)
+			cmpEip := buildElasticIPResponse("eip-id-1", "test-eip-in-error", reconciler.CSPResourceStateFailed)
 			m.expectProjectList(eipProjectID, eipProjectName)
 			m.expectElasticIPList(eipProjectID, cmpEip)
 
@@ -550,7 +550,7 @@ var _ = Describe("ElasticIPReconciler", func() {
 			setElasticIPStatus(ctx, eip, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, "", eipProjectID,
 				0, time.Now().Add(-(reconciler.MaxPhaseTimeout + time.Minute)))
 
-			cmpEip := buildElasticIPResponse("eip-id-1", "test-eip-timeout", CSPResourceStateNotUsed)
+			cmpEip := buildElasticIPResponse("eip-id-1", "test-eip-timeout", reconciler.CSPResourceStateNotUsed)
 			m.expectProjectList(eipProjectID, eipProjectName)
 			m.expectElasticIPList(eipProjectID, cmpEip)
 
@@ -629,7 +629,7 @@ var _ = Describe("ElasticIPReconciler", func() {
 				eip = createTestElasticIP(ctx, name, defaultElasticIPSpec(eipProjectName))
 				setElasticIPStatus(ctx, eip, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, "eip-id-1", eipProjectID, 1, time.Now())
 
-				cmpEip := buildElasticIPResponse("eip-id-1", name, CSPResourceStateNotUsed)
+				cmpEip := buildElasticIPResponse("eip-id-1", name, reconciler.CSPResourceStateNotUsed)
 				m.expectProjectList(eipProjectID, eipProjectName)
 				m.expectElasticIPList(eipProjectID, cmpEip)
 				m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
@@ -664,7 +664,7 @@ var _ = Describe("ElasticIPReconciler", func() {
 				Expect(k8sClient.Delete(ctx, eip)).To(Succeed())
 				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(eip), eip)).To(Succeed())
 
-				cmpEip := buildElasticIPResponse("eip-id-1", name, CSPResourceStateNotUsed)
+				cmpEip := buildElasticIPResponse("eip-id-1", name, reconciler.CSPResourceStateNotUsed)
 				m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
 				m.mockNetwork.EXPECT().ElasticIPs().Return(m.mockElasticIPs)
 				m.mockElasticIPs.EXPECT().List(mock.Anything, eipProjectID, mock.Anything).Return(buildElasticIPList(cmpEip), nil)

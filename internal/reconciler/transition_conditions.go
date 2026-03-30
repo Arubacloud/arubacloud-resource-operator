@@ -1,4 +1,4 @@
-package controller
+package reconciler
 
 import (
 	"time"
@@ -8,12 +8,11 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
-	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
 )
 
-// kubePhaseTimedOut returns true when the resource has been stuck in a transitory
+// KubePhaseTimedOut returns true when the resource has been stuck in a transitory
 // phase with reason ShallSynchronize or Synchronizing for longer than MaxPhaseTimeout.
-func kubePhaseTimedOut[K reconciler.ResourceObject, A any](k K, _ A) bool {
+func KubePhaseTimedOut[K ResourceObject, A any](k K, _ A) bool {
 	rs := k.GetResourceStatus()
 	if rs == nil || rs.AssessPhaseNature() != v1alpha1.PhaseNatureTransitory {
 		return false
@@ -30,12 +29,12 @@ func kubePhaseTimedOut[K reconciler.ResourceObject, A any](k K, _ A) bool {
 	}
 
 	elapsed := time.Since(condition.LastTransitionTime.Time)
-	timed := elapsed > reconciler.MaxPhaseTimeout
+	timed := elapsed > MaxPhaseTimeout
 	ctrl.Log.V(2).Info("checking phase timeout",
 		"resource", k.GetNamespace()+"/"+k.GetName(),
 		"phase", string(rs.Phase),
 		"elapsed", elapsed.String(),
-		"timeout", reconciler.MaxPhaseTimeout.String(),
+		"timeout", MaxPhaseTimeout.String(),
 		"timedOut", timed,
 	)
 	return timed
@@ -43,7 +42,7 @@ func kubePhaseTimedOut[K reconciler.ResourceObject, A any](k K, _ A) bool {
 
 // kubeHasPhaseAndReason is a shared helper that checks the common pattern:
 // DeletionTimestamp state + Phase + Condition Reason.
-func kubeHasPhaseAndReason(obj reconciler.ResourceObject, expectDeleting bool, phase v1alpha1.ResourcePhase, reason string) bool {
+func kubeHasPhaseAndReason(obj ResourceObject, expectDeleting bool, phase v1alpha1.ResourcePhase, reason string) bool {
 	rs := obj.GetResourceStatus()
 	if rs == nil {
 		return false
@@ -66,9 +65,9 @@ func kubeHasPhaseAndReason(obj reconciler.ResourceObject, expectDeleting bool, p
 		condition.Reason == reason
 }
 
-// kubeShouldDelete checks whether the resource should begin the deletion flow.
+// KubeShouldDelete checks whether the resource should begin the deletion flow.
 // It is deleting, in a final phase (not Deleted), and the current condition is Synchronized.
-func kubeShouldDelete[K reconciler.ResourceObject, A any](k K, _ A) bool {
+func KubeShouldDelete[K ResourceObject, A any](k K, _ A) bool {
 	rs := k.GetResourceStatus()
 	if rs == nil {
 		return false
@@ -95,10 +94,10 @@ func failedPhase(rs *v1alpha1.ResourceStatus) v1alpha1.ResourcePhase {
 	return ""
 }
 
-// kubeShouldDeleteTimedOut checks whether a timed-out resource (Phase=Failed, Reason=Failed)
+// KubeShouldDeleteTimedOut checks whether a timed-out resource (Phase=Failed, Reason=Failed)
 // should enter the deletion flow. Returns false when the timed-out phase was Deleting,
 // since re-entering deletion for an already-failing delete is pointless.
-func kubeShouldDeleteTimedOut[K reconciler.ResourceObject, A any](k K, _ A) bool {
+func KubeShouldDeleteTimedOut[K ResourceObject, A any](k K, _ A) bool {
 	rs := k.GetResourceStatus()
 	if rs == nil || k.GetDeletionTimestamp().IsZero() {
 		return false
@@ -116,23 +115,23 @@ func kubeShouldDeleteTimedOut[K reconciler.ResourceObject, A any](k K, _ A) bool
 	return prevPhase != "" && prevPhase != v1alpha1.ResourcePhaseDeleting
 }
 
-// kubeShouldBeDeletedOnCMP checks: deleting, Phase=Deleting, Reason=ShallSynchronize.
-func kubeShouldBeDeletedOnCMP[K reconciler.ResourceObject, A any](k K, _ A) bool {
+// KubeShouldBeDeletedOnCMP checks: deleting, Phase=Deleting, Reason=ShallSynchronize.
+func KubeShouldBeDeletedOnCMP[K ResourceObject, A any](k K, _ A) bool {
 	return kubeHasPhaseAndReason(k, true, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize)
 }
 
-// kubeWaitingDeletionOnCMP checks: deleting, Phase=Deleting, Reason=Synchronizing.
-func kubeWaitingDeletionOnCMP[K reconciler.ResourceObject, A any](k K, _ A) bool {
+// KubeWaitingDeletionOnCMP checks: deleting, Phase=Deleting, Reason=Synchronizing.
+func KubeWaitingDeletionOnCMP[K ResourceObject, A any](k K, _ A) bool {
 	return kubeHasPhaseAndReason(k, true, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronizing)
 }
 
-// kubeDeletionAccomplished checks: deleting, Phase=Deleting, Reason=Synchronized.
-func kubeDeletionAccomplished[K reconciler.ResourceObject, A any](k K, _ A) bool {
+// KubeDeletionAccomplished checks: deleting, Phase=Deleting, Reason=Synchronized.
+func KubeDeletionAccomplished[K ResourceObject, A any](k K, _ A) bool {
 	return kubeHasPhaseAndReason(k, true, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronized)
 }
 
-// kubeIsFirstReconciliation checks: not deleting, no ResourceID, no Phase, no Conditions.
-func kubeIsFirstReconciliation[K reconciler.ResourceObject, A any](k K, _ A) bool {
+// KubeIsFirstReconciliation checks: not deleting, no ResourceID, no Phase, no Conditions.
+func KubeIsFirstReconciliation[K ResourceObject, A any](k K, _ A) bool {
 	rs := k.GetResourceStatus()
 	if rs == nil {
 		return false
@@ -143,8 +142,8 @@ func kubeIsFirstReconciliation[K reconciler.ResourceObject, A any](k K, _ A) boo
 		len(rs.Conditions) == 0
 }
 
-// kubeShouldBeCreatedOnCMP checks: not deleting, no ResourceID, Phase=Creating, Reason=ShallSynchronize.
-func kubeShouldBeCreatedOnCMP[K reconciler.ResourceObject, A any](k K, _ A) bool {
+// KubeShouldBeCreatedOnCMP checks: not deleting, no ResourceID, Phase=Creating, Reason=ShallSynchronize.
+func KubeShouldBeCreatedOnCMP[K ResourceObject, A any](k K, _ A) bool {
 	rs := k.GetResourceStatus()
 	if rs == nil {
 		return false
@@ -154,8 +153,8 @@ func kubeShouldBeCreatedOnCMP[K reconciler.ResourceObject, A any](k K, _ A) bool
 		kubeHasPhaseAndReason(k, false, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize)
 }
 
-// kubeWaitingCreationInCMP checks: not deleting, no ResourceID, Phase=Creating, Reason=Synchronizing.
-func kubeWaitingCreationInCMP[K reconciler.ResourceObject, A any](k K, _ A) bool {
+// KubeWaitingCreationInCMP checks: not deleting, no ResourceID, Phase=Creating, Reason=Synchronizing.
+func KubeWaitingCreationInCMP[K ResourceObject, A any](k K, _ A) bool {
 	rs := k.GetResourceStatus()
 	if rs == nil {
 		return false
@@ -165,8 +164,8 @@ func kubeWaitingCreationInCMP[K reconciler.ResourceObject, A any](k K, _ A) bool
 		kubeHasPhaseAndReason(k, false, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing)
 }
 
-// kubeIsCreatedOnCMP checks: not deleting, no ResourceID, Phase=Creating, Reason=Synchronized.
-func kubeIsCreatedOnCMP[K reconciler.ResourceObject, A any](k K, _ A) bool {
+// KubeIsCreatedOnCMP checks: not deleting, no ResourceID, Phase=Creating, Reason=Synchronized.
+func KubeIsCreatedOnCMP[K ResourceObject, A any](k K, _ A) bool {
 	rs := k.GetResourceStatus()
 	if rs == nil {
 		return false
@@ -176,24 +175,24 @@ func kubeIsCreatedOnCMP[K reconciler.ResourceObject, A any](k K, _ A) bool {
 		kubeHasPhaseAndReason(k, false, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronized)
 }
 
-// kubeShouldBeUpdatedOnCMP checks: not deleting, Phase=Updating, Reason=ShallSynchronize.
-func kubeShouldBeUpdatedOnCMP[K reconciler.ResourceObject, A any](k K, _ A) bool {
+// KubeShouldBeUpdatedOnCMP checks: not deleting, Phase=Updating, Reason=ShallSynchronize.
+func KubeShouldBeUpdatedOnCMP[K ResourceObject, A any](k K, _ A) bool {
 	return kubeHasPhaseAndReason(k, false, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize)
 }
 
-// kubeWaitingUpdateOnCMP checks: not deleting, Phase=Updating, Reason=Synchronizing.
-func kubeWaitingUpdateOnCMP[K reconciler.ResourceObject, A any](k K, _ A) bool {
+// KubeWaitingUpdateOnCMP checks: not deleting, Phase=Updating, Reason=Synchronizing.
+func KubeWaitingUpdateOnCMP[K ResourceObject, A any](k K, _ A) bool {
 	return kubeHasPhaseAndReason(k, false, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonSynchronizing)
 }
 
-// kubeUpdateAccomplished checks: not deleting, Phase=Updating, Reason=Synchronized.
-func kubeUpdateAccomplished[K reconciler.ResourceObject, A any](k K, _ A) bool {
+// KubeUpdateAccomplished checks: not deleting, Phase=Updating, Reason=Synchronized.
+func KubeUpdateAccomplished[K ResourceObject, A any](k K, _ A) bool {
 	return kubeHasPhaseAndReason(k, false, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonSynchronized)
 }
 
-// kubeActiveAndGenerationChanged checks: not deleting, Phase=Active, ResourceID set,
+// KubeActiveAndGenerationChanged checks: not deleting, Phase=Active, ResourceID set,
 // ObservedGeneration != Generation, Active condition is True+Synchronized.
-func kubeActiveAndGenerationChanged[K reconciler.ResourceObject, A any](k K, _ A) bool {
+func KubeActiveAndGenerationChanged[K ResourceObject, A any](k K, _ A) bool {
 	rs := k.GetResourceStatus()
 	if rs == nil {
 		return false

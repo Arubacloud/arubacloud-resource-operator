@@ -41,7 +41,7 @@ const (
 // SubnetReconciler reconciles a Subnet object
 type SubnetReconciler struct {
 	*reconciler.Reconciler
-	ts *TransitionSet[*v1alpha1.Subnet, *arubatypes.SubnetResponse]
+	ts *reconciler.TransitionSet[*v1alpha1.Subnet, *arubatypes.SubnetResponse]
 }
 
 // NewSubnetReconciler creates a new SubnetReconciler
@@ -254,225 +254,225 @@ func (r *SubnetReconciler) HandleReconcile(ctx context.Context, obj reconciler.R
 
 // Transition Set Builder
 
-func (r *SubnetReconciler) newTransitionSet() *TransitionSet[*v1alpha1.Subnet, *arubatypes.SubnetResponse] {
-	ts := &TransitionSet[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
-		defaultRequeue:        NoRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		defaultRequeueOnError: NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+func (r *SubnetReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alpha1.Subnet, *arubatypes.SubnetResponse] {
+	ts := &reconciler.TransitionSet[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+		DefaultRequeue: reconciler.NoRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		DefaultRequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
 	}
 
 	// 0. PhaseTimedOut — safety net: fail if stuck in a transitory phase too long
-	ts.Add(&AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
-		name:           "PhaseTimedOut",
-		kCondition:     kubePhaseTimedOut[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		aCondition:     AlwaysTrue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		kAction:        r.kubeSetFailedOnTimeout,
-		requeue:        NoRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+		Name: "PhaseTimedOut",
+		KCondition: reconciler.KubePhaseTimedOut[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		ACondition: reconciler.AlwaysTrue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		KAction: r.kubeSetFailedOnTimeout,
+		Requeue: reconciler.NoRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
 	})
 
 	// 1. ShouldBeDeleted
-	ts.Add(&AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
-		name:           "ShouldBeDeleted",
-		kCondition:     kubeShouldDelete[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		aCondition:     cmpSubnetIsFinal,
-		kAction:        r.kubeMarkToDelete,
-		requeue:        ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+		Name: "ShouldBeDeleted",
+		KCondition: reconciler.KubeShouldDelete[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		ACondition: cmpSubnetIsFinal,
+		KAction: r.kubeMarkToDelete,
+		Requeue: reconciler.ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
 	})
 
 	// 2. ShouldDeleteTimedOut — enter deletion flow for timed-out resources (except those that timed out during Deleting)
-	ts.Add(&AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
-		name:           "ShouldDeleteTimedOut",
-		kCondition:     kubeShouldDeleteTimedOut[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		aCondition:     AlwaysTrue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		kAction:        r.kubeMarkToDelete,
-		requeue:        ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+		Name: "ShouldDeleteTimedOut",
+		KCondition: reconciler.KubeShouldDeleteTimedOut[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		ACondition: reconciler.AlwaysTrue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		KAction: r.kubeMarkToDelete,
+		Requeue: reconciler.ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
 	})
 
 	// 3. ShouldBeDeletedOnCMP
-	ts.Add(&AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
-		name:              "ShouldBeDeletedOnCMP",
-		kCondition:        kubeShouldBeDeletedOnCMP[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		aCondition:        cmpSubnetIsFinal,
-		aAction:           r.cmpDelete,
-		kActionOnASuccess: r.kubeMarkDeleting,
-		kActionOnAError:   kubeSetErrorMessageOnCMPError[*v1alpha1.Subnet, *arubatypes.SubnetResponse](r.Client),
-		requeue:           ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		requeueOnError:    SmartRequeueOnError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+		Name: "ShouldBeDeletedOnCMP",
+		KCondition: reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		ACondition: cmpSubnetIsFinal,
+		AAction: r.cmpDelete,
+		KActionOnASuccess: r.kubeMarkDeleting,
+		KActionOnAError: reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.Subnet, *arubatypes.SubnetResponse](r.Client),
+		Requeue: reconciler.ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		RequeueOnError: reconciler.SmartRequeueOnError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
 	})
 
 	// 4. DeletionOnCMPNotNeeded — resource marked for deletion but CMP resource doesn't exist; skip CMP delete
-	ts.Add(&AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
-		name:           "DeletionOnCMPNotNeeded",
-		kCondition:     kubeShouldBeDeletedOnCMP[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		aCondition:     cmpSubnetNotExists,
-		kAction:        r.kubeMarkDeletingDone,
-		requeue:        ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+		Name: "DeletionOnCMPNotNeeded",
+		KCondition: reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		ACondition: cmpSubnetNotExists,
+		KAction: r.kubeMarkDeletingDone,
+		Requeue: reconciler.ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
 	})
 
 	// 5. WaitingDeletionOnCMP
-	ts.Add(&AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
-		name:           "WaitingDeletionOnCMP",
-		kCondition:     kubeWaitingDeletionOnCMP[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		aCondition:     cmpSubnetIsTransitory,
-		requeue:        LongRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+		Name: "WaitingDeletionOnCMP",
+		KCondition: reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		ACondition: cmpSubnetIsTransitory,
+		Requeue: reconciler.LongRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
 	})
 
 	// 6. DeletionConfirmedOnCMP
-	ts.Add(&AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
-		name:           "DeletionConfirmedOnCMP",
-		kCondition:     kubeWaitingDeletionOnCMP[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		aCondition:     cmpSubnetNotExists,
-		kAction:        r.kubeMarkDeletingDone,
-		requeue:        ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+		Name: "DeletionConfirmedOnCMP",
+		KCondition: reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		ACondition: cmpSubnetNotExists,
+		KAction: r.kubeMarkDeletingDone,
+		Requeue: reconciler.ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
 	})
 
 	// 7. DeletionAccomplished
-	ts.Add(&AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
-		name:           "DeletionAccomplished",
-		kCondition:     kubeDeletionAccomplished[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		aCondition:     cmpSubnetNotExists,
-		kAction:        r.kubeMarkDeleted,
-		requeue:        ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+		Name: "DeletionAccomplished",
+		KCondition: reconciler.KubeDeletionAccomplished[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		ACondition: cmpSubnetNotExists,
+		KAction: r.kubeMarkDeleted,
+		Requeue: reconciler.ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
 	})
 
 	// 8. HasDeniedChanges — surface immutable field violations before attempting update
-	ts.Add(&AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
-		name:       "HasDeniedChanges",
-		kCondition: kubeSubnetHasDeniedChanges,
-		aCondition: cmpSubnetIsFinal,
-		kAction: func(ctx context.Context, kubeSubnet *v1alpha1.Subnet, cmpSubnet *arubatypes.SubnetResponse) error {
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+		Name: "HasDeniedChanges",
+		KCondition: kubeSubnetHasDeniedChanges,
+		ACondition: cmpSubnetIsFinal,
+		KAction: func(ctx context.Context, kubeSubnet *v1alpha1.Subnet, cmpSubnet *arubatypes.SubnetResponse) error {
 			return fmt.Errorf("subnet update rejected: %w", checkSubnetDeniedChanges(kubeSubnet, cmpSubnet))
 		},
-		requeue:        NoRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		requeueOnError: LongRequeueAndIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		Requeue: reconciler.NoRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		RequeueOnError: reconciler.LongRequeueAndIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
 	})
 
 	// 9. SpecAlreadyInSyncWithCMP — generation changed but spec identical to CMP; just re-stamp ObservedGeneration
-	ts.Add(&AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
-		name:           "SpecAlreadyInSyncWithCMP",
-		kCondition:     kubeSubnetSpecInSyncWithCMP,
-		aCondition:     cmpSubnetIsActive,
-		kAction:        r.kubeSetActiveAndSetID,
-		requeue:        NoRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+		Name: "SpecAlreadyInSyncWithCMP",
+		KCondition: kubeSubnetSpecInSyncWithCMP,
+		ACondition: cmpSubnetIsActive,
+		KAction: r.kubeSetActiveAndSetID,
+		Requeue: reconciler.NoRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
 	})
 
 	// 10. ShouldBeUpdated — spec changed and CMP is ready
-	ts.Add(&AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
-		name:           "ShouldBeUpdated",
-		kCondition:     kubeSubnetShouldUpdate,
-		aCondition:     cmpSubnetIsFinal,
-		kAction:        r.kubeMarkToUpdate,
-		requeue:        ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+		Name: "ShouldBeUpdated",
+		KCondition: kubeSubnetShouldUpdate,
+		ACondition: cmpSubnetIsFinal,
+		KAction: r.kubeMarkToUpdate,
+		Requeue: reconciler.ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
 	})
 
 	// 11. ShouldBeUpdatedOnCMP — send update to CMP
-	ts.Add(&AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
-		name:              "ShouldBeUpdatedOnCMP",
-		kCondition:        kubeShouldBeUpdatedOnCMP[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		aCondition:        cmpSubnetIsFinal,
-		aAction:           r.cmpUpdate,
-		kActionOnASuccess: r.kubeMarkUpdating,
-		kActionOnAError:   kubeSetErrorMessageOnCMPError[*v1alpha1.Subnet, *arubatypes.SubnetResponse](r.Client),
-		requeue:           ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		requeueOnError:    SmartRequeueOnError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+		Name: "ShouldBeUpdatedOnCMP",
+		KCondition: reconciler.KubeShouldBeUpdatedOnCMP[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		ACondition: cmpSubnetIsFinal,
+		AAction: r.cmpUpdate,
+		KActionOnASuccess: r.kubeMarkUpdating,
+		KActionOnAError: reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.Subnet, *arubatypes.SubnetResponse](r.Client),
+		Requeue: reconciler.ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		RequeueOnError: reconciler.SmartRequeueOnError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
 	})
 
 	// 12. WaitingUpdateOnCMP — CMP is still processing the update
-	ts.Add(&AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
-		name:           "WaitingUpdateOnCMP",
-		kCondition:     kubeWaitingUpdateOnCMP[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		aCondition:     cmpSubnetIsTransitory,
-		requeue:        LongRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+		Name: "WaitingUpdateOnCMP",
+		KCondition: reconciler.KubeWaitingUpdateOnCMP[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		ACondition: cmpSubnetIsTransitory,
+		Requeue: reconciler.LongRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
 	})
 
 	// 13. UpdateConfirmedOnCMP — CMP has settled; advance to Synchronized
-	ts.Add(&AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
-		name:           "UpdateConfirmedOnCMP",
-		kCondition:     kubeWaitingUpdateOnCMP[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		aCondition:     cmpSubnetIsFinal,
-		kAction:        r.kubeMarkUpdatingDone,
-		requeue:        ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+		Name: "UpdateConfirmedOnCMP",
+		KCondition: reconciler.KubeWaitingUpdateOnCMP[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		ACondition: cmpSubnetIsFinal,
+		KAction: r.kubeMarkUpdatingDone,
+		Requeue: reconciler.ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
 	})
 
 	// 14. UpdateAccomplished — transition back to Active and stamp generation
-	ts.Add(&AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
-		name:           "UpdateAccomplished",
-		kCondition:     kubeUpdateAccomplished[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		aCondition:     cmpSubnetIsActive,
-		kAction:        r.kubeSetActiveAndSetID,
-		requeue:        NoRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+		Name: "UpdateAccomplished",
+		KCondition: reconciler.KubeUpdateAccomplished[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		ACondition: cmpSubnetIsActive,
+		KAction: r.kubeSetActiveAndSetID,
+		Requeue: reconciler.NoRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
 	})
 
 	// 15. ShouldBeCreated
-	ts.Add(&AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
-		name:           "ShouldBeCreated",
-		kCondition:     kubeIsFirstReconciliation[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		aCondition:     cmpSubnetNotExists,
-		kAction:        r.kubeMarkToCreate,
-		requeue:        ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+		Name: "ShouldBeCreated",
+		KCondition: reconciler.KubeIsFirstReconciliation[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		ACondition: cmpSubnetNotExists,
+		KAction: r.kubeMarkToCreate,
+		Requeue: reconciler.ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
 	})
 
 	// 16. ShouldBeCreatedInCMP
-	ts.Add(&AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
-		name:              "ShouldBeCreatedInCMP",
-		kCondition:        kubeShouldBeCreatedOnCMP[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		aCondition:        cmpSubnetNotExists,
-		aAction:           r.cmpCreate,
-		kActionOnASuccess: r.kubeMarkCreating,
-		kActionOnAError:   kubeSetErrorMessageOnCMPError[*v1alpha1.Subnet, *arubatypes.SubnetResponse](r.Client),
-		requeue:           ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		requeueOnError:    SmartRequeueOnError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+		Name: "ShouldBeCreatedInCMP",
+		KCondition: reconciler.KubeShouldBeCreatedOnCMP[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		ACondition: cmpSubnetNotExists,
+		AAction: r.cmpCreate,
+		KActionOnASuccess: r.kubeMarkCreating,
+		KActionOnAError: reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.Subnet, *arubatypes.SubnetResponse](r.Client),
+		Requeue: reconciler.ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		RequeueOnError: reconciler.SmartRequeueOnError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
 	})
 
 	// 17. WaitingCreationInCMP
-	ts.Add(&AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
-		name:           "WaitingCreationInCMP",
-		kCondition:     kubeWaitingCreationInCMP[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		aCondition:     cmpSubnetNotExistsOrTransitory,
-		requeue:        LongRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+		Name: "WaitingCreationInCMP",
+		KCondition: reconciler.KubeWaitingCreationInCMP[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		ACondition: cmpSubnetNotExistsOrTransitory,
+		Requeue: reconciler.LongRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
 	})
 
 	// 18. CreationConfirmedOnCMP
-	ts.Add(&AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
-		name:           "CreationConfirmedOnCMP",
-		kCondition:     kubeWaitingCreationInCMP[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		aCondition:     cmpSubnetIsActive,
-		kAction:        r.kubeMarkCreatingDone,
-		requeue:        ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+		Name: "CreationConfirmedOnCMP",
+		KCondition: reconciler.KubeWaitingCreationInCMP[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		ACondition: cmpSubnetIsActive,
+		KAction: r.kubeMarkCreatingDone,
+		Requeue: reconciler.ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
 	})
 
 	// 19. CreationAccomplished
-	ts.Add(&AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
-		name:           "CreationAccomplished",
-		kCondition:     kubeIsCreatedOnCMP[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		aCondition:     cmpSubnetIsActive,
-		kAction:        r.kubeSetActiveAndSetID,
-		requeue:        NoRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+		Name: "CreationAccomplished",
+		KCondition: reconciler.KubeIsCreatedOnCMP[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		ACondition: cmpSubnetIsActive,
+		KAction: r.kubeSetActiveAndSetID,
+		Requeue: reconciler.NoRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
 	})
 
 	// 20. IsInError
-	ts.Add(&AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
-		name:           "IsInError",
-		kCondition:     AlwaysTrue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		aCondition:     cmpSubnetIsFailed,
-		kAction:        r.kubeSetFailed,
-		requeue:        NoRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		requeueOnError: NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+		Name: "IsInError",
+		KCondition: reconciler.AlwaysTrue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		ACondition: cmpSubnetIsFailed,
+		KAction: r.kubeSetFailed,
+		Requeue: reconciler.NoRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
 	})
 
 	return ts
@@ -491,13 +491,13 @@ func kubeSubnetHasDeniedChanges(kubeSubnet *v1alpha1.Subnet, cmpSubnet *arubatyp
 }
 
 func kubeSubnetSpecInSyncWithCMP(kubeSubnet *v1alpha1.Subnet, cmpSubnet *arubatypes.SubnetResponse) bool {
-	return kubeActiveAndGenerationChanged(kubeSubnet, cmpSubnet) &&
+	return reconciler.KubeActiveAndGenerationChanged(kubeSubnet, cmpSubnet) &&
 		checkSubnetDeniedChanges(kubeSubnet, cmpSubnet) == nil &&
 		!kubeSubnetNeedsUpdate(kubeSubnet, cmpSubnet)
 }
 
 func kubeSubnetShouldUpdate(kubeSubnet *v1alpha1.Subnet, cmpSubnet *arubatypes.SubnetResponse) bool {
-	return kubeActiveAndGenerationChanged(kubeSubnet, cmpSubnet) &&
+	return reconciler.KubeActiveAndGenerationChanged(kubeSubnet, cmpSubnet) &&
 		checkSubnetDeniedChanges(kubeSubnet, cmpSubnet) == nil &&
 		kubeSubnetNeedsUpdate(kubeSubnet, cmpSubnet)
 }
@@ -510,14 +510,14 @@ func cmpSubnetIsFinal(_ *v1alpha1.Subnet, cmpSubnet *arubatypes.SubnetResponse) 
 	if cmpSubnet == nil || cmpSubnet.Status.State == nil {
 		return false
 	}
-	return AssessCSPResourceStateNature(&cmpSubnet.Status) == CSPResourceStateNatureFinal
+	return reconciler.AssessCSPResourceStateNature(&cmpSubnet.Status) == reconciler.CSPResourceStateNatureFinal
 }
 
 func cmpSubnetIsTransitory(_ *v1alpha1.Subnet, cmpSubnet *arubatypes.SubnetResponse) bool {
 	if cmpSubnet == nil || cmpSubnet.Status.State == nil {
 		return false
 	}
-	return AssessCSPResourceStateNature(&cmpSubnet.Status) == CSPResourceStateNatureTransitory
+	return reconciler.AssessCSPResourceStateNature(&cmpSubnet.Status) == reconciler.CSPResourceStateNatureTransitory
 }
 
 func cmpSubnetNotExistsOrTransitory(_ *v1alpha1.Subnet, cmpSubnet *arubatypes.SubnetResponse) bool {
@@ -527,22 +527,22 @@ func cmpSubnetNotExistsOrTransitory(_ *v1alpha1.Subnet, cmpSubnet *arubatypes.Su
 	if cmpSubnet.Status.State == nil {
 		return false
 	}
-	return AssessCSPResourceStateNature(&cmpSubnet.Status) == CSPResourceStateNatureTransitory
+	return reconciler.AssessCSPResourceStateNature(&cmpSubnet.Status) == reconciler.CSPResourceStateNatureTransitory
 }
 
 func cmpSubnetIsActive(_ *v1alpha1.Subnet, cmpSubnet *arubatypes.SubnetResponse) bool {
 	return cmpSubnet != nil && cmpSubnet.Status.State != nil &&
-		*cmpSubnet.Status.State == CSPResourceStateActive
+		*cmpSubnet.Status.State == reconciler.CSPResourceStateActive
 }
 
 func cmpSubnetIsFailed(_ *v1alpha1.Subnet, cmpSubnet *arubatypes.SubnetResponse) bool {
-	return cmpSubnet != nil && cmpSubnet.Status.State != nil && *cmpSubnet.Status.State == CSPResourceStateFailed
+	return cmpSubnet != nil && cmpSubnet.Status.State != nil && *cmpSubnet.Status.State == reconciler.CSPResourceStateFailed
 }
 
 // Kube action methods
 
 func (r *SubnetReconciler) kubeSetPhaseAndCondition(ctx context.Context, kubeSubnet *v1alpha1.Subnet, phase v1alpha1.ResourcePhase, reason string, _ error) error {
-	return setPhaseAndCondition(r.Client, ctx, kubeSubnet, phase, reason, nil, func(subnet *v1alpha1.Subnet) {
+	return reconciler.SetPhaseAndCondition(r.Client, ctx, kubeSubnet, phase, reason, nil, func(subnet *v1alpha1.Subnet) {
 		if prjID, ok := ctx.Value(projectIDKey).(string); ok && subnet.Status.ProjectID == "" {
 			subnet.Status.ProjectID = prjID
 		}
@@ -597,7 +597,7 @@ func (r *SubnetReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeSubnet
 	if cmpSubnet != nil && cmpSubnet.Metadata.ID != nil {
 		cmpID = *cmpSubnet.Metadata.ID
 	}
-	return setActiveAndSetID(r.Client, ctx, kubeSubnet, cmpID, nil, func(subnet *v1alpha1.Subnet) {
+	return reconciler.SetActiveAndSetID(r.Client, ctx, kubeSubnet, cmpID, nil, func(subnet *v1alpha1.Subnet) {
 		if prjID, ok := ctx.Value(projectIDKey).(string); ok && subnet.Status.ProjectID != "" {
 			subnet.Status.ProjectID = prjID
 		}
@@ -608,7 +608,7 @@ func (r *SubnetReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeSubnet
 }
 
 func (r *SubnetReconciler) kubeSetFailedOnTimeout(ctx context.Context, kubeSubnet *v1alpha1.Subnet, _ *arubatypes.SubnetResponse) error {
-	return setFailedOnTimeout(r.Client, ctx, kubeSubnet, func(subnet *v1alpha1.Subnet) {
+	return reconciler.SetFailedOnTimeout(r.Client, ctx, kubeSubnet, func(subnet *v1alpha1.Subnet) {
 		if prjID, ok := ctx.Value(projectIDKey).(string); ok && subnet.Status.ProjectID == "" {
 			subnet.Status.ProjectID = prjID
 		}
@@ -631,9 +631,9 @@ func (r *SubnetReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.Subnet, cm
 
 	cmpSubnetResp, err := arubaClient.FromNetwork().Subnets().Delete(ctx, prjID, vID, *cmpSubnet.Metadata.ID, nil)
 	if err != nil {
-		return cmpTransportError("delete", *cmpSubnet.Metadata.Name, err)
+		return reconciler.CMPTransportError("delete", *cmpSubnet.Metadata.Name, err)
 	}
-	return cmpCheckResponse("delete", *cmpSubnet.Metadata.Name, cmpSubnetResp,
+	return reconciler.CMPCheckResponse("delete", *cmpSubnet.Metadata.Name, cmpSubnetResp,
 		http.StatusOK, http.StatusAccepted, http.StatusNoContent, http.StatusNotFound)
 }
 
@@ -651,9 +651,9 @@ func (r *SubnetReconciler) cmpUpdate(ctx context.Context, kubeSubnet *v1alpha1.S
 
 	cmpSubnetResp, err := arubaClient.FromNetwork().Subnets().Update(ctx, prjID, vID, *cmpSubnet.Metadata.ID, *request, nil)
 	if err != nil {
-		return cmpTransportError("update", kubeSubnet.Name, err)
+		return reconciler.CMPTransportError("update", kubeSubnet.Name, err)
 	}
-	return cmpCheckResponse("update", kubeSubnet.Name, cmpSubnetResp,
+	return reconciler.CMPCheckResponse("update", kubeSubnet.Name, cmpSubnetResp,
 		http.StatusOK, http.StatusAccepted, http.StatusNoContent)
 }
 
@@ -664,9 +664,9 @@ func (r *SubnetReconciler) cmpCreate(ctx context.Context, kubeSubnet *v1alpha1.S
 
 	cmpSubnetResp, err := arubaClient.FromNetwork().Subnets().Create(ctx, prjID, vID, *cmpSubnetRequestFromKube(kubeSubnet), nil)
 	if err != nil {
-		return cmpTransportError("create", kubeSubnet.Name, err)
+		return reconciler.CMPTransportError("create", kubeSubnet.Name, err)
 	}
-	return cmpCheckResponse("create", kubeSubnet.Name, cmpSubnetResp,
+	return reconciler.CMPCheckResponse("create", kubeSubnet.Name, cmpSubnetResp,
 		http.StatusOK, http.StatusCreated, http.StatusAccepted)
 }
 
@@ -682,15 +682,15 @@ func checkSubnetDeniedChanges(kubeSubnet *v1alpha1.Subnet, cmpSubnet *arubatypes
 		locationValue = cmpSubnet.Metadata.LocationResponse.Value
 	}
 	if kubeSubnet.Spec.Region != locationValue {
-		return fmt.Errorf("%w: %w", ErrNotAllowedChanges, errors.New("change the 'location' is not allowed"))
+		return fmt.Errorf("%w: %w", reconciler.ErrNotAllowedChanges, errors.New("change the 'location' is not allowed"))
 	}
 
 	if cmpSubnet.Properties.Network != nil && kubeSubnet.Spec.CIDR != cmpSubnet.Properties.Network.Address {
-		return fmt.Errorf("%w: %w", ErrNotAllowedChanges, errors.New("change the 'network.address' is not allowed"))
+		return fmt.Errorf("%w: %w", reconciler.ErrNotAllowedChanges, errors.New("change the 'network.address' is not allowed"))
 	}
 
 	if string(cmpSubnet.Properties.Type) != "" && kubeSubnet.Spec.Type != string(cmpSubnet.Properties.Type) {
-		return fmt.Errorf("%w: %w", ErrNotAllowedChanges, errors.New("change the 'type' is not allowed"))
+		return fmt.Errorf("%w: %w", reconciler.ErrNotAllowedChanges, errors.New("change the 'type' is not allowed"))
 	}
 
 	return nil
@@ -700,7 +700,7 @@ func kubeSubnetNeedsUpdate(kubeSubnet *v1alpha1.Subnet, cmpSubnet *arubatypes.Su
 	if cmpSubnet == nil {
 		return false
 	}
-	if !tagsAreEqual(kubeSubnet.Spec.Tags, cmpSubnet.Metadata.Tags) {
+	if !reconciler.TagsAreEqual(kubeSubnet.Spec.Tags, cmpSubnet.Metadata.Tags) {
 		return true
 	}
 	if cmpSubnet.Properties.DHCP != nil && kubeSubnet.Spec.DHCP.Enabled != cmpSubnet.Properties.DHCP.Enabled {

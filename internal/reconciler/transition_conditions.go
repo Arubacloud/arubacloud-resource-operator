@@ -205,6 +205,75 @@ func KubeUpdateAccomplished[K ResourceObject, A any](k K, _ A) bool {
 	return kubeHasPhaseAndReason(k, false, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonSynchronized)
 }
 
+// IsResourceReady reports whether obj is Active+Synchronized and not being deleted.
+// It is used by child controllers to gate reconciliation until all K8s dependencies
+// have reached a stable state.
+func IsResourceReady(obj ResourceObject) bool {
+	return kubeHasPhaseAndReason(obj, false, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized)
+}
+
+// IsValidationFailed reports whether obj is in Failed+ValidationFailed — the state
+// set when the CMP API returns a semantic error (4xx with field-level validation
+// details). Used by IsCMPValidationFailedAndSpecChanged to gate recovery.
+func IsValidationFailed(obj ResourceObject) bool {
+	return kubeHasPhaseAndReason(obj, false, v1alpha1.ResourcePhaseFailed, v1alpha1.ConditionReasonValidationFailed)
+}
+
+// IsIntentionValidationFailed reports whether obj is in Failed+IntentionValidationFailed
+// — the state set when the K8s-only intention validator (ivs) detects a cross-resource
+// inconsistency (e.g. region/zone/tenant mismatch). Recovery fires when ivs passes on
+// a subsequent reconcile.
+func IsIntentionValidationFailed(obj ResourceObject) bool {
+	return kubeHasPhaseAndReason(obj, false, v1alpha1.ResourcePhaseFailed, v1alpha1.ConditionReasonIntentionValidationFailed)
+}
+
+// IsPostValidationFailed reports whether obj is in Failed+PostValidationFailed — the
+// state set when the CMP-aware post-validator (vs) detects a cross-resource
+// inconsistency. Recovery fires when vs passes on a subsequent reconcile.
+func IsPostValidationFailed(obj ResourceObject) bool {
+	return kubeHasPhaseAndReason(obj, false, v1alpha1.ResourcePhaseFailed, v1alpha1.ConditionReasonPostValidationFailed)
+}
+
+// IsCMPValidationFailedAndSpecChanged reports whether obj is in Failed+ValidationFailed
+// (a CMP semantic error) AND the spec has been modified since the failure was recorded.
+// This is the recovery gate for CMP semantic errors: recovery only fires when the user
+// has corrected the spec (generation incremented), preventing pointless retries.
+func IsCMPValidationFailedAndSpecChanged(obj ResourceObject) bool {
+	if !IsValidationFailed(obj) {
+		return false
+	}
+	rs := obj.GetResourceStatus()
+	cond := meta.FindStatusCondition(rs.Conditions, string(v1alpha1.ResourcePhaseFailed))
+	if cond == nil {
+		return false
+	}
+	return cond.ObservedGeneration != obj.GetGeneration()
+}
+
+// IsAnyValidationFailedAndDeleting reports whether the resource has a deletion
+// timestamp and is stuck in any *ValidationFailed state. Used by controllers to
+// unblock deletion: resources are reset to a deletable phase so that KubeShouldDelete
+// or KubePendingAndDeleting can match on the next reconcile.
+func IsAnyValidationFailedAndDeleting(obj ResourceObject) bool {
+	rs := obj.GetResourceStatus()
+	if rs == nil || rs.Phase != v1alpha1.ResourcePhaseFailed || obj.GetDeletionTimestamp().IsZero() {
+		return false
+	}
+	cond := meta.FindStatusCondition(rs.Conditions, string(v1alpha1.ResourcePhaseFailed))
+	if cond == nil || cond.Status != metav1.ConditionTrue {
+		return false
+	}
+	return cond.Reason == v1alpha1.ConditionReasonValidationFailed ||
+		cond.Reason == v1alpha1.ConditionReasonIntentionValidationFailed ||
+		cond.Reason == v1alpha1.ConditionReasonPostValidationFailed
+}
+
+// KubeAnyValidationFailedAndDeleting wraps IsAnyValidationFailedAndDeleting as a
+// ConditionFunc so it can be used directly in an AbstractTransition.
+func KubeAnyValidationFailedAndDeleting[K ResourceObject, A any](k K, _ A) bool {
+	return IsAnyValidationFailedAndDeleting(k)
+}
+
 // KubeActiveAndGenerationChanged checks: not deleting, Phase=Active, ResourceID set,
 // ObservedGeneration != Generation, Active condition is True+Synchronized.
 func KubeActiveAndGenerationChanged[K ResourceObject, A any](k K, _ A) bool {

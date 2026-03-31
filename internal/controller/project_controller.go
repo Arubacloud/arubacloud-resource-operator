@@ -34,47 +34,27 @@ import (
 	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
 )
 
-// kubeProjectHasOwnedChildren returns true when any Kubernetes resource directly owned
-// by the project still exists. Used by the WaitingChildrenDeletion transition to prevent
-// CMP deletion before all child CMP resources have been cleaned up.
-func (r *ProjectReconciler) kubeProjectHasOwnedChildren(k *v1alpha1.Project, _ *arubatypes.ProjectResponse) bool {
-	labelKey, _ := ownerLabelKey(r.Scheme, k)
-	has, err := hasOwnedChildren(context.Background(), r.Client, k, labelKey,
-		&v1alpha1.VPCList{},
-		&v1alpha1.BlockStorageList{},
-		&v1alpha1.KeyPairList{},
-		&v1alpha1.ElasticIPList{},
-		&v1alpha1.CloudServerList{},
-	)
-	if err != nil {
-		ctrl.Log.Error(err, "checking owned children for project", "project", k.GetName())
-		return true // conservative: assume children exist on error
-	}
-	return has
-}
-
-// kubeProjectDeleteOwnedChildren deletes all K8s children of the project that have not
-// yet received a deletionTimestamp. Called by the WaitingChildrenDeletion action.
-func (r *ProjectReconciler) kubeProjectDeleteOwnedChildren(ctx context.Context, k *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
-	labelKey, _ := ownerLabelKey(r.Scheme, k)
-	return deleteOwnedChildren(ctx, r.Client, k, labelKey,
-		&v1alpha1.VPCList{},
-		&v1alpha1.BlockStorageList{},
-		&v1alpha1.KeyPairList{},
-		&v1alpha1.ElasticIPList{},
-		&v1alpha1.CloudServerList{},
-	)
-}
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
 
 const (
 	projectFinalizerName = "project.arubacloud.com/finalizer"
 )
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 
 // ProjectReconciler reconciles a Project object
 type ProjectReconciler struct {
 	*reconciler.Reconciler
 	ts *reconciler.TransitionSet[*v1alpha1.Project, *arubatypes.ProjectResponse]
 }
+
+// ---------------------------------------------------------------------------
+// Constructor
+// ---------------------------------------------------------------------------
 
 // NewProjectReconciler creates a new ProjectReconciler
 func NewProjectReconciler(baseReconciler *reconciler.Reconciler) *ProjectReconciler {
@@ -86,6 +66,10 @@ func NewProjectReconciler(baseReconciler *reconciler.Reconciler) *ProjectReconci
 
 	return r
 }
+
+// ---------------------------------------------------------------------------
+// Interface methods
+// ---------------------------------------------------------------------------
 
 // +kubebuilder:rbac:groups=arubacloud.com,resources=blockstorages,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=arubacloud.com,resources=blockstorages/status,verbs=get;update;patch
@@ -109,6 +93,10 @@ func (r *ProjectReconciler) Object() reconciler.ResourceObject {
 func (r *ProjectReconciler) Finalizer() string {
 	return projectFinalizerName
 }
+
+// ---------------------------------------------------------------------------
+// HandleReconcile
+// ---------------------------------------------------------------------------
 
 func (r *ProjectReconciler) HandleReconcile(ctx context.Context, obj reconciler.ResourceObject) (ctrl.Result, error) {
 	kubeProject, ok := obj.(*v1alpha1.Project)
@@ -150,10 +138,27 @@ func (r *ProjectReconciler) HandleReconcile(ctx context.Context, obj reconciler.
 	ctx = context.WithValue(ctx, reconciler.ArubaClientKey, arubaClient)
 	ctx = log.IntoContext(ctx, logger)
 
+	// CMP validation recovery (generation-gated): reset the phase so the normal
+	// create/update flow can retry once the user has corrected the spec.
+	// Project has no ivs/vs, so only CMP semantic errors can reach ValidationFailed.
+	if reconciler.IsCMPValidationFailedAndSpecChanged(kubeProject) {
+		resetPhase := v1alpha1.ResourcePhasePending
+		if kubeProject.Status.ResourceID != "" {
+			resetPhase = v1alpha1.ResourcePhaseActive
+		}
+		if setErr := reconciler.SetPhaseAndCondition(r.Client, ctx, kubeProject,
+			resetPhase, v1alpha1.ConditionReasonSynchronized, nil); setErr != nil {
+			return ctrl.Result{}, setErr
+		}
+		return ctrl.Result{RequeueAfter: reconciler.ShortRequeueAfter}, nil
+	}
+
 	return r.ts.Run(ctx, kubeProject, cmpProject)
 }
 
-// Transition Set Builder
+// ---------------------------------------------------------------------------
+// newTransitionSet
+// ---------------------------------------------------------------------------
 
 func (r *ProjectReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alpha1.Project, *arubatypes.ProjectResponse] {
 	ts := &reconciler.TransitionSet[*v1alpha1.Project, *arubatypes.ProjectResponse]{
@@ -171,7 +176,17 @@ func (r *ProjectReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alph
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
 	})
 
-	// 0b. PendingAndDeleting — resource deleted while still in Pending; skip CMP entirely
+	// 1. ValidationFailedAndDeleting — unblock deletion for resources stuck in any *ValidationFailed state
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+		Name:           "ValidationFailedAndDeleting",
+		KCondition:     reconciler.KubeAnyValidationFailedAndDeleting[*v1alpha1.Project, *arubatypes.ProjectResponse],
+		ACondition:     reconciler.AlwaysTrue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+		KAction:        reconciler.KubeResetValidationFailedForDeletion[*v1alpha1.Project, *arubatypes.ProjectResponse](r.Client),
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+		RequeueOnError: reconciler.NoRequeueAndPropagateError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+	})
+
+	// 2. PendingAndDeleting — resource deleted while still in Pending; skip CMP entirely
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
 		Name:       "PendingAndDeleting",
 		KCondition: reconciler.KubePendingAndDeleting[*v1alpha1.Project, *arubatypes.ProjectResponse],
@@ -180,7 +195,7 @@ func (r *ProjectReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alph
 		Requeue:    reconciler.NoRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
 	})
 
-	// 1. ShouldBeDeleted — DeletionTimestamp set + active → mark Deleting+ShallSynchronize
+	// 3. ShouldBeDeleted — DeletionTimestamp set + active → mark Deleting+ShallSynchronize
 	ts.Add(
 		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
 			Name:           "ShouldBeDeleted",
@@ -192,7 +207,7 @@ func (r *ProjectReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alph
 		},
 	)
 
-	// 2. ShouldDeleteTimedOut — enter deletion flow for timed-out resources (except those that timed out during Deleting)
+	// 4. ShouldDeleteTimedOut — enter deletion flow for timed-out resources (except those that timed out during Deleting)
 	ts.Add(
 		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
 			Name:           "ShouldDeleteTimedOut",
@@ -204,7 +219,7 @@ func (r *ProjectReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alph
 		},
 	)
 
-	// 3. WaitingChildrenDeletion — block CMP delete until all owned K8s children are gone.
+	// 5. WaitingChildrenDeletion — block CMP delete until all owned K8s children are gone.
 	// The kAction explicitly deletes children because the K8s GC only cascades after the
 	// owner is fully removed from etcd (impossible while the project finalizer is present).
 	ts.Add(
@@ -220,7 +235,7 @@ func (r *ProjectReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alph
 		},
 	)
 
-	// 4. ShouldBeDeletedOnCMP — marked Deleting+ShallSynchronize + CMP exists → dispatch delete
+	// 6. ShouldBeDeletedOnCMP — marked Deleting+ShallSynchronize + CMP exists → dispatch delete
 	ts.Add(
 		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
 			Name:              "ShouldBeDeletedOnCMP",
@@ -234,7 +249,7 @@ func (r *ProjectReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alph
 		},
 	)
 
-	// 5. DeletionOnCMPNotNeeded — resource marked for deletion but CMP resource doesn't exist; skip CMP delete
+	// 7. DeletionOnCMPNotNeeded — resource marked for deletion but CMP resource doesn't exist; skip CMP delete
 	ts.Add(
 		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
 			Name:           "DeletionOnCMPNotNeeded",
@@ -246,7 +261,7 @@ func (r *ProjectReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alph
 		},
 	)
 
-	// 6. WaitingDeletionOnCMP — marked Deleting+Synchronizing + CMP still exists → poll
+	// 8. WaitingDeletionOnCMP — marked Deleting+Synchronizing + CMP still exists → poll
 	ts.Add(
 		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
 			Name:           "WaitingDeletionOnCMP",
@@ -257,7 +272,7 @@ func (r *ProjectReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alph
 		},
 	)
 
-	// 7. DeletionConfirmedOnCMP — marked Deleting+Synchronizing + CMP gone → advance to Synchronized
+	// 9. DeletionConfirmedOnCMP — marked Deleting+Synchronizing + CMP gone → advance to Synchronized
 	ts.Add(
 		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
 			Name:           "DeletionConfirmedOnCMP",
@@ -269,7 +284,7 @@ func (r *ProjectReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alph
 		},
 	)
 
-	// 8. DeletionAccomplished — marked Deleting+Synchronized + CMP gone → mark Deleted
+	// 10. DeletionAccomplished — marked Deleting+Synchronized + CMP gone → mark Deleted
 	ts.Add(
 		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
 			Name:           "DeletionAccomplished",
@@ -281,7 +296,7 @@ func (r *ProjectReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alph
 		},
 	)
 
-	// 9. SpecAlreadyInSyncWithCMP — generation changed but spec identical to CMP; just re-stamp ObservedGeneration
+	// 11. SpecAlreadyInSyncWithCMP — generation changed but spec identical to CMP; just re-stamp ObservedGeneration
 	ts.Add(
 		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
 			Name:           "SpecAlreadyInSyncWithCMP",
@@ -293,7 +308,7 @@ func (r *ProjectReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alph
 		},
 	)
 
-	// 10. ShouldBeUpdated — spec changed and CMP is ready
+	// 12. ShouldBeUpdated — spec changed and CMP is ready
 	ts.Add(
 		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
 			Name:           "ShouldBeUpdated",
@@ -305,7 +320,7 @@ func (r *ProjectReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alph
 		},
 	)
 
-	// 11. ShouldBeUpdatedOnCMP — send update to CMP
+	// 13. ShouldBeUpdatedOnCMP — send update to CMP
 	ts.Add(
 		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
 			Name:              "ShouldBeUpdatedOnCMP",
@@ -319,7 +334,7 @@ func (r *ProjectReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alph
 		},
 	)
 
-	// 12. WaitingUpdateOnCMP — CMP is still processing the update
+	// 14. WaitingUpdateOnCMP — CMP is still processing the update
 	ts.Add(
 		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
 			Name:           "WaitingUpdateOnCMP",
@@ -330,7 +345,7 @@ func (r *ProjectReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alph
 		},
 	)
 
-	// 13. UpdateConfirmedOnCMP — CMP has settled; advance to Synchronized
+	// 15. UpdateConfirmedOnCMP — CMP has settled; advance to Synchronized
 	ts.Add(
 		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
 			Name:           "UpdateConfirmedOnCMP",
@@ -342,7 +357,7 @@ func (r *ProjectReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alph
 		},
 	)
 
-	// 14. UpdateAccomplished — transition back to Active and stamp generation
+	// 16. UpdateAccomplished — transition back to Active and stamp generation
 	ts.Add(
 		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
 			Name:           "UpdateAccomplished",
@@ -354,7 +369,7 @@ func (r *ProjectReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alph
 		},
 	)
 
-	// 15. ShouldBeCreated — first reconciliation + CMP not found → mark Creating+ShallSynchronize
+	// 17. ShouldBeCreated — first reconciliation + CMP not found → mark Creating+ShallSynchronize
 	ts.Add(
 		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
 			Name:           "ShouldBeCreated",
@@ -366,7 +381,7 @@ func (r *ProjectReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alph
 		},
 	)
 
-	// 16. ShouldBeCreatedInCMP — Creating+ShallSynchronize + CMP not found → dispatch create
+	// 18. ShouldBeCreatedInCMP — Creating+ShallSynchronize + CMP not found → dispatch create
 	ts.Add(
 		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
 			Name:              "ShouldBeCreatedInCMP",
@@ -380,7 +395,7 @@ func (r *ProjectReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alph
 		},
 	)
 
-	// 17. WaitingCreationInCMP — Creating+Synchronizing + CMP not found yet → poll
+	// 19. WaitingCreationInCMP — Creating+Synchronizing + CMP not found yet → poll
 	ts.Add(
 		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
 			Name:           "WaitingCreationInCMP",
@@ -391,7 +406,7 @@ func (r *ProjectReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alph
 		},
 	)
 
-	// 18. CreationConfirmedOnCMP — Creating+Synchronizing + CMP found → mark Creating+Synchronized
+	// 20. CreationConfirmedOnCMP — Creating+Synchronizing + CMP found → mark Creating+Synchronized
 	ts.Add(
 		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
 			Name:           "CreationConfirmedOnCMP",
@@ -403,7 +418,7 @@ func (r *ProjectReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alph
 		},
 	)
 
-	// 19. CreationAccomplished — Creating+Synchronized + CMP found → set Active + store ResourceID
+	// 21. CreationAccomplished — Creating+Synchronized + CMP found → set Active + store ResourceID
 	ts.Add(
 		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
 			Name:           "CreationAccomplished",
@@ -418,7 +433,53 @@ func (r *ProjectReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alph
 	return ts
 }
 
-// Resource-specific condition functions
+// ---------------------------------------------------------------------------
+// Owned-children helpers
+// ---------------------------------------------------------------------------
+
+// kubeProjectHasOwnedChildren returns true when any Kubernetes resource directly owned
+// by the project still exists. Used by the WaitingChildrenDeletion transition to prevent
+// CMP deletion before all child CMP resources have been cleaned up.
+func (r *ProjectReconciler) kubeProjectHasOwnedChildren(k *v1alpha1.Project, _ *arubatypes.ProjectResponse) bool {
+	labelKey, _ := ownerLabelKey(r.Scheme, k)
+	has, err := hasOwnedChildren(context.Background(), r.Client, k, labelKey,
+		&v1alpha1.VPCList{},
+		&v1alpha1.BlockStorageList{},
+		&v1alpha1.KeyPairList{},
+		&v1alpha1.ElasticIPList{},
+		&v1alpha1.CloudServerList{},
+	)
+	if err != nil {
+		ctrl.Log.Error(err, "checking owned children for project", "project", k.GetName())
+		return true // conservative: assume children exist on error
+	}
+	return has
+}
+
+// kubeProjectDeleteOwnedChildren deletes all K8s children of the project that have not
+// yet received a deletionTimestamp. Called by the WaitingChildrenDeletion action.
+func (r *ProjectReconciler) kubeProjectDeleteOwnedChildren(ctx context.Context, k *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
+	labelKey, _ := ownerLabelKey(r.Scheme, k)
+	return deleteOwnedChildren(ctx, r.Client, k, labelKey,
+		&v1alpha1.VPCList{},
+		&v1alpha1.BlockStorageList{},
+		&v1alpha1.KeyPairList{},
+		&v1alpha1.ElasticIPList{},
+		&v1alpha1.CloudServerList{},
+	)
+}
+
+// ---------------------------------------------------------------------------
+// Condition functions
+// ---------------------------------------------------------------------------
+
+func cmpProjectExists(_ *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) bool {
+	return cmpProj != nil
+}
+
+func cmpProjectNotExists(_ *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) bool {
+	return cmpProj == nil
+}
 
 func kubeProjectSpecInSyncWithCMP(kubeProj *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) bool {
 	return reconciler.KubeActiveAndGenerationChanged(kubeProj, cmpProj) &&
@@ -440,15 +501,9 @@ func kubeProjectUpdateConfirmedOnCMP(kubeProj *v1alpha1.Project, cmpProj *arubat
 		!kubeProjectNeedsUpdate(kubeProj, cmpProj)
 }
 
-func cmpProjectExists(_ *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) bool {
-	return cmpProj != nil
-}
-
-func cmpProjectNotExists(_ *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) bool {
-	return cmpProj == nil
-}
-
-// Kube action methods
+// ---------------------------------------------------------------------------
+// Kube status writers
+// ---------------------------------------------------------------------------
 
 func (r *ProjectReconciler) kubeSetPhaseAndCondition(ctx context.Context, kubeProj *v1alpha1.Project, phase v1alpha1.ResourcePhase, reason string, _ error) error {
 	return reconciler.SetPhaseAndCondition(r.Client, ctx, kubeProj, phase, reason, nil)
@@ -506,7 +561,9 @@ func (r *ProjectReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeProj 
 	return reconciler.SetActiveAndSetID(r.Client, ctx, kubeProj, cmpID, nil)
 }
 
-// CMP action methods
+// ---------------------------------------------------------------------------
+// CMP actions
+// ---------------------------------------------------------------------------
 
 func (r *ProjectReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) error {
 	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
@@ -545,7 +602,9 @@ func (r *ProjectReconciler) cmpCreate(ctx context.Context, kubeProj *v1alpha1.Pr
 	return reconciler.CMPCheckResponse("create", kubeProj.Name, cmpProjResp, http.StatusOK, http.StatusCreated)
 }
 
-// Helper functions
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 func kubeProjectNeedsUpdate(kubeProj *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) bool {
 	if cmpProj == nil {
@@ -594,6 +653,10 @@ func cmpProjectRequestFromCMP(cmpProj *arubatypes.ProjectResponse) *arubatypes.P
 		},
 	}
 }
+
+// ---------------------------------------------------------------------------
+// SetupWithManager
+// ---------------------------------------------------------------------------
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ProjectReconciler) SetupWithManager(mgr ctrl.Manager) error {

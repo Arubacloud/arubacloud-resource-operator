@@ -61,6 +61,20 @@ const (
 	// ConditionReasonFailed indicates that the resource has exceeded the maximum
 	// allowed time in a transitory phase and has been moved to Failed.
 	ConditionReasonFailed = "Failed"
+	// ConditionReasonValidationFailed indicates that the CMP API rejected the request
+	// with field-level validation errors (4xx with non-empty Errors array). Terminal
+	// until the user corrects the spec and a new reconcile cycle is triggered.
+	ConditionReasonValidationFailed = "ValidationFailed"
+	// ConditionReasonIntentionValidationFailed indicates that the resource has a
+	// cross-resource consistency violation detected by the K8s-only intention validator
+	// (ivs), e.g. region, zone, or tenant mismatch with a linked resource. Terminal
+	// until the inconsistency is resolved and a new reconcile cycle is triggered.
+	ConditionReasonIntentionValidationFailed = "IntentionValidationFailed"
+	// ConditionReasonPostValidationFailed indicates that the resource has a
+	// cross-resource consistency violation detected by the CMP-aware post-validator
+	// (vs), e.g. a mismatch between the K8s spec and the actual CMP resource state.
+	// Terminal until the inconsistency is resolved and a new reconcile cycle is triggered.
+	ConditionReasonPostValidationFailed = "PostValidationFailed"
 )
 
 // ArubaOwnerReference contains the information needed to identify an owning object

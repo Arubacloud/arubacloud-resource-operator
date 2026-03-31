@@ -21,7 +21,6 @@ import (
 )
 
 // VPCSpec defines the desired state of VPC.
-// +kubebuilder:validation:XValidation:rule="self.tenant == oldSelf.tenant",message="tenant is immutable"
 type VPCSpec struct {
 	// Tenant is the owning account/tenant of this VPC
 	Tenant string `json:"tenant,omitempty"`

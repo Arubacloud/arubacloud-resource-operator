@@ -721,16 +721,75 @@ var _ = Describe("VPCReconciler", func() {
 		)
 	})
 
-	Describe("Tenant immutability", func() {
-		It("rejects a tenant change on an existing resource", func() {
-			vpc = createTestVpc(ctx, "test-vpc-immutable-tenant", defaultVPCSpec(vpcProjectName))
+	Describe("Validation", func() {
+		It("sets Failed+ValidationFailed when VPC tenant differs from parent project tenant", func() {
+			m := newVPCReconcilerWithMocks(GinkgoT())
 
-			vFetch := &v1alpha1.VPC{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(vpc), vFetch)).To(Succeed())
-			vFetch.Spec.Tenant = "other-tenant"
-			err := k8sClient.Update(ctx, vFetch)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("tenant is immutable"))
+			// Create a K8s Project whose Tenant differs from the VPC's Tenant.
+			proj := createTestProject(ctx, vpcProjectName, v1alpha1.ProjectSpec{Tenant: "other-tenant"})
+			defer func() {
+				_ = k8sClient.Delete(ctx, proj)
+			}()
+
+			vpc = createTestVpc(ctx, "test-vpc-validation-tenant", defaultVPCSpec(vpcProjectName))
+			setVPCStatus(ctx, vpc, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "vpc-id-val", vpcProjectID, 0, time.Now())
+
+			// First reconcile: owner reference is not yet set, ensureOwnerReference will
+			// patch the VPC and return (requeue=true) — no CMP calls happen here.
+			result, err := m.r.HandleReconcile(ctx, vpc)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
+
+			// Re-fetch so the local copy reflects the owner-reference patch.
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(vpc), vpc)).To(Succeed())
+
+			// Second reconcile: ivs fires at Stage 4 (before CMP calls) → validation fails.
+			_, err = m.r.HandleReconcile(ctx, vpc)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.VPC{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(vpc), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
+			Expect(cond.Message).To(ContainSubstring("tenant mismatch with Project"))
+		})
+
+		It("sets Failed+ValidationFailed at Pending phase when VPC tenant differs from parent project tenant (no CMP resource yet)", func() {
+			m := newVPCReconcilerWithMocks(GinkgoT())
+
+			// Project has a different tenant AND is Active+Synchronized so Stage 1.1 passes.
+			proj := createTestProject(ctx, vpcProjectName, v1alpha1.ProjectSpec{Tenant: "other-tenant"})
+			setProjectStatus(ctx, proj, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "proj-id-pending-val", 0, time.Now())
+			defer func() {
+				_ = k8sClient.Delete(ctx, proj)
+			}()
+
+			vpc = createTestVpc(ctx, "test-vpc-pending-validation", defaultVPCSpec(vpcProjectName))
+			setVPCStatus(ctx, vpc, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", 0, time.Now())
+
+			// First reconcile: owner reference is not yet set → ShortRequeue.
+			result, err := m.r.HandleReconcile(ctx, vpc)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
+
+			// Re-fetch so the local copy reflects the owner-reference patch.
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(vpc), vpc)).To(Succeed())
+
+			// Second reconcile: ivs fires at Stage 4 (before CMP calls) → Failed+ValidationFailed.
+			result, err = m.r.HandleReconcile(ctx, vpc)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			updated := &v1alpha1.VPC{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(vpc), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
+			Expect(cond.Message).To(ContainSubstring("tenant mismatch with Project"))
 		})
 	})
+
 })

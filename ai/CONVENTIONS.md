@@ -25,19 +25,23 @@ import (
 
 ### CMP (Aruba API) errors
 
-All errors from CMP interactions use the `CMPError` struct (`internal/controller/cmp_error.go`). Never use plain `fmt.Errorf` in CMP action methods.
+All errors from CMP interactions use the `CMPError` struct (`internal/reconciler/cmp_error.go`). Never use plain `fmt.Errorf` in CMP action methods.
 
-**Two error categories:**
-- `CMPErrorCategorySemantic` — HTTP 4xx responses; may be user/config mistakes or transient dependency blockages (e.g. deleting a project with remaining resources). The error message is surfaced in the condition but the phase/reason is never changed to `Failed` (only timeouts cause `Failed`).
-- `CMPErrorCategoryTechnical` — HTTP 5xx responses and network/transport errors; transient infrastructure failures that warrant a short retry.
+**Three error categories:**
+- `CMPErrorCategorySemantic` — HTTP 4xx responses with a non-empty `Errors` array in the `ErrorResponse` (field-level validation failures). These are permanent — the resource spec is invalid and must be corrected. During `Creating` or `Updating` phase, `KubeSetErrorMessageOnCMPError` immediately moves the resource to `Failed+ValidationFailed`. The formatted validation details are appended to the `Detail` field.
+- `CMPErrorCategoryTransient` — HTTP 4xx responses with an empty `Errors` array (no field-level validation details). These represent temporary conditions (e.g. a dependency resource in a wrong state). The error message is surfaced in the condition but the phase/reason is not changed; the resource retries with `LongRequeueAfter`.
+- `CMPErrorCategoryTechnical` — HTTP 5xx responses and network/transport errors; transient infrastructure failures that warrant a `ShortRequeueAfter` retry.
 
 **Constructors:**
 ```go
 // For Go-level transport failures (network, timeout, context cancel)
 cmpTransportError("create", resourceName, err) // always Technical
 
-// For non-success HTTP responses
-cmpResponseError("delete", resourceName, statusCode, resp.Error) // 4xx→Semantic, 5xx→Technical
+// For non-success HTTP responses:
+//   4xx + non-empty Errors → Semantic
+//   4xx + empty Errors     → Transient
+//   5xx / other            → Technical
+cmpResponseError("delete", resourceName, statusCode, resp.Error)
 ```
 
 **Generic response checker** — canonical replacement for the status-code switch in CMP action methods:
@@ -56,7 +60,8 @@ func (r *XxxReconciler) cmpCreate(ctx context.Context, kubeXxx *v1alpha1.Xxx, _ 
 var cmpErr *CMPError
 if errors.As(err, &cmpErr) { /* inspect cmpErr.Category, cmpErr.StatusCode, etc. */ }
 
-CMPErrorIsSemantic(err)  // true for 4xx CMPErrors
+CMPErrorIsSemantic(err)  // true for 4xx CMPErrors with validation errors
+CMPErrorIsTransient(err) // true for 4xx CMPErrors without validation errors
 CMPErrorIsTechnical(err) // true for 5xx/transport CMPErrors
 ```
 
@@ -65,6 +70,8 @@ CMPErrorIsTechnical(err) // true for 5xx/transport CMPErrors
 kActionOnAError: kubeSetErrorMessageOnCMPError[*v1alpha1.Xxx, *arubatypes.XxxResponse](r.Client),
 requeueOnError:  SmartRequeueOnError[*v1alpha1.Xxx, *arubatypes.XxxResponse],
 ```
+
+`SmartRequeueOnError[K, A]` — uses `ShortRequeueAfter` for technical errors, `LongRequeueAfter` for transient errors, and `ctrl.Result{}` (no requeue) for semantic errors — the resource waits for a spec change to trigger recovery. Exception: during the `Deleting` phase, semantic errors always get `LongRequeueAfter` (there is no "wait for spec change" recovery during deletion).
 
 ### General error handling
 
@@ -314,4 +321,342 @@ type projectOpt func(*v1alpha1.Project)
 func withPhase(p v1alpha1.ResourcePhase) projectOpt { ... }
 func newTestProject(opts ...projectOpt) *v1alpha1.Project { ... }
 ```
+
+## Cross-resource consistency validation
+
+### ValidationSet pattern
+
+Every controller that references other resources declares two `ValidationSet` fields and builds them via dedicated methods. The bundle type is split into `kube*Bundle` (K8s-only, used by `ivs`) and `cmp*Bundle` (CMP-only), composed together as `*Bundle` for `vs`:
+
+```go
+type XxxReconciler struct {
+    *reconciler.Reconciler
+    ivs *reconciler.ValidationSet[*v1alpha1.Xxx, *arubatypes.XxxResponse, *kubeXxxBundle]
+    vs  *reconciler.ValidationSet[*v1alpha1.Xxx, *arubatypes.XxxResponse, *xxxBundle]
+    ts  *reconciler.TransitionSet[*v1alpha1.Xxx, *arubatypes.XxxResponse]
+}
+
+type kubeXxxBundle struct {
+    KubeParent *v1alpha1.ParentType // from fetchKubeDependencies
+}
+
+type cmpXxxBundle struct {
+    CMPParent *arubatypes.ParentResponse // from fetchCMPDependencies
+}
+
+type xxxBundle struct {
+    kubeXxxBundle
+    cmpXxxBundle
+}
+
+func NewXxxReconciler(...) *XxxReconciler {
+    r := &XxxReconciler{...}
+    r.ivs = r.newIntentionValidationSet()
+    r.vs = r.newValidationSet()
+    r.ts = r.newTransitionSet()
+    return r
+}
+```
+
+### Cross-validation rule patterns
+
+`ivs` and `vs` use different patterns by design:
+
+**`ivs` rules always use inline lambdas** (Patterns 2 and 3 below). Bundle fields are nil-guarded because the K8s dependency object may not be present yet when the empty-bundle fallback is used.
+
+**`vs` rules use `FieldMustMatch` when the bundle dependency is guaranteed non-nil** (Pattern 1). When the dependency may be nil at Stage 7 (e.g., `KubeProject` in Subnet/SecurityGroup/SecurityRule), use a nil-guarded inline lambda instead.
+
+**1. `FieldMustMatch` — simple pair comparison (vs only, dependency guaranteed non-nil):**
+```go
+// vs (xxxBundle, dependency guaranteed present at Stage 7):
+vs.Add("TenantMustMatchVPC", reconciler.FieldMustMatch[*v1alpha1.Subnet, *arubatypes.SubnetResponse, *subnetBundle](
+    "tenant",
+    func(k *v1alpha1.Subnet) string { return k.Spec.Tenant },
+    func(b *subnetBundle) string { return b.KubeVpc.Spec.Tenant },
+    "VPC",
+))
+```
+
+**2. Inline lambda with nil-guard — all ivs rules that access bundle fields; vs rules where dependency may be nil:**
+```go
+// ivs: nil-guard because KubeProject may be absent when empty-bundle fallback is used
+ivs.Add("TenantMustMatchProject", func(k *v1alpha1.Subnet, _ *arubatypes.SubnetResponse, b *kubeSubnetBundle) error {
+    if b.KubeProject == nil {
+        return nil
+    }
+    if k.Spec.Tenant != "" && b.KubeProject.Spec.Tenant != "" && k.Spec.Tenant != b.KubeProject.Spec.Tenant {
+        return fmt.Errorf("tenant mismatch with Project: %q != %q", k.Spec.Tenant, b.KubeProject.Spec.Tenant)
+    }
+    return nil
+})
+```
+All reference-presence rules (`ProjectReferenceRequired`, etc.) access only `k`, never the bundle — no nil-guard needed.
+
+**3. Inline lambda with slice iteration — collection dependencies (both ivs and vs):**
+```go
+ivs.Add("ProjectMustMatchAllSubnets", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, b *kubeCloudServerBundle) error {
+    var msgs []string
+    for _, s := range b.KubeSubnets {
+        if k.Spec.ProjectReference.Name != s.Spec.ProjectReference.Name {
+            msgs = append(msgs, fmt.Sprintf("Subnet %q: %q != %q", s.Name, k.Spec.ProjectReference.Name, s.Spec.ProjectReference.Name))
+        }
+    }
+    if len(msgs) > 0 {
+        return fmt.Errorf("project reference mismatch: %s", strings.Join(msgs, "; "))
+    }
+    return nil
+})
+```
+Use for `[]ResourceReference` fields (SubnetReferences, SecurityGroupReferences). The vs versions use the full `*xxxBundle` type parameter but are otherwise identical in logic.
+
+### Calling the engine in HandleReconcile
+
+`ivs` runs at Stage 4 (K8s-only, before CMP calls). `vs` runs at Stage 7 (after CMP calls). They are in separate stages with separate conditions:
+
+```go
+// Stage 4: Intention cross-validation (K8s-only, before CMP calls).
+if !isDeleting {
+    bdl := kubeBdl
+    if bdl == nil {
+        bdl = &kubeXxxBundle{} // empty — all fields nil; reference rules still fire
+    }
+    if validationErr := r.ivs.Run(kubeXxx, nil, bdl); validationErr != nil {
+        setErr := reconciler.SetPhaseAndCondition(r.Client, ctx, kubeXxx,
+            v1alpha1.ResourcePhaseFailed, v1alpha1.ConditionReasonIntentionValidationFailed, validationErr,
+        )
+        if setErr != nil {
+            return ctrl.Result{}, setErr
+        }
+        return ctrl.Result{}, nil // no requeue — wait for spec change
+    }
+    // Recovery: ivs now passes but resource is still IntentionValidationFailed → reset.
+    if reconciler.IsIntentionValidationFailed(kubeXxx) {
+        resetPhase := v1alpha1.ResourcePhasePending
+        if kubeXxx.Status.ResourceID != "" {
+            resetPhase = v1alpha1.ResourcePhaseActive
+        }
+        if setErr := reconciler.SetPhaseAndCondition(r.Client, ctx, kubeXxx,
+            resetPhase, v1alpha1.ConditionReasonSynchronized, nil); setErr != nil {
+            return ctrl.Result{}, setErr
+        }
+        return ctrl.Result{RequeueAfter: reconciler.ShortRequeueAfter}, nil
+    }
+    // Recovery: CMP semantic error — user has updated the spec since failure.
+    if reconciler.IsCMPValidationFailedAndSpecChanged(kubeXxx) {
+        resetPhase := v1alpha1.ResourcePhasePending
+        if kubeXxx.Status.ResourceID != "" {
+            resetPhase = v1alpha1.ResourcePhaseActive
+        }
+        if setErr := reconciler.SetPhaseAndCondition(r.Client, ctx, kubeXxx,
+            resetPhase, v1alpha1.ConditionReasonSynchronized, nil); setErr != nil {
+            return ctrl.Result{}, setErr
+        }
+        return ctrl.Result{RequeueAfter: reconciler.ShortRequeueAfter}, nil
+    }
+}
+
+// ... Stage 5: Create Aruba client. Stage 6: fetchCMPDependencies. ...
+
+// Stage 7: CMP-aware validation (vs only).
+if !isDeleting && kubeBdl != nil && cmpXxx != nil {
+    if validationErr := r.vs.Run(kubeXxx, cmpXxx, &xxxBundle{
+        kubeXxxBundle: *kubeBdl,
+        cmpXxxBundle:  cmpXxxBundle{CMPParent: cmpParent},
+    }); validationErr != nil {
+        setErr := reconciler.SetPhaseAndCondition(r.Client, ctx, kubeXxx,
+            v1alpha1.ResourcePhaseFailed, v1alpha1.ConditionReasonPostValidationFailed, validationErr,
+            func(x *v1alpha1.Xxx) {
+                if x.Status.ProjectID == "" {
+                    x.Status.ProjectID = prjID
+                }
+            },
+        )
+        if setErr != nil {
+            return ctrl.Result{}, setErr
+        }
+        return ctrl.Result{}, nil // no requeue — wait for spec change
+    }
+    // Recovery: vs now passes but resource is still PostValidationFailed → reset to Active.
+    if reconciler.IsPostValidationFailed(kubeXxx) {
+        if setErr := reconciler.SetPhaseAndCondition(r.Client, ctx, kubeXxx,
+            v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, nil); setErr != nil {
+            return ctrl.Result{}, setErr
+        }
+        return ctrl.Result{RequeueAfter: reconciler.ShortRequeueAfter}, nil
+    }
+}
+
+// Stage 8: Run transitions.
+return r.ts.Run(ctx, kubeXxx, cmpXxx)
+```
+
+**Recovery in Stage 7**: if `vs` now passes but the resource is still `PostValidationFailed`, the recovery block resets to `Active+Synchronized` (since `vs` only runs when `cmpXxx != nil`, meaning the resource already has a `ResourceID`). The `IntentionValidationFailed` recovery in Stage 4 fires earlier, so by the time Stage 7 runs on the next reconcile, any ivs-driven failure is already resolved.
+
+### fetchKubeDependencies pattern
+
+`fetchKubeDependencies` resolves K8s parent objects and sets the owner reference. It always returns `(*kubeXxxBundle, ctrl.Result, error)`:
+
+```go
+func (r *XxxReconciler) fetchKubeDependencies(
+    ctx context.Context,
+    kubeXxx *v1alpha1.Xxx,
+    isDeleting bool,
+) (*kubeXxxBundle, ctrl.Result, error) {
+    if isDeleting {
+        return nil, ctrl.Result{}, nil
+    }
+    kp := &v1alpha1.ParentType{}
+    if err := resolveOwnerObject(ctx, r.Client, kubeXxx.Spec.ParentReference, kubeXxx.Namespace, kp); err != nil {
+        if apierrors.IsNotFound(err) {
+            return nil, ctrl.Result{}, nil // non-fatal: parent not found yet
+        }
+        return nil, ctrl.Result{}, fmt.Errorf("resolving parent for owner reference: %w", err)
+    }
+    requeue, err := ensureOwnerReference(ctx, r.Client, r.Scheme, kp, kubeXxx)
+    if err != nil {
+        return nil, ctrl.Result{}, fmt.Errorf("setting owner reference: %w", err)
+    }
+    if requeue {
+        return nil, ctrl.Result{RequeueAfter: reconciler.ShortRequeueAfter}, nil
+    }
+    return &kubeXxxBundle{KubeParent: kp}, ctrl.Result{}, nil
+}
+```
+
+### Validation test pattern
+
+**ivs tests** (Stage 4 — fires before CMP calls) follow the **two-reconcile pattern**:
+1. **First reconcile** — `ensureOwnerReference` returns `(requeue=true, nil)` before any CMP calls → returns `ShortRequeueAfter`. No mock expectations needed.
+2. **Second reconcile** — owner reference is already set; ivs fires at Stage 4, before CMP. **No CMP mock expectations needed** — the reconcile returns before reaching Stage 6.
+
+```go
+It("sets Failed+ValidationFailed when tenant does not match", func() {
+    kubeParent := createTestParent(ctx, parentName, v1alpha1.ParentSpec{Tenant: "other-tenant", ...})
+    defer func() { _ = k8sClient.Delete(ctx, kubeParent) }()
+
+    m := newXxxReconcilerWithMocks(GinkgoT())
+    xxx = createTestXxx(ctx, "test-validation", defaultXxxSpec(parentName, ...))
+
+    // First: owner ref setup → requeue
+    result, err := m.r.HandleReconcile(ctx, xxx)
+    Expect(err).To(Succeed())
+    Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
+    Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(xxx), xxx)).To(Succeed())
+
+    // Second: ivs fires at Stage 4 — no CMP mocks needed
+    _, err = m.r.HandleReconcile(ctx, xxx)
+    Expect(err).To(Succeed())
+
+    updated := &v1alpha1.Xxx{}
+    Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(xxx), updated)).To(Succeed())
+    Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+    cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
+    Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonValidationFailed))
+    Expect(cond.Message).To(ContainSubstring("tenant mismatch with Parent"))
+})
+```
+
+**vs tests** (Stage 7 — fires after CMP calls) still require CMP mock expectations on the second reconcile, since Stage 6 (`fetchCMPDependencies`) runs before Stage 7.
+
+### Error message format
+
+Validation functions produce human-readable messages:
+- Tenant: `"tenant mismatch with <Kind>: \"actual\" != \"expected\""`
+- Region: `"region mismatch with <Kind>: \"actual\" != \"expected\""`
+- Zone: `"zone mismatch with <Kind>: \"actual\" != \"expected\""`
+- VPC reference: `"VPC reference mismatch with <Kind>: \"actual\" != \"expected\""`
+- Project reference: `"project reference mismatch with <Kind>: \"actual\" != \"expected\""`
+- Plural (CloudServer): `"region mismatch: Subnet[0]: \"a\" != \"b\"; Subnet[1]: ..."`
+- Plural project (CloudServer): `"project reference mismatch: Subnet \"name\": \"a\" != \"b\"; ..."`
+
+These messages are stored in the condition's `Message` field prefixed by `"ERROR: "` (added by `SetPhaseAndCondition`).
+
+---
+
+## Controller file layout
+
+Every controller file follows a canonical 14-section ordering. Sections that don't apply to a given controller are simply omitted.
+
+### Section order
+
+| # | Section | Contents |
+|---|---------|----------|
+| 1 | **Constants** | `const` block — finalizer name, context keys |
+| 2 | **Types** | `type` blocks — `kube*Bundle`, `cmp*Bundle`, `*Bundle` structs; `+kubebuilder` RBAC directives; `*Reconciler` struct |
+| 3 | **Constructor** | `New<Resource>Reconciler` |
+| 4 | **Interface methods** | `Reconcile`, `Object`, `Finalizer` (no RBAC directives) |
+| 5 | **HandleReconcile** | `HandleReconcile` |
+| 6 | **Major HandleReconcile helpers** | `fetchKubeDependencies`, `fetchCMPDependencies`, `newIntentionValidationSet` (if present), `newValidationSet`, `newTransitionSet` — in this exact order, under one banner |
+| 7 | **Owned-children helpers** | `kubeXxxHasOwnedChildren`, `kubeXxxDeleteOwnedChildren` (VPC, SecurityGroup only) |
+| 8 | **CMP resolve helpers** | CloudServer only: `resolveProjectID`, `resolveVpcID`, etc. |
+| 9 | **Kube conditions** | `kube*` condition functions (update-phase guards); omit section if none |
+| 10 | **CMP conditions** | `cmp*` condition functions (delete-phase guards) |
+| 11 | **Kube actions** | `kubeMarkTo*`, `kubeSetFailedOnTimeout`, `kubeMarkUpdatingFailed`, `kubeRollbackSpecAndSetActive` |
+| 12 | **CMP actions** | Always ordered: `cmpDelete` → `cmpUpdate` → `cmpCreate` |
+| 13 | **Other helpers** | `checkDenied`, `needsUpdate`, `buildUpdateRequest`, `fromCMP`, `fromKube`, URI builders, `applyNameFilter*` |
+| 14 | **Setup** | `SetupWithManager` |
+
+### Section separator comments
+
+Each section is preceded by a visible banner to make navigation easy:
+
+```go
+// ---------------------------------------------------------------------------
+// Section Name
+// ---------------------------------------------------------------------------
+```
+
+Use the section name exactly as listed in the table above (e.g. "Constructor", "Interface methods", "HandleReconcile", "Major HandleReconcile helpers", "CMP actions").
+
+### Bundle struct composition
+
+Every controller that references other resources uses a **two-part bundle composition**:
+
+```go
+// K8s-only fields — used by ivs (intention validation, runs before CMP resource exists)
+type kubeXxxBundle struct {
+    KubeParent *v1alpha1.ParentType
+    // ... other K8s dependency objects
+}
+
+// CMP-only fields — used by vs (drift validation, runs after CMP resource exists)
+type cmpXxxBundle struct {
+    CMPParent *arubatypes.ParentResponse
+    // ... other CMP dependency responses
+}
+
+// Full bundle — used by vs; embeds both sub-bundles
+type xxxBundle struct {
+    kubeXxxBundle
+    cmpXxxBundle
+}
+```
+
+- `ivs` type parameter is `*kubeXxxBundle` — never receives CMP data
+- `vs` type parameter is `*xxxBundle` — receives both K8s and CMP data via embedding
+- Fields within each bundle struct appear in the order they are fetched (K8s fetch order in `fetchKubeDependencies`, CMP fetch order in `fetchCMPDependencies`)
+
+**Simple controllers** (VPC, BlockStorage, ElasticIP, KeyPair) have no `cmpXxxBundle` — the `xxxBundle` embeds only `kubeXxxBundle` since these controllers have no CMP-only bundle fields. The split is still present: `kubeXxxBundle` is the ivs type parameter and `xxxBundle` is the vs type parameter.
+
+### Reconciler struct field ordering
+
+Fields in `*Reconciler` always appear in usage order: `ivs` (Stage 4), then `vs` (Stage 7), then `ts` (Stage 8). All controllers have all three fields.
+
+Constructor initializes in the same order: `r.ivs = r.newIntentionValidationSet()`, then `r.vs = r.newValidationSet()`, then `r.ts = r.newTransitionSet()`.
+
+### +kubebuilder RBAC directive placement
+
+`+kubebuilder:rbac:...` directives are placed in the **Types** section, directly above the `*Reconciler` struct definition (not in Interface methods). This keeps all type declarations together and allows kubebuilder's code generator to scan them in one location.
+
+### Mandatory HandleReconcile helpers
+
+Every `*Reconciler` must implement both:
+
+- **`fetchKubeDependencies(ctx, kubeObj, isDeleting)`** — fetches K8s parent objects, sets owner reference, returns `(*kubeXxxBundle, ctrl.Result, error)`. Skips all work when `isDeleting` is true.
+
+- **`fetchCMPDependencies(ctx, kubeObj, arubaClient, isDeleting)`** — resolves CMP parent IDs, fetches all CMP dependency responses, fetches the primary CMP resource, enriches context with ID values and `ArubaClientKey`. Returns the primary CMP resource, the CMP bundle, and `ctrl.Result`/`error`.
+
+### CMP action ordering rule
+
+Within **CMP actions** (section 12), always use the order `cmpDelete` → `cmpUpdate` → `cmpCreate`. This mirrors the lifecycle priority: deletion before update before creation.
 

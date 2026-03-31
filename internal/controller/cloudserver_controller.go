@@ -21,9 +21,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/Arubacloud/sdk-go/pkg/aruba"
@@ -32,6 +34,10 @@ import (
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
 	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
 )
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
 
 const (
 	cloudServerFinalizerName            = "cloudserver.arubacloud.com/finalizer"
@@ -42,19 +48,32 @@ const (
 	securityGroupIDsKey      contextKey = "securityGroupIDs"
 )
 
-// CloudServerReconciler reconciles a CloudServer object
-type CloudServerReconciler struct {
-	*reconciler.Reconciler
-	ts *reconciler.TransitionSet[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+type kubeCloudServerBundle struct {
+	KubeProject        *v1alpha1.Project
+	KubeVpc            *v1alpha1.VPC
+	KubeBootVolume     *v1alpha1.BlockStorage
+	KubeSubnets        []*v1alpha1.Subnet
+	KubeSecurityGroups []*v1alpha1.SecurityGroup
+	KubeKeyPair        *v1alpha1.KeyPair   // nil when not referenced
+	KubeElasticIP      *v1alpha1.ElasticIP // nil when not referenced
 }
 
-// NewCloudServerReconciler creates a new CloudServerReconciler
-func NewCloudServerReconciler(baseReconciler *reconciler.Reconciler) *CloudServerReconciler {
-	r := &CloudServerReconciler{
-		Reconciler: baseReconciler,
-	}
-	r.ts = r.newTransitionSet()
-	return r
+type cmpCloudServerBundle struct {
+	CMPVpc            *arubatypes.VPCResponse
+	CMPBootVolume     *arubatypes.BlockStorageResponse
+	CMPSubnets        []*arubatypes.SubnetResponse
+	CMPSecurityGroups []*arubatypes.SecurityGroupResponse
+	CMPKeyPair        *arubatypes.KeyPairResponse   // nil when no KeyPair referenced
+	CMPElasticIP      *arubatypes.ElasticIPResponse // nil when no ElasticIP referenced
+}
+
+type cloudServerBundle struct {
+	kubeCloudServerBundle
+	cmpCloudServerBundle
 }
 
 // +kubebuilder:rbac:groups=arubacloud.com,resources=cloudservers,verbs=get;list;watch;create;update;patch;delete
@@ -70,6 +89,33 @@ func NewCloudServerReconciler(baseReconciler *reconciler.Reconciler) *CloudServe
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 
+// CloudServerReconciler reconciles a CloudServer object
+type CloudServerReconciler struct {
+	*reconciler.Reconciler
+	ivs *reconciler.ValidationSet[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse, *kubeCloudServerBundle]
+	vs  *reconciler.ValidationSet[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse, *cloudServerBundle]
+	ts  *reconciler.TransitionSet[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]
+}
+
+// ---------------------------------------------------------------------------
+// Constructor
+// ---------------------------------------------------------------------------
+
+// NewCloudServerReconciler creates a new CloudServerReconciler
+func NewCloudServerReconciler(baseReconciler *reconciler.Reconciler) *CloudServerReconciler {
+	r := &CloudServerReconciler{
+		Reconciler: baseReconciler,
+	}
+	r.ivs = r.newIntentionValidationSet()
+	r.vs = r.newValidationSet()
+	r.ts = r.newTransitionSet()
+	return r
+}
+
+// ---------------------------------------------------------------------------
+// Interface methods
+// ---------------------------------------------------------------------------
+
 func (r *CloudServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	return r.Reconciler.Reconcile(ctx, req, r)
 }
@@ -82,8 +128,13 @@ func (r *CloudServerReconciler) Finalizer() string {
 	return cloudServerFinalizerName
 }
 
+// ---------------------------------------------------------------------------
+// HandleReconcile
+// ---------------------------------------------------------------------------
+
 //nolint:gocyclo // complexity is intentional to maintain locality of behavior
 func (r *CloudServerReconciler) HandleReconcile(ctx context.Context, obj reconciler.ResourceObject) (ctrl.Result, error) {
+	// Stage 1: Setup.
 	kubeCS, ok := obj.(*v1alpha1.CloudServer)
 	if !ok {
 		return ctrl.Result{}, errors.New("obj is not a *v1alpha1.CloudServer")
@@ -92,91 +143,238 @@ func (r *CloudServerReconciler) HandleReconcile(ctx context.Context, obj reconci
 	logger := log.FromContext(ctx).WithValues("tenant", kubeCS.Spec.Tenant)
 	logger.Info("reconciling CloudServer")
 
+	isDeleting := !kubeCS.GetDeletionTimestamp().IsZero()
+
+	// WORKAROUND: used to gate the dependency readiness checks in resolveBootVolumeID and resolveSubnetIDs.
+	// TODO: Remove once the CMP Infra Team fixes the root cause.
+	isCreating := !isDeleting && kubeCS.Status.ResourceID == ""
+
+	// Stage 2: Fetch K8s dependencies + set owner reference.
+	kubeBdl, result, err := r.fetchKubeDependencies(ctx, kubeCS, isDeleting)
+	if err != nil || result.RequeueAfter > 0 {
+		return result, err
+	}
+
+	// Stage 3: Wait for parent Project to be Active before first CMP creation.
+	if !isDeleting && kubeBdl.KubeProject != nil && kubeCS.Status.ResourceID == "" && !reconciler.IsResourceReady(kubeBdl.KubeProject) {
+		return ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
+	}
+
+	// Stage 4: Intention cross-validation (K8s-only, before CMP calls).
+	if !isDeleting {
+		if validationErr := r.ivs.Run(kubeCS, nil, kubeBdl); validationErr != nil {
+			setErr := reconciler.SetPhaseAndCondition(r.Client, ctx, kubeCS,
+				v1alpha1.ResourcePhaseFailed, v1alpha1.ConditionReasonIntentionValidationFailed, validationErr,
+			)
+			if setErr != nil {
+				return ctrl.Result{}, setErr
+			}
+			return ctrl.Result{}, nil
+		}
+		if reconciler.IsIntentionValidationFailed(kubeCS) {
+			resetPhase := v1alpha1.ResourcePhasePending
+			if kubeCS.Status.ResourceID != "" {
+				resetPhase = v1alpha1.ResourcePhaseActive
+			}
+			if setErr := reconciler.SetPhaseAndCondition(r.Client, ctx, kubeCS,
+				resetPhase, v1alpha1.ConditionReasonSynchronized, nil); setErr != nil {
+				return ctrl.Result{}, setErr
+			}
+			return ctrl.Result{RequeueAfter: reconciler.ShortRequeueAfter}, nil
+		}
+		if reconciler.IsCMPValidationFailedAndSpecChanged(kubeCS) {
+			resetPhase := v1alpha1.ResourcePhasePending
+			if kubeCS.Status.ResourceID != "" {
+				resetPhase = v1alpha1.ResourcePhaseActive
+			}
+			if setErr := reconciler.SetPhaseAndCondition(r.Client, ctx, kubeCS,
+				resetPhase, v1alpha1.ConditionReasonSynchronized, nil); setErr != nil {
+				return ctrl.Result{}, setErr
+			}
+			return ctrl.Result{RequeueAfter: reconciler.ShortRequeueAfter}, nil
+		}
+	}
+
+	// Stage 5: Create Aruba client.
 	arubaClient, err := r.ArubaClient(kubeCS.Spec.Tenant)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to get Aruba client: %w", err)
 	}
 
-	// Validate required references
-	if kubeCS.Spec.ProjectReference.Name == "" {
-		return ctrl.Result{}, fmt.Errorf("project reference is not valid")
-	}
-	if kubeCS.Spec.VPCReference.Name == "" {
-		return ctrl.Result{}, fmt.Errorf("vpc reference is not valid")
-	}
-	if kubeCS.Spec.BootVolumeReference.Name == "" {
-		return ctrl.Result{}, fmt.Errorf("boot volume reference is not valid")
-	}
-	if len(kubeCS.Spec.SubnetReferences) == 0 {
-		return ctrl.Result{}, fmt.Errorf("at least one subnet reference is required")
-	}
-	if len(kubeCS.Spec.SecurityGroupReferences) == 0 {
-		return ctrl.Result{}, fmt.Errorf("at least one security group reference is required")
+	// Stage 6: Resolve CMP dependencies.
+	cmpCS, cmpBdl, ctx, result, err := r.fetchCMPDependencies(ctx, kubeCS, arubaClient, isDeleting, isCreating)
+	if err != nil || result != (ctrl.Result{}) {
+		return result, err
 	}
 
-	if kubeCS.GetDeletionTimestamp().IsZero() {
-		kubeProject := &v1alpha1.Project{}
-		if err := resolveOwnerObject(ctx, r.Client, kubeCS.Spec.ProjectReference, kubeCS.Namespace, kubeProject); err != nil {
-			if !apierrors.IsNotFound(err) {
-				return ctrl.Result{}, fmt.Errorf("resolving parent project for owner reference: %w", err)
+	// Stage 7: CMP-aware validation (vs only).
+	if !isDeleting && cmpCS != nil && kubeBdl.KubeProject != nil {
+		if validationErr := r.vs.Run(kubeCS, cmpCS, &cloudServerBundle{
+			kubeCloudServerBundle: *kubeBdl,
+			cmpCloudServerBundle:  *cmpBdl,
+		}); validationErr != nil {
+			setErr := reconciler.SetPhaseAndCondition(r.Client, ctx, kubeCS,
+				v1alpha1.ResourcePhaseFailed, v1alpha1.ConditionReasonPostValidationFailed, validationErr,
+				func(cs *v1alpha1.CloudServer) {
+					if cs.Status.ProjectID == "" {
+						cs.Status.ProjectID = ctx.Value(projectIDKey).(string)
+					}
+				},
+			)
+			if setErr != nil {
+				return ctrl.Result{}, setErr
 			}
-			logger.V(1).Info("parent project not found for owner reference setup, skipping", "projectName", kubeCS.Spec.ProjectReference.Name)
-		} else {
-			requeue, err := ensureOwnerReference(ctx, r.Client, r.Scheme, kubeProject, kubeCS)
-			if err != nil {
-				return ctrl.Result{}, fmt.Errorf("setting owner reference on cloudserver: %w", err)
+			return ctrl.Result{}, nil
+		}
+		if reconciler.IsPostValidationFailed(kubeCS) {
+			if setErr := reconciler.SetPhaseAndCondition(r.Client, ctx, kubeCS,
+				v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, nil); setErr != nil {
+				return ctrl.Result{}, setErr
 			}
-			if requeue {
-				return ctrl.Result{RequeueAfter: reconciler.ShortRequeueAfter}, nil
-			}
+			return ctrl.Result{RequeueAfter: reconciler.ShortRequeueAfter}, nil
 		}
 	}
 
-	isDeleting := !kubeCS.GetDeletionTimestamp().IsZero()
-	// WORKAROUND: used to gate the dependency readiness checks in resolveBootVolumeID and resolveSubnetIDs.
-	// TODO: Remove once the CMP Infra Team fixes the root cause.
-	isCreating := !isDeleting && kubeCS.Status.ResourceID == ""
+	// Stage 8: Run transitions.
+	return r.ts.Run(ctx, kubeCS, cmpCS)
+}
 
+// ---------------------------------------------------------------------------
+// Major HandleReconcile helpers
+// ---------------------------------------------------------------------------
+
+//nolint:gocyclo // complexity is intentional to maintain locality of behavior
+func (r *CloudServerReconciler) fetchKubeDependencies(ctx context.Context, kubeCS *v1alpha1.CloudServer, isDeleting bool) (*kubeCloudServerBundle, ctrl.Result, error) {
+	if isDeleting {
+		return &kubeCloudServerBundle{}, ctrl.Result{}, nil
+	}
+	logger := log.FromContext(ctx)
+	kp := &v1alpha1.Project{}
+	if err := resolveOwnerObject(ctx, r.Client, kubeCS.Spec.ProjectReference, kubeCS.Namespace, kp); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return nil, ctrl.Result{}, fmt.Errorf("resolving parent project for owner reference: %w", err)
+		}
+		logger.V(1).Info("parent project not found for owner reference setup, skipping", "projectName", kubeCS.Spec.ProjectReference.Name)
+		return &kubeCloudServerBundle{}, ctrl.Result{}, nil
+	}
+	requeue, err := ensureOwnerReference(ctx, r.Client, r.Scheme, kp, kubeCS)
+	if err != nil {
+		return nil, ctrl.Result{}, fmt.Errorf("setting owner reference on cloudserver: %w", err)
+	}
+	if requeue {
+		return nil, ctrl.Result{RequeueAfter: reconciler.ShortRequeueAfter}, nil
+	}
+
+	bdl := &kubeCloudServerBundle{KubeProject: kp}
+
+	kv := &v1alpha1.VPC{}
+	if err := r.Get(ctx, client.ObjectKey{Name: kubeCS.Spec.VPCReference.Name, Namespace: kubeCS.Namespace}, kv); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return nil, ctrl.Result{}, fmt.Errorf("fetching k8s vpc %q for validation: %w", kubeCS.Spec.VPCReference.Name, err)
+		}
+	} else {
+		bdl.KubeVpc = kv
+	}
+	kbv := &v1alpha1.BlockStorage{}
+	if err := r.Get(ctx, client.ObjectKey{Name: kubeCS.Spec.BootVolumeReference.Name, Namespace: kubeCS.Namespace}, kbv); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return nil, ctrl.Result{}, fmt.Errorf("fetching k8s boot volume %q for validation: %w", kubeCS.Spec.BootVolumeReference.Name, err)
+		}
+	} else {
+		bdl.KubeBootVolume = kbv
+	}
+	if kubeCS.Spec.KeyPairReference.Name != "" {
+		kkp := &v1alpha1.KeyPair{}
+		if err := r.Get(ctx, client.ObjectKey{Name: kubeCS.Spec.KeyPairReference.Name, Namespace: kubeCS.Namespace}, kkp); err != nil {
+			if !apierrors.IsNotFound(err) {
+				return nil, ctrl.Result{}, fmt.Errorf("fetching k8s key pair %q for validation: %w", kubeCS.Spec.KeyPairReference.Name, err)
+			}
+		} else {
+			bdl.KubeKeyPair = kkp
+		}
+	}
+	if kubeCS.Spec.ElasticIPReference != nil && kubeCS.Spec.ElasticIPReference.Name != "" {
+		keip := &v1alpha1.ElasticIP{}
+		if err := r.Get(ctx, client.ObjectKey{Name: kubeCS.Spec.ElasticIPReference.Name, Namespace: kubeCS.Namespace}, keip); err != nil {
+			if !apierrors.IsNotFound(err) {
+				return nil, ctrl.Result{}, fmt.Errorf("fetching k8s elastic ip %q for validation: %w", kubeCS.Spec.ElasticIPReference.Name, err)
+			}
+		} else {
+			bdl.KubeElasticIP = keip
+		}
+	}
+	for _, ref := range kubeCS.Spec.SubnetReferences {
+		ks := &v1alpha1.Subnet{}
+		if err := r.Get(ctx, client.ObjectKey{Name: ref.Name, Namespace: kubeCS.Namespace}, ks); err != nil {
+			if !apierrors.IsNotFound(err) {
+				return nil, ctrl.Result{}, fmt.Errorf("fetching k8s subnet %q for validation: %w", ref.Name, err)
+			}
+		} else {
+			bdl.KubeSubnets = append(bdl.KubeSubnets, ks)
+		}
+	}
+	for _, ref := range kubeCS.Spec.SecurityGroupReferences {
+		ksg := &v1alpha1.SecurityGroup{}
+		if err := r.Get(ctx, client.ObjectKey{Name: ref.Name, Namespace: kubeCS.Namespace}, ksg); err != nil {
+			if !apierrors.IsNotFound(err) {
+				return nil, ctrl.Result{}, fmt.Errorf("fetching k8s security group %q for validation: %w", ref.Name, err)
+			}
+		} else {
+			bdl.KubeSecurityGroups = append(bdl.KubeSecurityGroups, ksg)
+		}
+	}
+
+	return bdl, ctrl.Result{}, nil
+}
+
+//nolint:gocyclo // complexity is intentional to maintain locality of behavior
+func (r *CloudServerReconciler) fetchCMPDependencies(
+	ctx context.Context,
+	kubeCS *v1alpha1.CloudServer,
+	arubaClient aruba.Client,
+	isDeleting bool,
+	isCreating bool,
+) (cmpCS *arubatypes.CloudServerResponse, cmpBdl *cmpCloudServerBundle, enrichedCtx context.Context, result ctrl.Result, err error) {
 	// --- Resolve Project ID ---
 	prjID, result, err := r.resolveProjectID(ctx, arubaClient, kubeCS, isDeleting)
 	if err != nil || result != (ctrl.Result{}) {
-		return result, err
+		return nil, nil, ctx, result, err
 	}
 
 	// --- Resolve VPC ID ---
-	vpcID, result, err := r.resolveVpcID(ctx, arubaClient, kubeCS, isDeleting, prjID)
+	vpcID, cmpVpc, result, err := r.resolveVpcID(ctx, arubaClient, kubeCS, isDeleting, prjID)
 	if err != nil || result != (ctrl.Result{}) {
-		return result, err
+		return nil, nil, ctx, result, err
 	}
 
 	// --- Resolve Boot Volume ID ---
-	bootVolumeID, result, err := r.resolveBootVolumeID(ctx, arubaClient, kubeCS, isDeleting, isCreating, prjID)
+	bootVolumeID, cmpBootVolume, result, err := r.resolveBootVolumeID(ctx, arubaClient, kubeCS, isDeleting, isCreating, prjID)
 	if err != nil || result != (ctrl.Result{}) {
-		return result, err
+		return nil, nil, ctx, result, err
 	}
 
 	// --- Resolve Subnet IDs ---
-	subnetIDs, result, err := r.resolveSubnetIDs(ctx, arubaClient, kubeCS, isDeleting, isCreating, prjID, vpcID)
+	subnetIDs, cmpSubnets, result, err := r.resolveSubnetIDs(ctx, arubaClient, kubeCS, isDeleting, isCreating, prjID, vpcID)
 	if err != nil || result != (ctrl.Result{}) {
-		return result, err
+		return nil, nil, ctx, result, err
 	}
 
 	// --- Resolve Security Group IDs ---
-	securityGroupIDs, result, err := r.resolveSecurityGroupIDs(ctx, arubaClient, kubeCS, isDeleting, prjID, vpcID)
+	securityGroupIDs, cmpSecurityGroups, result, err := r.resolveSecurityGroupIDs(ctx, arubaClient, kubeCS, isDeleting, prjID, vpcID)
 	if err != nil || result != (ctrl.Result{}) {
-		return result, err
+		return nil, nil, ctx, result, err
 	}
 
 	// --- Resolve KeyPair ID (optional) ---
-	keyPairID, result, err := r.resolveKeyPairID(ctx, arubaClient, kubeCS, isDeleting, prjID)
+	keyPairID, cmpKeyPair, result, err := r.resolveKeyPairID(ctx, arubaClient, kubeCS, isDeleting, prjID)
 	if err != nil || result != (ctrl.Result{}) {
-		return result, err
+		return nil, nil, ctx, result, err
 	}
 
 	// --- Resolve Elastic IP ID (optional) ---
-	elasticIPID, result, err := r.resolveElasticIPID(ctx, arubaClient, kubeCS, isDeleting, prjID)
+	elasticIPID, cmpElasticIP, result, err := r.resolveElasticIPID(ctx, arubaClient, kubeCS, isDeleting, prjID)
 	if err != nil || result != (ctrl.Result{}) {
-		return result, err
+		return nil, nil, ctx, result, err
 	}
 
 	// --- Fetch CMP CloudServer ---
@@ -185,28 +383,29 @@ func (r *CloudServerReconciler) HandleReconcile(ctx context.Context, obj reconci
 
 	cmpCSList, err := arubaClient.FromCompute().CloudServers().List(ctx, prjID, &arubatypes.RequestParameters{Filter: &csFilter})
 	if err != nil {
-		return ctrl.Result{}, fmt.Errorf(
+		return nil, nil, ctx, ctrl.Result{}, fmt.Errorf(
 			"failed to find cloud server in Aruba cloud: %w, name: '%s'",
 			err, csName,
 		)
 	}
 	if cmpCSList.IsError() && cmpCSList.StatusCode != http.StatusNotFound {
-		return ctrl.Result{}, fmt.Errorf(
+		return nil, nil, ctx, ctrl.Result{}, fmt.Errorf(
 			"failed to find cloud server in Aruba cloud: status_code: %d, name: '%s'",
 			cmpCSList.StatusCode, csName,
 		)
 	}
 	if !cmpCSList.IsError() && (cmpCSList.Data.Total < 0 || cmpCSList.Data.Total > 1) {
-		return ctrl.Result{}, fmt.Errorf(
+		return nil, nil, ctx, ctrl.Result{}, fmt.Errorf(
 			"inconsistent data in cloud server list: name: '%s', instances: %d",
 			csName, cmpCSList.Data.Total,
 		)
 	}
 
-	var cmpCS *arubatypes.CloudServerResponse
 	if cmpCSList.Data != nil && cmpCSList.Data.Total == 1 {
 		cmpCS = &cmpCSList.Data.Values[0]
 	}
+
+	logger := log.FromContext(ctx).WithValues("tenant", kubeCS.Spec.Tenant)
 	logger.V(1).Info("CMP CloudServer state", "found", cmpCS != nil, "projectID", prjID, "vpcID", vpcID)
 
 	ctx = context.WithValue(ctx, projectIDKey, prjID)
@@ -219,10 +418,644 @@ func (r *CloudServerReconciler) HandleReconcile(ctx context.Context, obj reconci
 	ctx = context.WithValue(ctx, reconciler.ArubaClientKey, arubaClient)
 	ctx = log.IntoContext(ctx, logger)
 
-	return r.ts.Run(ctx, kubeCS, cmpCS)
+	cmpBdl = &cmpCloudServerBundle{
+		CMPVpc:            cmpVpc,
+		CMPBootVolume:     cmpBootVolume,
+		CMPSubnets:        cmpSubnets,
+		CMPSecurityGroups: cmpSecurityGroups,
+		CMPKeyPair:        cmpKeyPair,
+		CMPElasticIP:      cmpElasticIP,
+	}
+
+	return cmpCS, cmpBdl, ctx, ctrl.Result{}, nil
 }
 
-// --- Dependency resolution helpers ---
+//nolint:gocyclo // complexity is intentional to maintain locality of behavior
+func (r *CloudServerReconciler) newIntentionValidationSet() *reconciler.ValidationSet[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse, *kubeCloudServerBundle] {
+	ivs := &reconciler.ValidationSet[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse, *kubeCloudServerBundle]{}
+	// Required references
+	ivs.Add("ProjectReferenceRequired", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, _ *kubeCloudServerBundle) error {
+		if k.Spec.ProjectReference.Name == "" {
+			return fmt.Errorf("project reference is required")
+		}
+		return nil
+	})
+	ivs.Add("VPCReferenceRequired", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, _ *kubeCloudServerBundle) error {
+		if k.Spec.VPCReference.Name == "" {
+			return fmt.Errorf("vpc reference is required")
+		}
+		return nil
+	})
+	ivs.Add("BootVolumeReferenceRequired", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, _ *kubeCloudServerBundle) error {
+		if k.Spec.BootVolumeReference.Name == "" {
+			return fmt.Errorf("boot volume reference is required")
+		}
+		return nil
+	})
+	ivs.Add("SubnetReferencesRequired", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, _ *kubeCloudServerBundle) error {
+		if len(k.Spec.SubnetReferences) == 0 {
+			return fmt.Errorf("at least one subnet reference is required")
+		}
+		return nil
+	})
+	ivs.Add("SecurityGroupReferencesRequired", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, _ *kubeCloudServerBundle) error {
+		if len(k.Spec.SecurityGroupReferences) == 0 {
+			return fmt.Errorf("at least one security group reference is required")
+		}
+		return nil
+	})
+	// 1. Tenant must match Project (nil-guarded — Project may not be resolved yet)
+	ivs.Add("TenantMustMatchProject", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, b *kubeCloudServerBundle) error {
+		if b.KubeProject == nil {
+			return nil
+		}
+		if k.Spec.Tenant != "" && b.KubeProject.Spec.Tenant != "" && k.Spec.Tenant != b.KubeProject.Spec.Tenant {
+			return fmt.Errorf("tenant mismatch with Project: %q != %q", k.Spec.Tenant, b.KubeProject.Spec.Tenant)
+		}
+		return nil
+	})
+	// 2. VPC must match all Subnets (K8s-only)
+	ivs.Add("VPCMustMatchAllSubnets", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, b *kubeCloudServerBundle) error {
+		csVPC := k.Spec.VPCReference.Name
+		var msgs []string
+		for _, kubeSubnet := range b.KubeSubnets {
+			if kubeSubnet.Spec.VPCReference.Name != csVPC {
+				msgs = append(msgs, fmt.Sprintf("Subnet %q: %q != %q", kubeSubnet.Name, csVPC, kubeSubnet.Spec.VPCReference.Name))
+			}
+		}
+		if len(msgs) > 0 {
+			return fmt.Errorf("VPC reference mismatch with Subnets: %s", strings.Join(msgs, "; "))
+		}
+		return nil
+	})
+	// 10. VPC must match all SecurityGroups (K8s-only)
+	ivs.Add("VPCMustMatchAllSecurityGroups", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, b *kubeCloudServerBundle) error {
+		csVPC := k.Spec.VPCReference.Name
+		var msgs []string
+		for _, kubeSG := range b.KubeSecurityGroups {
+			if kubeSG.Spec.VPCReference.Name != csVPC {
+				msgs = append(msgs, fmt.Sprintf("SecurityGroup %q: %q != %q", kubeSG.Name, csVPC, kubeSG.Spec.VPCReference.Name))
+			}
+		}
+		if len(msgs) > 0 {
+			return fmt.Errorf("VPC reference mismatch with SecurityGroups: %s", strings.Join(msgs, "; "))
+		}
+		return nil
+	})
+	// 11. Tenant must match VPC (nil-guarded)
+	ivs.Add("TenantMustMatchVPC", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, b *kubeCloudServerBundle) error {
+		if b.KubeVpc == nil {
+			return nil
+		}
+		if k.Spec.Tenant != "" && b.KubeVpc.Spec.Tenant != "" && k.Spec.Tenant != b.KubeVpc.Spec.Tenant {
+			return fmt.Errorf("tenant %q does not match VPC tenant %q", k.Spec.Tenant, b.KubeVpc.Spec.Tenant)
+		}
+		return nil
+	})
+	// 12. Tenant must match BootVolume (nil-guarded)
+	ivs.Add("TenantMustMatchBootVolume", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, b *kubeCloudServerBundle) error {
+		if b.KubeBootVolume == nil {
+			return nil
+		}
+		if k.Spec.Tenant != "" && b.KubeBootVolume.Spec.Tenant != "" && k.Spec.Tenant != b.KubeBootVolume.Spec.Tenant {
+			return fmt.Errorf("tenant %q does not match BlockStorage tenant %q", k.Spec.Tenant, b.KubeBootVolume.Spec.Tenant)
+		}
+		return nil
+	})
+	// 13. Tenant must match KeyPair (nil-guarded, optional)
+	ivs.Add("TenantMustMatchKeyPair", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, b *kubeCloudServerBundle) error {
+		if b.KubeKeyPair == nil {
+			return nil
+		}
+		if k.Spec.Tenant != "" && b.KubeKeyPair.Spec.Tenant != "" && k.Spec.Tenant != b.KubeKeyPair.Spec.Tenant {
+			return fmt.Errorf("tenant %q does not match KeyPair tenant %q", k.Spec.Tenant, b.KubeKeyPair.Spec.Tenant)
+		}
+		return nil
+	})
+	// 14. Tenant must match ElasticIP (nil-guarded, optional)
+	ivs.Add("TenantMustMatchElasticIP", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, b *kubeCloudServerBundle) error {
+		if b.KubeElasticIP == nil {
+			return nil
+		}
+		if k.Spec.Tenant != "" && b.KubeElasticIP.Spec.Tenant != "" && k.Spec.Tenant != b.KubeElasticIP.Spec.Tenant {
+			return fmt.Errorf("tenant %q does not match ElasticIP tenant %q", k.Spec.Tenant, b.KubeElasticIP.Spec.Tenant)
+		}
+		return nil
+	})
+	// 15. Tenant must match all Subnets
+	ivs.Add("TenantMustMatchAllSubnets", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, b *kubeCloudServerBundle) error {
+		var msgs []string
+		for _, s := range b.KubeSubnets {
+			if k.Spec.Tenant != "" && s.Spec.Tenant != "" && k.Spec.Tenant != s.Spec.Tenant {
+				msgs = append(msgs, fmt.Sprintf("Subnet %q: %q != %q", s.Name, k.Spec.Tenant, s.Spec.Tenant))
+			}
+		}
+		if len(msgs) > 0 {
+			return fmt.Errorf("tenant mismatch: %s", strings.Join(msgs, "; "))
+		}
+		return nil
+	})
+	// 16. Tenant must match all SecurityGroups
+	ivs.Add("TenantMustMatchAllSecurityGroups", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, b *kubeCloudServerBundle) error {
+		var msgs []string
+		for _, sg := range b.KubeSecurityGroups {
+			if k.Spec.Tenant != "" && sg.Spec.Tenant != "" && k.Spec.Tenant != sg.Spec.Tenant {
+				msgs = append(msgs, fmt.Sprintf("SecurityGroup %q: %q != %q", sg.Name, k.Spec.Tenant, sg.Spec.Tenant))
+			}
+		}
+		if len(msgs) > 0 {
+			return fmt.Errorf("tenant mismatch: %s", strings.Join(msgs, "; "))
+		}
+		return nil
+	})
+	// 17. Project reference must match VPC (nil-guarded)
+	ivs.Add("ProjectMustMatchVPC", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, b *kubeCloudServerBundle) error {
+		if b.KubeVpc == nil {
+			return nil
+		}
+		if k.Spec.ProjectReference.Name != b.KubeVpc.Spec.ProjectReference.Name {
+			return fmt.Errorf("project reference %q does not match VPC project reference %q", k.Spec.ProjectReference.Name, b.KubeVpc.Spec.ProjectReference.Name)
+		}
+		return nil
+	})
+	// 18. Project reference must match BootVolume (nil-guarded)
+	ivs.Add("ProjectMustMatchBootVolume", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, b *kubeCloudServerBundle) error {
+		if b.KubeBootVolume == nil {
+			return nil
+		}
+		if k.Spec.ProjectReference.Name != b.KubeBootVolume.Spec.ProjectReference.Name {
+			return fmt.Errorf("project reference %q does not match BlockStorage project reference %q", k.Spec.ProjectReference.Name, b.KubeBootVolume.Spec.ProjectReference.Name)
+		}
+		return nil
+	})
+	// 19. Project reference must match KeyPair (nil-guarded, optional)
+	ivs.Add("ProjectMustMatchKeyPair", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, b *kubeCloudServerBundle) error {
+		if b.KubeKeyPair == nil {
+			return nil
+		}
+		if k.Spec.ProjectReference.Name != b.KubeKeyPair.Spec.ProjectReference.Name {
+			return fmt.Errorf("project reference %q does not match KeyPair project reference %q", k.Spec.ProjectReference.Name, b.KubeKeyPair.Spec.ProjectReference.Name)
+		}
+		return nil
+	})
+	// 20. Project reference must match ElasticIP (nil-guarded, optional)
+	ivs.Add("ProjectMustMatchElasticIP", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, b *kubeCloudServerBundle) error {
+		if b.KubeElasticIP == nil {
+			return nil
+		}
+		if k.Spec.ProjectReference.Name != b.KubeElasticIP.Spec.ProjectReference.Name {
+			return fmt.Errorf("project reference %q does not match ElasticIP project reference %q", k.Spec.ProjectReference.Name, b.KubeElasticIP.Spec.ProjectReference.Name)
+		}
+		return nil
+	})
+	// 21. Project reference must match all Subnets
+	ivs.Add("ProjectMustMatchAllSubnets", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, b *kubeCloudServerBundle) error {
+		var msgs []string
+		for _, s := range b.KubeSubnets {
+			if k.Spec.ProjectReference.Name != s.Spec.ProjectReference.Name {
+				msgs = append(msgs, fmt.Sprintf("Subnet %q: %q != %q", s.Name, k.Spec.ProjectReference.Name, s.Spec.ProjectReference.Name))
+			}
+		}
+		if len(msgs) > 0 {
+			return fmt.Errorf("project reference mismatch: %s", strings.Join(msgs, "; "))
+		}
+		return nil
+	})
+	// 22. Project reference must match all SecurityGroups
+	ivs.Add("ProjectMustMatchAllSecurityGroups", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, b *kubeCloudServerBundle) error {
+		var msgs []string
+		for _, sg := range b.KubeSecurityGroups {
+			if k.Spec.ProjectReference.Name != sg.Spec.ProjectReference.Name {
+				msgs = append(msgs, fmt.Sprintf("SecurityGroup %q: %q != %q", sg.Name, k.Spec.ProjectReference.Name, sg.Spec.ProjectReference.Name))
+			}
+		}
+		if len(msgs) > 0 {
+			return fmt.Errorf("project reference mismatch: %s", strings.Join(msgs, "; "))
+		}
+		return nil
+	})
+	return ivs
+}
+
+//nolint:gocyclo // complexity is intentional to maintain locality of behavior
+func (r *CloudServerReconciler) newValidationSet() *reconciler.ValidationSet[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse, *cloudServerBundle] {
+	vs := &reconciler.ValidationSet[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse, *cloudServerBundle]{}
+	// 1. Tenant must match Project
+	vs.Add("TenantMustMatchProject", reconciler.FieldMustMatch[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse, *cloudServerBundle](
+		"tenant",
+		func(k *v1alpha1.CloudServer) string { return k.Spec.Tenant },
+		func(b *cloudServerBundle) string { return b.KubeProject.Spec.Tenant },
+		"Project",
+	))
+	// 2. VPC must match all Subnets (K8s-only)
+	vs.Add("VPCMustMatchAllSubnets", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, b *cloudServerBundle) error {
+		csVPC := k.Spec.VPCReference.Name
+		var msgs []string
+		for _, kubeSubnet := range b.KubeSubnets {
+			if kubeSubnet.Spec.VPCReference.Name != csVPC {
+				msgs = append(msgs, fmt.Sprintf("Subnet %q: %q != %q", kubeSubnet.Name, csVPC, kubeSubnet.Spec.VPCReference.Name))
+			}
+		}
+		if len(msgs) > 0 {
+			return fmt.Errorf("VPC reference mismatch with Subnets: %s", strings.Join(msgs, "; "))
+		}
+		return nil
+	})
+	// 10. VPC must match all SecurityGroups (K8s-only)
+	vs.Add("VPCMustMatchAllSecurityGroups", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, b *cloudServerBundle) error {
+		csVPC := k.Spec.VPCReference.Name
+		var msgs []string
+		for _, kubeSG := range b.KubeSecurityGroups {
+			if kubeSG.Spec.VPCReference.Name != csVPC {
+				msgs = append(msgs, fmt.Sprintf("SecurityGroup %q: %q != %q", kubeSG.Name, csVPC, kubeSG.Spec.VPCReference.Name))
+			}
+		}
+		if len(msgs) > 0 {
+			return fmt.Errorf("VPC reference mismatch with SecurityGroups: %s", strings.Join(msgs, "; "))
+		}
+		return nil
+	})
+	// 11. Tenant must match VPC (K8s-side, nil-guarded)
+	vs.Add("TenantMustMatchVPC", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, b *cloudServerBundle) error {
+		if b.KubeVpc == nil {
+			return nil
+		}
+		if k.Spec.Tenant != "" && b.KubeVpc.Spec.Tenant != "" && k.Spec.Tenant != b.KubeVpc.Spec.Tenant {
+			return fmt.Errorf("tenant %q does not match VPC tenant %q", k.Spec.Tenant, b.KubeVpc.Spec.Tenant)
+		}
+		return nil
+	})
+	// 12. Tenant must match BootVolume (K8s-side, nil-guarded)
+	vs.Add("TenantMustMatchBootVolume", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, b *cloudServerBundle) error {
+		if b.KubeBootVolume == nil {
+			return nil
+		}
+		if k.Spec.Tenant != "" && b.KubeBootVolume.Spec.Tenant != "" && k.Spec.Tenant != b.KubeBootVolume.Spec.Tenant {
+			return fmt.Errorf("tenant %q does not match BlockStorage tenant %q", k.Spec.Tenant, b.KubeBootVolume.Spec.Tenant)
+		}
+		return nil
+	})
+	// 13. Tenant must match KeyPair (K8s-side, nil-guarded, optional)
+	vs.Add("TenantMustMatchKeyPair", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, b *cloudServerBundle) error {
+		if b.KubeKeyPair == nil {
+			return nil
+		}
+		if k.Spec.Tenant != "" && b.KubeKeyPair.Spec.Tenant != "" && k.Spec.Tenant != b.KubeKeyPair.Spec.Tenant {
+			return fmt.Errorf("tenant %q does not match KeyPair tenant %q", k.Spec.Tenant, b.KubeKeyPair.Spec.Tenant)
+		}
+		return nil
+	})
+	// 14. Tenant must match ElasticIP (K8s-side, nil-guarded, optional)
+	vs.Add("TenantMustMatchElasticIP", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, b *cloudServerBundle) error {
+		if b.KubeElasticIP == nil {
+			return nil
+		}
+		if k.Spec.Tenant != "" && b.KubeElasticIP.Spec.Tenant != "" && k.Spec.Tenant != b.KubeElasticIP.Spec.Tenant {
+			return fmt.Errorf("tenant %q does not match ElasticIP tenant %q", k.Spec.Tenant, b.KubeElasticIP.Spec.Tenant)
+		}
+		return nil
+	})
+	// 15. Tenant must match all Subnets (K8s-side)
+	vs.Add("TenantMustMatchAllSubnets", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, b *cloudServerBundle) error {
+		var msgs []string
+		for _, s := range b.KubeSubnets {
+			if k.Spec.Tenant != "" && s.Spec.Tenant != "" && k.Spec.Tenant != s.Spec.Tenant {
+				msgs = append(msgs, fmt.Sprintf("Subnet %q: %q != %q", s.Name, k.Spec.Tenant, s.Spec.Tenant))
+			}
+		}
+		if len(msgs) > 0 {
+			return fmt.Errorf("tenant mismatch: %s", strings.Join(msgs, "; "))
+		}
+		return nil
+	})
+	// 16. Tenant must match all SecurityGroups (K8s-side)
+	vs.Add("TenantMustMatchAllSecurityGroups", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, b *cloudServerBundle) error {
+		var msgs []string
+		for _, sg := range b.KubeSecurityGroups {
+			if k.Spec.Tenant != "" && sg.Spec.Tenant != "" && k.Spec.Tenant != sg.Spec.Tenant {
+				msgs = append(msgs, fmt.Sprintf("SecurityGroup %q: %q != %q", sg.Name, k.Spec.Tenant, sg.Spec.Tenant))
+			}
+		}
+		if len(msgs) > 0 {
+			return fmt.Errorf("tenant mismatch: %s", strings.Join(msgs, "; "))
+		}
+		return nil
+	})
+	// 17. Project reference must match VPC (K8s-side, nil-guarded)
+	vs.Add("ProjectMustMatchVPC", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, b *cloudServerBundle) error {
+		if b.KubeVpc == nil {
+			return nil
+		}
+		if k.Spec.ProjectReference.Name != b.KubeVpc.Spec.ProjectReference.Name {
+			return fmt.Errorf("project reference %q does not match VPC project reference %q", k.Spec.ProjectReference.Name, b.KubeVpc.Spec.ProjectReference.Name)
+		}
+		return nil
+	})
+	// 18. Project reference must match BootVolume (K8s-side, nil-guarded)
+	vs.Add("ProjectMustMatchBootVolume", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, b *cloudServerBundle) error {
+		if b.KubeBootVolume == nil {
+			return nil
+		}
+		if k.Spec.ProjectReference.Name != b.KubeBootVolume.Spec.ProjectReference.Name {
+			return fmt.Errorf("project reference %q does not match BlockStorage project reference %q", k.Spec.ProjectReference.Name, b.KubeBootVolume.Spec.ProjectReference.Name)
+		}
+		return nil
+	})
+	// 19. Project reference must match KeyPair (K8s-side, nil-guarded, optional)
+	vs.Add("ProjectMustMatchKeyPair", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, b *cloudServerBundle) error {
+		if b.KubeKeyPair == nil {
+			return nil
+		}
+		if k.Spec.ProjectReference.Name != b.KubeKeyPair.Spec.ProjectReference.Name {
+			return fmt.Errorf("project reference %q does not match KeyPair project reference %q", k.Spec.ProjectReference.Name, b.KubeKeyPair.Spec.ProjectReference.Name)
+		}
+		return nil
+	})
+	// 20. Project reference must match ElasticIP (K8s-side, nil-guarded, optional)
+	vs.Add("ProjectMustMatchElasticIP", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, b *cloudServerBundle) error {
+		if b.KubeElasticIP == nil {
+			return nil
+		}
+		if k.Spec.ProjectReference.Name != b.KubeElasticIP.Spec.ProjectReference.Name {
+			return fmt.Errorf("project reference %q does not match ElasticIP project reference %q", k.Spec.ProjectReference.Name, b.KubeElasticIP.Spec.ProjectReference.Name)
+		}
+		return nil
+	})
+	// 21. Project reference must match all Subnets (K8s-side)
+	vs.Add("ProjectMustMatchAllSubnets", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, b *cloudServerBundle) error {
+		var msgs []string
+		for _, s := range b.KubeSubnets {
+			if k.Spec.ProjectReference.Name != s.Spec.ProjectReference.Name {
+				msgs = append(msgs, fmt.Sprintf("Subnet %q: %q != %q", s.Name, k.Spec.ProjectReference.Name, s.Spec.ProjectReference.Name))
+			}
+		}
+		if len(msgs) > 0 {
+			return fmt.Errorf("project reference mismatch: %s", strings.Join(msgs, "; "))
+		}
+		return nil
+	})
+	// 22. Project reference must match all SecurityGroups (K8s-side)
+	vs.Add("ProjectMustMatchAllSecurityGroups", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, b *cloudServerBundle) error {
+		var msgs []string
+		for _, sg := range b.KubeSecurityGroups {
+			if k.Spec.ProjectReference.Name != sg.Spec.ProjectReference.Name {
+				msgs = append(msgs, fmt.Sprintf("SecurityGroup %q: %q != %q", sg.Name, k.Spec.ProjectReference.Name, sg.Spec.ProjectReference.Name))
+			}
+		}
+		if len(msgs) > 0 {
+			return fmt.Errorf("project reference mismatch: %s", strings.Join(msgs, "; "))
+		}
+		return nil
+	})
+	return vs
+}
+
+func (r *CloudServerReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse] {
+	ts := &reconciler.TransitionSet[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
+		DefaultRequeue:        reconciler.NoRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		DefaultRequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+	}
+
+	// 0. PhaseTimedOut — safety net: fail if stuck in a transitory phase too long
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
+		Name:           "PhaseTimedOut",
+		KCondition:     reconciler.KubePhaseTimedOut[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:     reconciler.AlwaysTrue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		KAction:        r.kubeSetFailedOnTimeout,
+		Requeue:        reconciler.NoRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+	})
+
+	// 1. ValidationFailedAndDeleting — unblock deletion for resources stuck in any *ValidationFailed state
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
+		Name:           "ValidationFailedAndDeleting",
+		KCondition:     reconciler.KubeAnyValidationFailedAndDeleting[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:     reconciler.AlwaysTrue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		KAction:        reconciler.KubeResetValidationFailedForDeletion[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse](r.Client),
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		RequeueOnError: reconciler.NoRequeueAndPropagateError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+	})
+
+	// 2. PendingAndDeleting — resource deleted while still in Pending; skip CMP entirely
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
+		Name:       "PendingAndDeleting",
+		KCondition: reconciler.KubePendingAndDeleting[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition: reconciler.AlwaysTrue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		KAction:    reconciler.KubeDeleteFromPending[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse](r.Client),
+		Requeue:    reconciler.NoRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+	})
+
+	// 3. ShouldBeDeleted
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
+		Name:           "ShouldBeDeleted",
+		KCondition:     reconciler.KubeShouldDelete[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:     cmpCloudServerIsFinal,
+		KAction:        r.kubeMarkToDelete,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+	})
+
+	// 4. ShouldDeleteTimedOut
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
+		Name:           "ShouldDeleteTimedOut",
+		KCondition:     reconciler.KubeShouldDeleteTimedOut[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:     reconciler.AlwaysTrue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		KAction:        r.kubeMarkToDelete,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+	})
+
+	// 5. ShouldBeDeletedOnCMP
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
+		Name:              "ShouldBeDeletedOnCMP",
+		KCondition:        reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:        cmpCloudServerIsFinal,
+		AAction:           r.cmpDelete,
+		KActionOnASuccess: r.kubeMarkDeleting,
+		KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse](r.Client),
+		Requeue:           reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+	})
+
+	// 6. DeletionOnCMPNotNeeded
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
+		Name:           "DeletionOnCMPNotNeeded",
+		KCondition:     reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:     cmpCloudServerNotExists,
+		KAction:        r.kubeMarkDeletingDone,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+	})
+
+	// 7. WaitingDeletionOnCMP
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
+		Name:           "WaitingDeletionOnCMP",
+		KCondition:     reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:     cmpCloudServerIsTransitory,
+		Requeue:        reconciler.LongRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+	})
+
+	// 8. DeletionConfirmedOnCMP
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
+		Name:           "DeletionConfirmedOnCMP",
+		KCondition:     reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:     cmpCloudServerNotExists,
+		KAction:        r.kubeMarkDeletingDone,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+	})
+
+	// 9. DeletionAccomplished
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
+		Name:           "DeletionAccomplished",
+		KCondition:     reconciler.KubeDeletionAccomplished[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:     cmpCloudServerNotExists,
+		KAction:        r.kubeMarkDeleted,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+	})
+
+	// 10. HasDeniedChanges — surface immutable field violations before attempting update
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
+		Name:       "HasDeniedChanges",
+		KCondition: kubeCSHasDeniedChanges,
+		ACondition: cmpCloudServerIsFinal,
+		KAction: func(ctx context.Context, kubeCS *v1alpha1.CloudServer, cmpCS *arubatypes.CloudServerResponse) error {
+			return fmt.Errorf("cloud server update rejected: %w", checkCSDeniedChanges(kubeCS, cmpCS))
+		},
+		Requeue:        reconciler.NoRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		RequeueOnError: reconciler.LongRequeueAndIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+	})
+
+	// 11. SpecAlreadyInSyncWithCMP — generation changed but spec identical to CMP
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
+		Name:           "SpecAlreadyInSyncWithCMP",
+		KCondition:     kubeCSSpecInSyncWithCMP,
+		ACondition:     cmpCloudServerIsActive,
+		KAction:        r.kubeSetActiveAndSetID,
+		Requeue:        reconciler.NoRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+	})
+
+	// 12. ShouldBeUpdated
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
+		Name:           "ShouldBeUpdated",
+		KCondition:     kubeCSShouldUpdate,
+		ACondition:     cmpCloudServerIsFinal,
+		KAction:        r.kubeMarkToUpdate,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+	})
+
+	// 13. ShouldBeUpdatedOnCMP
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
+		Name:              "ShouldBeUpdatedOnCMP",
+		KCondition:        reconciler.KubeShouldBeUpdatedOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:        cmpCloudServerIsFinal,
+		AAction:           r.cmpUpdate,
+		KActionOnASuccess: r.kubeMarkUpdating,
+		KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse](r.Client),
+		Requeue:           reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+	})
+
+	// 14. WaitingUpdateOnCMP
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
+		Name:           "WaitingUpdateOnCMP",
+		KCondition:     reconciler.KubeWaitingUpdateOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:     cmpCloudServerIsTransitory,
+		Requeue:        reconciler.LongRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+	})
+
+	// 15. UpdateConfirmedOnCMP
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
+		Name:           "UpdateConfirmedOnCMP",
+		KCondition:     reconciler.KubeWaitingUpdateOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:     cmpCloudServerIsFinal,
+		KAction:        r.kubeMarkUpdatingDone,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+	})
+
+	// 16. UpdateAccomplished
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
+		Name:           "UpdateAccomplished",
+		KCondition:     reconciler.KubeUpdateAccomplished[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:     cmpCloudServerIsActive,
+		KAction:        r.kubeSetActiveAndSetID,
+		Requeue:        reconciler.NoRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+	})
+
+	// 17. ShouldBeCreated
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
+		Name:           "ShouldBeCreated",
+		KCondition:     reconciler.KubeIsFirstReconciliation[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:     cmpCloudServerNotExists,
+		KAction:        r.kubeMarkToCreate,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+	})
+
+	// 18. ShouldBeCreatedInCMP
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
+		Name:              "ShouldBeCreatedInCMP",
+		KCondition:        reconciler.KubeShouldBeCreatedOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:        cmpCloudServerNotExists,
+		AAction:           r.cmpCreate,
+		KActionOnASuccess: r.kubeMarkCreating,
+		KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse](r.Client),
+		Requeue:           reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+	})
+
+	// 19. WaitingCreationInCMP
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
+		Name:           "WaitingCreationInCMP",
+		KCondition:     reconciler.KubeWaitingCreationInCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:     cmpCloudServerNotExistsOrTransitory,
+		Requeue:        reconciler.LongRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+	})
+
+	// 20. CreationConfirmedOnCMP
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
+		Name:           "CreationConfirmedOnCMP",
+		KCondition:     reconciler.KubeWaitingCreationInCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:     cmpCloudServerIsActive,
+		KAction:        r.kubeMarkCreatingDone,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+	})
+
+	// 21. CreationAccomplished
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
+		Name:           "CreationAccomplished",
+		KCondition:     reconciler.KubeIsCreatedOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:     cmpCloudServerIsActive,
+		KAction:        r.kubeSetActiveAndSetID,
+		Requeue:        reconciler.NoRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+	})
+
+	// 22. IsInError
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
+		Name:           "IsInError",
+		KCondition:     reconciler.AlwaysTrue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		ACondition:     cmpCloudServerIsFailed,
+		KAction:        r.kubeSetFailed,
+		Requeue:        reconciler.NoRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
+	})
+
+	return ts
+}
+
+// ---------------------------------------------------------------------------
+// CMP resolve helpers
+// ---------------------------------------------------------------------------
 
 func (r *CloudServerReconciler) resolveProjectID(
 	ctx context.Context,
@@ -281,9 +1114,9 @@ func (r *CloudServerReconciler) resolveVpcID(
 	kubeCS *v1alpha1.CloudServer,
 	isDeleting bool,
 	prjID string,
-) (string, ctrl.Result, error) {
+) (string, *arubatypes.VPCResponse, ctrl.Result, error) {
 	if isDeleting && kubeCS.Status.VPCID != "" {
-		return kubeCS.Status.VPCID, ctrl.Result{}, nil
+		return kubeCS.Status.VPCID, nil, ctrl.Result{}, nil
 	}
 
 	vpcName := kubeCS.Spec.VPCReference.Name
@@ -291,12 +1124,12 @@ func (r *CloudServerReconciler) resolveVpcID(
 
 	cmpVpcList, err := arubaClient.FromNetwork().VPCs().List(ctx, prjID, &arubatypes.RequestParameters{Filter: &vpcFilter})
 	if err != nil {
-		return "", ctrl.Result{}, fmt.Errorf(
+		return "", nil, ctrl.Result{}, fmt.Errorf(
 			"failed to find vpc in Aruba cloud: %w, vpc_name: '%s'", err, vpcName,
 		)
 	}
 	if cmpVpcList.IsError() {
-		return "", ctrl.Result{}, fmt.Errorf(
+		return "", nil, ctrl.Result{}, fmt.Errorf(
 			"failed to find vpc in Aruba cloud: status_code: %d, vpc_name: '%s'",
 			cmpVpcList.StatusCode, vpcName,
 		)
@@ -304,29 +1137,30 @@ func (r *CloudServerReconciler) resolveVpcID(
 	// TODO: Remove once CMP API name:eq() filter is fixed (issue https://jira.aruba.it/browse/DEV-66643).
 	applyNameFilterToVPCList(cmpVpcList, vpcName, log.FromContext(ctx))
 	if cmpVpcList.Data.Total == 0 && kubeCS.Status.VPCID != "" {
-		return "", ctrl.Result{}, fmt.Errorf(
+		return "", nil, ctrl.Result{}, fmt.Errorf(
 			"inconsistent data: vpc not found but already recorded: vpc_name: '%s'", vpcName,
 		)
 	}
 	if cmpVpcList.Data.Total > 1 {
-		return "", ctrl.Result{}, fmt.Errorf(
+		return "", nil, ctrl.Result{}, fmt.Errorf(
 			"inconsistent data in vpc list: expected: 1, found: %d, vpc_name: '%s'",
 			cmpVpcList.Data.Total, vpcName,
 		)
 	}
 	if cmpVpcList.Data.Total == 0 {
 		log.FromContext(ctx).V(1).Info("parent vpc not found on CMP, requeuing", "vpcName", vpcName)
-		return "", ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
+		return "", nil, ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
 	}
 
-	vpcID := *(cmpVpcList.Data.Values[0].Metadata.ID)
+	cmpVpc := &cmpVpcList.Data.Values[0]
+	vpcID := *(cmpVpc.Metadata.ID)
 	if kubeCS.Status.VPCID != "" && kubeCS.Status.VPCID != vpcID {
-		return "", ctrl.Result{}, fmt.Errorf(
+		return "", nil, ctrl.Result{}, fmt.Errorf(
 			"inconsistent vpc id: recorded: '%s', found: '%s', vpc_name: '%s'",
 			kubeCS.Status.VPCID, vpcID, vpcName,
 		)
 	}
-	return vpcID, ctrl.Result{}, nil
+	return vpcID, cmpVpc, ctrl.Result{}, nil
 }
 
 func (r *CloudServerReconciler) resolveBootVolumeID(
@@ -338,9 +1172,9 @@ func (r *CloudServerReconciler) resolveBootVolumeID(
 	// TODO: remove once CMP Infra Team fixes the root cause.
 	isCreating bool,
 	prjID string,
-) (string, ctrl.Result, error) {
+) (string, *arubatypes.BlockStorageResponse, ctrl.Result, error) {
 	if isDeleting && kubeCS.Status.BootVolumeID != "" {
-		return kubeCS.Status.BootVolumeID, ctrl.Result{}, nil
+		return kubeCS.Status.BootVolumeID, nil, ctrl.Result{}, nil
 	}
 
 	volName := kubeCS.Spec.BootVolumeReference.Name
@@ -348,30 +1182,30 @@ func (r *CloudServerReconciler) resolveBootVolumeID(
 
 	cmpVolList, err := arubaClient.FromStorage().Volumes().List(ctx, prjID, &arubatypes.RequestParameters{Filter: &volFilter})
 	if err != nil {
-		return "", ctrl.Result{}, fmt.Errorf(
+		return "", nil, ctrl.Result{}, fmt.Errorf(
 			"failed to find boot volume in Aruba cloud: %w, volume_name: '%s'", err, volName,
 		)
 	}
 	if cmpVolList.IsError() {
-		return "", ctrl.Result{}, fmt.Errorf(
+		return "", nil, ctrl.Result{}, fmt.Errorf(
 			"failed to find boot volume in Aruba cloud: status_code: %d, volume_name: '%s'",
 			cmpVolList.StatusCode, volName,
 		)
 	}
 	if cmpVolList.Data.Total == 0 && kubeCS.Status.BootVolumeID != "" {
-		return "", ctrl.Result{}, fmt.Errorf(
+		return "", nil, ctrl.Result{}, fmt.Errorf(
 			"inconsistent data: boot volume not found but already recorded: volume_name: '%s'", volName,
 		)
 	}
 	if cmpVolList.Data.Total > 1 {
-		return "", ctrl.Result{}, fmt.Errorf(
+		return "", nil, ctrl.Result{}, fmt.Errorf(
 			"inconsistent data in volume list: expected: 1, found: %d, volume_name: '%s'",
 			cmpVolList.Data.Total, volName,
 		)
 	}
 	if cmpVolList.Data.Total == 0 {
 		log.FromContext(ctx).V(1).Info("boot volume not found on CMP, requeuing", "volumeName", volName)
-		return "", ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
+		return "", nil, ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
 	}
 
 	// WORKAROUND: CMP bug causes CloudServer creation to stall when the boot volume is not yet
@@ -385,18 +1219,19 @@ func (r *CloudServerReconciler) resolveBootVolumeID(
 				state = *cmpVolList.Data.Values[0].Status.State
 			}
 			log.FromContext(ctx).V(1).Info("boot volume not ready on CMP, requeuing", "volumeName", volName, "cmpState", state)
-			return "", ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
+			return "", nil, ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
 		}
 	}
 
-	volID := *(cmpVolList.Data.Values[0].Metadata.ID)
+	cmpVol := &cmpVolList.Data.Values[0]
+	volID := *(cmpVol.Metadata.ID)
 	if kubeCS.Status.BootVolumeID != "" && kubeCS.Status.BootVolumeID != volID {
-		return "", ctrl.Result{}, fmt.Errorf(
+		return "", nil, ctrl.Result{}, fmt.Errorf(
 			"inconsistent boot volume id: recorded: '%s', found: '%s', volume_name: '%s'",
 			kubeCS.Status.BootVolumeID, volID, volName,
 		)
 	}
-	return volID, ctrl.Result{}, nil
+	return volID, cmpVol, ctrl.Result{}, nil
 }
 
 func (r *CloudServerReconciler) resolveSubnetIDs(
@@ -408,22 +1243,23 @@ func (r *CloudServerReconciler) resolveSubnetIDs(
 	// TODO: remove once CMP Infra Team fixes the root cause.
 	isCreating bool,
 	prjID, vpcID string,
-) ([]string, ctrl.Result, error) {
+) ([]string, []*arubatypes.SubnetResponse, ctrl.Result, error) {
 	if isDeleting && len(kubeCS.Status.SubnetIDs) > 0 {
-		return kubeCS.Status.SubnetIDs, ctrl.Result{}, nil
+		return kubeCS.Status.SubnetIDs, nil, ctrl.Result{}, nil
 	}
 
 	ids := make([]string, 0, len(kubeCS.Spec.SubnetReferences))
+	responses := make([]*arubatypes.SubnetResponse, 0, len(kubeCS.Spec.SubnetReferences))
 	for _, ref := range kubeCS.Spec.SubnetReferences {
 		filter := fmt.Sprintf(`name:eq("%s")`, ref.Name)
 		cmpList, err := arubaClient.FromNetwork().Subnets().List(ctx, prjID, vpcID, &arubatypes.RequestParameters{Filter: &filter})
 		if err != nil {
-			return nil, ctrl.Result{}, fmt.Errorf(
+			return nil, nil, ctrl.Result{}, fmt.Errorf(
 				"failed to find subnet in Aruba cloud: %w, subnet_name: '%s'", err, ref.Name,
 			)
 		}
 		if cmpList.IsError() {
-			return nil, ctrl.Result{}, fmt.Errorf(
+			return nil, nil, ctrl.Result{}, fmt.Errorf(
 				"failed to find subnet in Aruba cloud: status_code: %d, subnet_name: '%s'",
 				cmpList.StatusCode, ref.Name,
 			)
@@ -431,14 +1267,14 @@ func (r *CloudServerReconciler) resolveSubnetIDs(
 		// TODO: Remove once CMP API name:eq() filter is fixed (issue https://jira.aruba.it/browse/DEV-66643).
 		applyNameFilterToSubnetList(cmpList, ref.Name, log.FromContext(ctx))
 		if cmpList.Data.Total > 1 {
-			return nil, ctrl.Result{}, fmt.Errorf(
+			return nil, nil, ctrl.Result{}, fmt.Errorf(
 				"inconsistent data in subnet list: expected: 1, found: %d, subnet_name: '%s'",
 				cmpList.Data.Total, ref.Name,
 			)
 		}
 		if cmpList.Data.Total == 0 {
 			log.FromContext(ctx).V(1).Info("subnet not found on CMP, requeuing", "subnetName", ref.Name)
-			return nil, ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
+			return nil, nil, ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
 		}
 
 		// WORKAROUND: CMP bug causes CloudServer creation to stall when a subnet is not yet
@@ -452,13 +1288,15 @@ func (r *CloudServerReconciler) resolveSubnetIDs(
 					state = *cmpList.Data.Values[0].Status.State
 				}
 				log.FromContext(ctx).V(1).Info("subnet not ready on CMP, requeuing", "subnetName", ref.Name, "cmpState", state)
-				return nil, ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
+				return nil, nil, ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
 			}
 		}
 
-		ids = append(ids, *(cmpList.Data.Values[0].Metadata.ID))
+		cmpSubnet := &cmpList.Data.Values[0]
+		ids = append(ids, *(cmpSubnet.Metadata.ID))
+		responses = append(responses, cmpSubnet)
 	}
-	return ids, ctrl.Result{}, nil
+	return ids, responses, ctrl.Result{}, nil
 }
 
 func (r *CloudServerReconciler) resolveSecurityGroupIDs(
@@ -467,22 +1305,23 @@ func (r *CloudServerReconciler) resolveSecurityGroupIDs(
 	kubeCS *v1alpha1.CloudServer,
 	isDeleting bool,
 	prjID, vpcID string,
-) ([]string, ctrl.Result, error) {
+) ([]string, []*arubatypes.SecurityGroupResponse, ctrl.Result, error) {
 	if isDeleting && len(kubeCS.Status.SecurityGroupIDs) > 0 {
-		return kubeCS.Status.SecurityGroupIDs, ctrl.Result{}, nil
+		return kubeCS.Status.SecurityGroupIDs, nil, ctrl.Result{}, nil
 	}
 
 	ids := make([]string, 0, len(kubeCS.Spec.SecurityGroupReferences))
+	responses := make([]*arubatypes.SecurityGroupResponse, 0, len(kubeCS.Spec.SecurityGroupReferences))
 	for _, ref := range kubeCS.Spec.SecurityGroupReferences {
 		filter := fmt.Sprintf(`name:eq("%s")`, ref.Name)
 		cmpList, err := arubaClient.FromNetwork().SecurityGroups().List(ctx, prjID, vpcID, &arubatypes.RequestParameters{Filter: &filter})
 		if err != nil {
-			return nil, ctrl.Result{}, fmt.Errorf(
+			return nil, nil, ctrl.Result{}, fmt.Errorf(
 				"failed to find security group in Aruba cloud: %w, sg_name: '%s'", err, ref.Name,
 			)
 		}
 		if cmpList.IsError() {
-			return nil, ctrl.Result{}, fmt.Errorf(
+			return nil, nil, ctrl.Result{}, fmt.Errorf(
 				"failed to find security group in Aruba cloud: status_code: %d, sg_name: '%s'",
 				cmpList.StatusCode, ref.Name,
 			)
@@ -490,18 +1329,20 @@ func (r *CloudServerReconciler) resolveSecurityGroupIDs(
 		// TODO: Remove once CMP API name:eq() filter is fixed (issue https://jira.aruba.it/browse/DEV-66643).
 		applyNameFilterToSecurityGroupList(cmpList, ref.Name, log.FromContext(ctx))
 		if cmpList.Data.Total > 1 {
-			return nil, ctrl.Result{}, fmt.Errorf(
+			return nil, nil, ctrl.Result{}, fmt.Errorf(
 				"inconsistent data in security group list: expected: 1, found: %d, sg_name: '%s'",
 				cmpList.Data.Total, ref.Name,
 			)
 		}
 		if cmpList.Data.Total == 0 {
 			log.FromContext(ctx).V(1).Info("security group not found on CMP, requeuing", "sgName", ref.Name)
-			return nil, ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
+			return nil, nil, ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
 		}
-		ids = append(ids, *(cmpList.Data.Values[0].Metadata.ID))
+		cmpSG := &cmpList.Data.Values[0]
+		ids = append(ids, *(cmpSG.Metadata.ID))
+		responses = append(responses, cmpSG)
 	}
-	return ids, ctrl.Result{}, nil
+	return ids, responses, ctrl.Result{}, nil
 }
 
 func (r *CloudServerReconciler) resolveKeyPairID(
@@ -510,12 +1351,12 @@ func (r *CloudServerReconciler) resolveKeyPairID(
 	kubeCS *v1alpha1.CloudServer,
 	isDeleting bool,
 	prjID string,
-) (string, ctrl.Result, error) {
+) (string, *arubatypes.KeyPairResponse, ctrl.Result, error) {
 	if kubeCS.Spec.KeyPairReference.Name == "" {
-		return "", ctrl.Result{}, nil
+		return "", nil, ctrl.Result{}, nil
 	}
 	if isDeleting && kubeCS.Status.KeyPairID != "" {
-		return kubeCS.Status.KeyPairID, ctrl.Result{}, nil
+		return kubeCS.Status.KeyPairID, nil, ctrl.Result{}, nil
 	}
 
 	kpName := kubeCS.Spec.KeyPairReference.Name
@@ -523,27 +1364,28 @@ func (r *CloudServerReconciler) resolveKeyPairID(
 
 	cmpKPList, err := arubaClient.FromCompute().KeyPairs().List(ctx, prjID, &arubatypes.RequestParameters{Filter: &kpFilter})
 	if err != nil {
-		return "", ctrl.Result{}, fmt.Errorf(
+		return "", nil, ctrl.Result{}, fmt.Errorf(
 			"failed to find key pair in Aruba cloud: %w, keypair_name: '%s'", err, kpName,
 		)
 	}
 	if cmpKPList.IsError() {
-		return "", ctrl.Result{}, fmt.Errorf(
+		return "", nil, ctrl.Result{}, fmt.Errorf(
 			"failed to find key pair in Aruba cloud: status_code: %d, keypair_name: '%s'",
 			cmpKPList.StatusCode, kpName,
 		)
 	}
 	if cmpKPList.Data.Total > 1 {
-		return "", ctrl.Result{}, fmt.Errorf(
+		return "", nil, ctrl.Result{}, fmt.Errorf(
 			"inconsistent data in key pair list: expected: 1, found: %d, keypair_name: '%s'",
 			cmpKPList.Data.Total, kpName,
 		)
 	}
 	if cmpKPList.Data.Total == 0 {
 		log.FromContext(ctx).V(1).Info("key pair not found on CMP, requeuing", "keyPairName", kpName)
-		return "", ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
+		return "", nil, ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
 	}
-	return *(cmpKPList.Data.Values[0].Metadata.ID), ctrl.Result{}, nil
+	cmpKP := &cmpKPList.Data.Values[0]
+	return *(cmpKP.Metadata.ID), cmpKP, ctrl.Result{}, nil
 }
 
 func (r *CloudServerReconciler) resolveElasticIPID(
@@ -552,12 +1394,12 @@ func (r *CloudServerReconciler) resolveElasticIPID(
 	kubeCS *v1alpha1.CloudServer,
 	isDeleting bool,
 	prjID string,
-) (string, ctrl.Result, error) {
+) (string, *arubatypes.ElasticIPResponse, ctrl.Result, error) {
 	if kubeCS.Spec.ElasticIPReference == nil {
-		return "", ctrl.Result{}, nil
+		return "", nil, ctrl.Result{}, nil
 	}
 	if isDeleting && kubeCS.Status.ElasticIPID != "" {
-		return kubeCS.Status.ElasticIPID, ctrl.Result{}, nil
+		return kubeCS.Status.ElasticIPID, nil, ctrl.Result{}, nil
 	}
 
 	eipName := kubeCS.Spec.ElasticIPReference.Name
@@ -565,12 +1407,12 @@ func (r *CloudServerReconciler) resolveElasticIPID(
 
 	cmpEipList, err := arubaClient.FromNetwork().ElasticIPs().List(ctx, prjID, &arubatypes.RequestParameters{Filter: &eipFilter})
 	if err != nil {
-		return "", ctrl.Result{}, fmt.Errorf(
+		return "", nil, ctrl.Result{}, fmt.Errorf(
 			"failed to find elastic IP in Aruba cloud: %w, eip_name: '%s'", err, eipName,
 		)
 	}
 	if cmpEipList.IsError() {
-		return "", ctrl.Result{}, fmt.Errorf(
+		return "", nil, ctrl.Result{}, fmt.Errorf(
 			"failed to find elastic IP in Aruba cloud: status_code: %d, eip_name: '%s'",
 			cmpEipList.StatusCode, eipName,
 		)
@@ -578,254 +1420,22 @@ func (r *CloudServerReconciler) resolveElasticIPID(
 	// TODO: Remove once CMP API name:eq() filter is fixed (issue https://jira.aruba.it/browse/DEV-66643).
 	applyNameFilterToElasticIPList(cmpEipList, eipName, log.FromContext(ctx))
 	if cmpEipList.Data.Total > 1 {
-		return "", ctrl.Result{}, fmt.Errorf(
+		return "", nil, ctrl.Result{}, fmt.Errorf(
 			"inconsistent data in elastic IP list: expected: 1, found: %d, eip_name: '%s'",
 			cmpEipList.Data.Total, eipName,
 		)
 	}
 	if cmpEipList.Data.Total == 0 {
 		log.FromContext(ctx).V(1).Info("elastic IP not found on CMP, requeuing", "eipName", eipName)
-		return "", ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
+		return "", nil, ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
 	}
-	return *(cmpEipList.Data.Values[0].Metadata.ID), ctrl.Result{}, nil
+	cmpEip := &cmpEipList.Data.Values[0]
+	return *(cmpEip.Metadata.ID), cmpEip, ctrl.Result{}, nil
 }
 
-// --- reconciler.TransitionSet builder ---
-
-func (r *CloudServerReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse] {
-	ts := &reconciler.TransitionSet[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		DefaultRequeue:        reconciler.NoRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		DefaultRequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-	}
-
-	// 0. PhaseTimedOut — safety net: fail if stuck in a transitory phase too long
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name:           "PhaseTimedOut",
-		KCondition:     reconciler.KubePhaseTimedOut[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition:     reconciler.AlwaysTrue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		KAction:        r.kubeSetFailedOnTimeout,
-		Requeue:        reconciler.NoRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-	})
-
-	// 0b. PendingAndDeleting — resource deleted while still in Pending; skip CMP entirely
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name:       "PendingAndDeleting",
-		KCondition: reconciler.KubePendingAndDeleting[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition: reconciler.AlwaysTrue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		KAction:    reconciler.KubeDeleteFromPending[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse](r.Client),
-		Requeue:    reconciler.NoRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-	})
-
-	// 1. ShouldBeDeleted
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name:           "ShouldBeDeleted",
-		KCondition:     reconciler.KubeShouldDelete[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition:     cmpCloudServerIsFinal,
-		KAction:        r.kubeMarkToDelete,
-		Requeue:        reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-	})
-
-	// 2. ShouldDeleteTimedOut
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name:           "ShouldDeleteTimedOut",
-		KCondition:     reconciler.KubeShouldDeleteTimedOut[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition:     reconciler.AlwaysTrue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		KAction:        r.kubeMarkToDelete,
-		Requeue:        reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-	})
-
-	// 3. ShouldBeDeletedOnCMP
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name:              "ShouldBeDeletedOnCMP",
-		KCondition:        reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition:        cmpCloudServerIsFinal,
-		AAction:           r.cmpDelete,
-		KActionOnASuccess: r.kubeMarkDeleting,
-		KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse](r.Client),
-		Requeue:           reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-	})
-
-	// 4. DeletionOnCMPNotNeeded
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name:           "DeletionOnCMPNotNeeded",
-		KCondition:     reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition:     cmpCloudServerNotExists,
-		KAction:        r.kubeMarkDeletingDone,
-		Requeue:        reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-	})
-
-	// 5. WaitingDeletionOnCMP
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name:           "WaitingDeletionOnCMP",
-		KCondition:     reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition:     cmpCloudServerIsTransitory,
-		Requeue:        reconciler.LongRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-	})
-
-	// 6. DeletionConfirmedOnCMP
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name:           "DeletionConfirmedOnCMP",
-		KCondition:     reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition:     cmpCloudServerNotExists,
-		KAction:        r.kubeMarkDeletingDone,
-		Requeue:        reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-	})
-
-	// 7. DeletionAccomplished
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name:           "DeletionAccomplished",
-		KCondition:     reconciler.KubeDeletionAccomplished[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition:     cmpCloudServerNotExists,
-		KAction:        r.kubeMarkDeleted,
-		Requeue:        reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-	})
-
-	// 8. HasDeniedChanges — surface immutable field violations before attempting update
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name:       "HasDeniedChanges",
-		KCondition: kubeCSHasDeniedChanges,
-		ACondition: cmpCloudServerIsFinal,
-		KAction: func(ctx context.Context, kubeCS *v1alpha1.CloudServer, cmpCS *arubatypes.CloudServerResponse) error {
-			return fmt.Errorf("cloud server update rejected: %w", checkCSDeniedChanges(kubeCS, cmpCS))
-		},
-		Requeue:        reconciler.NoRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		RequeueOnError: reconciler.LongRequeueAndIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-	})
-
-	// 9. SpecAlreadyInSyncWithCMP — generation changed but spec identical to CMP
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name:           "SpecAlreadyInSyncWithCMP",
-		KCondition:     kubeCSSpecInSyncWithCMP,
-		ACondition:     cmpCloudServerIsActive,
-		KAction:        r.kubeSetActiveAndSetID,
-		Requeue:        reconciler.NoRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-	})
-
-	// 10. ShouldBeUpdated
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name:           "ShouldBeUpdated",
-		KCondition:     kubeCSShouldUpdate,
-		ACondition:     cmpCloudServerIsFinal,
-		KAction:        r.kubeMarkToUpdate,
-		Requeue:        reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-	})
-
-	// 11. ShouldBeUpdatedOnCMP
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name:              "ShouldBeUpdatedOnCMP",
-		KCondition:        reconciler.KubeShouldBeUpdatedOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition:        cmpCloudServerIsFinal,
-		AAction:           r.cmpUpdate,
-		KActionOnASuccess: r.kubeMarkUpdating,
-		KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse](r.Client),
-		Requeue:           reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-	})
-
-	// 12. WaitingUpdateOnCMP
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name:           "WaitingUpdateOnCMP",
-		KCondition:     reconciler.KubeWaitingUpdateOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition:     cmpCloudServerIsTransitory,
-		Requeue:        reconciler.LongRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-	})
-
-	// 13. UpdateConfirmedOnCMP
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name:           "UpdateConfirmedOnCMP",
-		KCondition:     reconciler.KubeWaitingUpdateOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition:     cmpCloudServerIsFinal,
-		KAction:        r.kubeMarkUpdatingDone,
-		Requeue:        reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-	})
-
-	// 14. UpdateAccomplished
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name:           "UpdateAccomplished",
-		KCondition:     reconciler.KubeUpdateAccomplished[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition:     cmpCloudServerIsActive,
-		KAction:        r.kubeSetActiveAndSetID,
-		Requeue:        reconciler.NoRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-	})
-
-	// 15. ShouldBeCreated
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name:           "ShouldBeCreated",
-		KCondition:     reconciler.KubeIsFirstReconciliation[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition:     cmpCloudServerNotExists,
-		KAction:        r.kubeMarkToCreate,
-		Requeue:        reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-	})
-
-	// 16. ShouldBeCreatedInCMP
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name:              "ShouldBeCreatedInCMP",
-		KCondition:        reconciler.KubeShouldBeCreatedOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition:        cmpCloudServerNotExists,
-		AAction:           r.cmpCreate,
-		KActionOnASuccess: r.kubeMarkCreating,
-		KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse](r.Client),
-		Requeue:           reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-	})
-
-	// 17. WaitingCreationInCMP
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name:           "WaitingCreationInCMP",
-		KCondition:     reconciler.KubeWaitingCreationInCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition:     cmpCloudServerNotExistsOrTransitory,
-		Requeue:        reconciler.LongRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-	})
-
-	// 18. CreationConfirmedOnCMP
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name:           "CreationConfirmedOnCMP",
-		KCondition:     reconciler.KubeWaitingCreationInCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition:     cmpCloudServerIsActive,
-		KAction:        r.kubeMarkCreatingDone,
-		Requeue:        reconciler.ShortRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-	})
-
-	// 19. CreationAccomplished
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name:           "CreationAccomplished",
-		KCondition:     reconciler.KubeIsCreatedOnCMP[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition:     cmpCloudServerIsActive,
-		KAction:        r.kubeSetActiveAndSetID,
-		Requeue:        reconciler.NoRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-	})
-
-	// 20. IsInError
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse]{
-		Name:           "IsInError",
-		KCondition:     reconciler.AlwaysTrue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		ACondition:     cmpCloudServerIsFailed,
-		KAction:        r.kubeSetFailed,
-		Requeue:        reconciler.NoRequeue[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.CloudServer, *arubatypes.CloudServerResponse],
-	})
-
-	return ts
-}
-
-// --- Resource-specific condition functions ---
+// ---------------------------------------------------------------------------
+// Kube conditions
+// ---------------------------------------------------------------------------
 
 func kubeCSHasDeniedChanges(kubeCS *v1alpha1.CloudServer, cmpCS *arubatypes.CloudServerResponse) bool {
 	if !kubeCS.DeletionTimestamp.IsZero() {
@@ -848,6 +1458,10 @@ func kubeCSShouldUpdate(kubeCS *v1alpha1.CloudServer, cmpCS *arubatypes.CloudSer
 		checkCSDeniedChanges(kubeCS, cmpCS) == nil &&
 		kubeCSNeedsUpdate(kubeCS, cmpCS)
 }
+
+// ---------------------------------------------------------------------------
+// CMP conditions
+// ---------------------------------------------------------------------------
 
 func cmpCloudServerNotExists(_ *v1alpha1.CloudServer, cmpCS *arubatypes.CloudServerResponse) bool {
 	return cmpCS == nil
@@ -894,7 +1508,9 @@ func cmpCloudServerIsFailed(_ *v1alpha1.CloudServer, cmpCS *arubatypes.CloudServ
 	return cmpCS != nil && cmpCS.Status.State != nil && *cmpCS.Status.State == reconciler.CSPResourceStateFailed
 }
 
-// --- Kube action methods ---
+// ---------------------------------------------------------------------------
+// Kube actions
+// ---------------------------------------------------------------------------
 
 func (r *CloudServerReconciler) kubeSetPhaseAndCondition(ctx context.Context, kubeCS *v1alpha1.CloudServer, phase v1alpha1.ResourcePhase, reason string, _ error) error {
 	prePatches := []func(*v1alpha1.CloudServer){
@@ -1010,19 +1626,20 @@ func (r *CloudServerReconciler) kubeSetFailed(ctx context.Context, kubeCS *v1alp
 	return r.kubeSetPhaseAndCondition(ctx, kubeCS, v1alpha1.ResourcePhaseFailed, v1alpha1.ConditionReasonSynchronized, nil)
 }
 
-// --- CMP action methods ---
+// ---------------------------------------------------------------------------
+// CMP actions
+// ---------------------------------------------------------------------------
 
-func (r *CloudServerReconciler) cmpCreate(ctx context.Context, kubeCS *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse) error {
+func (r *CloudServerReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.CloudServer, cmpCS *arubatypes.CloudServerResponse) error {
 	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
 	prjID := ctx.Value(projectIDKey).(string)
 
-	request := cmpCSRequestFromKube(ctx, kubeCS)
-	resp, err := arubaClient.FromCompute().CloudServers().Create(ctx, prjID, *request, nil)
+	resp, err := arubaClient.FromCompute().CloudServers().Delete(ctx, prjID, *cmpCS.Metadata.ID, nil)
 	if err != nil {
-		return reconciler.CMPTransportError("create", kubeCS.Name, err)
+		return reconciler.CMPTransportError("delete", *cmpCS.Metadata.Name, err)
 	}
-	return reconciler.CMPCheckResponse("create", kubeCS.Name, resp,
-		http.StatusOK, http.StatusCreated, http.StatusAccepted)
+	return reconciler.CMPCheckResponse("delete", *cmpCS.Metadata.Name, resp,
+		http.StatusOK, http.StatusAccepted, http.StatusNoContent, http.StatusNotFound)
 }
 
 func (r *CloudServerReconciler) cmpUpdate(ctx context.Context, kubeCS *v1alpha1.CloudServer, cmpCS *arubatypes.CloudServerResponse) error {
@@ -1043,19 +1660,22 @@ func (r *CloudServerReconciler) cmpUpdate(ctx context.Context, kubeCS *v1alpha1.
 		http.StatusOK, http.StatusAccepted, http.StatusNoContent)
 }
 
-func (r *CloudServerReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.CloudServer, cmpCS *arubatypes.CloudServerResponse) error {
+func (r *CloudServerReconciler) cmpCreate(ctx context.Context, kubeCS *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse) error {
 	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
 	prjID := ctx.Value(projectIDKey).(string)
 
-	resp, err := arubaClient.FromCompute().CloudServers().Delete(ctx, prjID, *cmpCS.Metadata.ID, nil)
+	request := cmpCSRequestFromKube(ctx, kubeCS)
+	resp, err := arubaClient.FromCompute().CloudServers().Create(ctx, prjID, *request, nil)
 	if err != nil {
-		return reconciler.CMPTransportError("delete", *cmpCS.Metadata.Name, err)
+		return reconciler.CMPTransportError("create", kubeCS.Name, err)
 	}
-	return reconciler.CMPCheckResponse("delete", *cmpCS.Metadata.Name, resp,
-		http.StatusOK, http.StatusAccepted, http.StatusNoContent, http.StatusNotFound)
+	return reconciler.CMPCheckResponse("create", kubeCS.Name, resp,
+		http.StatusOK, http.StatusCreated, http.StatusAccepted)
 }
 
-// --- Helper functions ---
+// ---------------------------------------------------------------------------
+// Other helpers
+// ---------------------------------------------------------------------------
 
 func checkCSDeniedChanges(kubeCS *v1alpha1.CloudServer, cmpCS *arubatypes.CloudServerResponse) error {
 	if cmpCS == nil {
@@ -1191,8 +1811,6 @@ func cmpCSRequestFromKube(ctx context.Context, kubeCS *v1alpha1.CloudServer) *ar
 	return req
 }
 
-// URI builder helpers
-
 func buildVpcURI(projectID, vpcID string) string {
 	return fmt.Sprintf("/projects/%s/providers/Aruba.Network/vpcs/%s", projectID, vpcID)
 }
@@ -1216,6 +1834,10 @@ func buildSecurityGroupURI(projectID, vpcID, securityGroupID string) string {
 func buildVolumeURI(projectID, volumeID string) string {
 	return fmt.Sprintf("/projects/%s/providers/Aruba.Storage/blockStorages/%s", projectID, volumeID)
 }
+
+// ---------------------------------------------------------------------------
+// Setup
+// ---------------------------------------------------------------------------
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *CloudServerReconciler) SetupWithManager(mgr ctrl.Manager) error {

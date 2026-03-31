@@ -17,6 +17,7 @@ var _ = Describe("CMPErrorCategory", func() {
 			Expect(cat.String()).To(Equal(expected))
 		},
 		Entry("Semantic", CMPErrorCategorySemantic, "semantic"),
+		Entry("Transient", CMPErrorCategoryTransient, "transient"),
 		Entry("Technical", CMPErrorCategoryTechnical, "technical"),
 		Entry("zero value", CMPErrorCategory(0), "unknown"),
 	)
@@ -120,23 +121,34 @@ var _ = Describe("CMPTransportError", func() {
 })
 
 var _ = Describe("cmpResponseError", func() {
-	DescribeTable("category classification by status code",
+	DescribeTable("category classification by status code (nil errResp → Transient for 4xx)",
 		func(statusCode int, expectedCategory CMPErrorCategory) {
 			e := cmpResponseError("create", "res", statusCode, nil)
 			Expect(e.Category).To(Equal(expectedCategory))
 		},
-		Entry("400 Bad Request", http.StatusBadRequest, CMPErrorCategorySemantic),
-		Entry("401 Unauthorized", http.StatusUnauthorized, CMPErrorCategorySemantic),
-		Entry("403 Forbidden", http.StatusForbidden, CMPErrorCategorySemantic),
-		Entry("404 Not Found", http.StatusNotFound, CMPErrorCategorySemantic),
-		Entry("409 Conflict", http.StatusConflict, CMPErrorCategorySemantic),
-		Entry("422 Unprocessable Entity", http.StatusUnprocessableEntity, CMPErrorCategorySemantic),
-		Entry("499 (boundary)", 499, CMPErrorCategorySemantic),
+		Entry("400 Bad Request", http.StatusBadRequest, CMPErrorCategoryTransient),
+		Entry("401 Unauthorized", http.StatusUnauthorized, CMPErrorCategoryTransient),
+		Entry("403 Forbidden", http.StatusForbidden, CMPErrorCategoryTransient),
+		Entry("404 Not Found", http.StatusNotFound, CMPErrorCategoryTransient),
+		Entry("409 Conflict", http.StatusConflict, CMPErrorCategoryTransient),
+		Entry("422 Unprocessable Entity", http.StatusUnprocessableEntity, CMPErrorCategoryTransient),
+		Entry("499 (boundary)", 499, CMPErrorCategoryTransient),
 		Entry("500 Internal Server Error", http.StatusInternalServerError, CMPErrorCategoryTechnical),
 		Entry("502 Bad Gateway", http.StatusBadGateway, CMPErrorCategoryTechnical),
 		Entry("503 Service Unavailable", http.StatusServiceUnavailable, CMPErrorCategoryTechnical),
 		Entry("200 (unexpected success passed in)", http.StatusOK, CMPErrorCategoryTechnical),
 		Entry("300 (redirect)", http.StatusMultipleChoices, CMPErrorCategoryTechnical),
+	)
+
+	DescribeTable("category classification by Errors content for 4xx",
+		func(errors []arubatypes.ValidationError, expectedCategory CMPErrorCategory) {
+			errResp := &arubatypes.ErrorResponse{Errors: errors}
+			e := cmpResponseError("create", "res", http.StatusBadRequest, errResp)
+			Expect(e.Category).To(Equal(expectedCategory))
+		},
+		Entry("non-empty Errors → Semantic", []arubatypes.ValidationError{{Field: "Tag", Message: "too short"}}, CMPErrorCategorySemantic),
+		Entry("empty Errors slice → Transient", []arubatypes.ValidationError{}, CMPErrorCategoryTransient),
+		Entry("nil Errors (zero value) → Transient", nil, CMPErrorCategoryTransient),
 	)
 
 	It("extracts Title, Detail, Instance from ErrorResponse", func() {
@@ -200,14 +212,29 @@ var _ = Describe("CMPCheckResponse", func() {
 		Expect(CMPCheckResponse("create", "res", resp, http.StatusOK, http.StatusCreated)).To(Succeed())
 	})
 
-	It("returns a CMPError when status code is not in successCodes", func() {
+	It("returns a Transient CMPError when status code is 4xx with no Errors", func() {
 		resp := &arubatypes.Response[struct{}]{StatusCode: http.StatusBadRequest}
 		err := CMPCheckResponse("create", "res", resp, http.StatusOK, http.StatusCreated)
 		Expect(err).To(HaveOccurred())
 		var cmpErr *CMPError
 		Expect(errors.As(err, &cmpErr)).To(BeTrue())
 		Expect(cmpErr.StatusCode).To(Equal(http.StatusBadRequest))
+		Expect(cmpErr.Category).To(Equal(CMPErrorCategoryTransient))
+	})
+
+	It("returns a Semantic CMPError when status code is 4xx with non-empty Errors", func() {
+		resp := &arubatypes.Response[struct{}]{
+			StatusCode: http.StatusBadRequest,
+			Error: &arubatypes.ErrorResponse{
+				Errors: []arubatypes.ValidationError{{Field: "Tag", Message: "length must be at least 4"}},
+			},
+		}
+		err := CMPCheckResponse("create", "res", resp, http.StatusOK, http.StatusCreated)
+		Expect(err).To(HaveOccurred())
+		var cmpErr *CMPError
+		Expect(errors.As(err, &cmpErr)).To(BeTrue())
 		Expect(cmpErr.Category).To(Equal(CMPErrorCategorySemantic))
+		Expect(cmpErr.Detail).To(ContainSubstring("Tag: length must be at least 4"))
 	})
 
 	It("returns a Technical CMPError for 5xx", func() {
@@ -231,10 +258,62 @@ var _ = Describe("CMPCheckResponse", func() {
 	})
 })
 
+var _ = Describe("cmpResponseError Errors formatting", func() {
+	It("formats Field and Message into Detail", func() {
+		errResp := &arubatypes.ErrorResponse{
+			Errors: []arubatypes.ValidationError{
+				{Field: "Tag", Message: "length must be at least 4"},
+				{Field: "Region", Message: "invalid value"},
+			},
+		}
+		e := cmpResponseError("create", "res", 400, errResp)
+		Expect(e.Detail).To(Equal("Validation: Tag: length must be at least 4; Region: invalid value"))
+	})
+
+	It("formats Message-only ValidationError", func() {
+		errResp := &arubatypes.ErrorResponse{
+			Errors: []arubatypes.ValidationError{{Message: "quota exceeded"}},
+		}
+		e := cmpResponseError("create", "res", 400, errResp)
+		Expect(e.Detail).To(Equal("Validation: quota exceeded"))
+	})
+
+	It("formats Field-only ValidationError", func() {
+		errResp := &arubatypes.ErrorResponse{
+			Errors: []arubatypes.ValidationError{{Field: "Size"}},
+		}
+		e := cmpResponseError("create", "res", 400, errResp)
+		Expect(e.Detail).To(Equal("Validation: Size: invalid"))
+	})
+
+	It("appends validation detail when Detail is already set", func() {
+		detail := "one or more errors"
+		errResp := &arubatypes.ErrorResponse{
+			Detail: &detail,
+			Errors: []arubatypes.ValidationError{{Field: "Tag", Message: "too short"}},
+		}
+		e := cmpResponseError("create", "res", 400, errResp)
+		Expect(e.Detail).To(Equal("one or more errors | Validation: Tag: too short"))
+	})
+
+	It("skips empty ValidationError entries", func() {
+		errResp := &arubatypes.ErrorResponse{
+			Errors: []arubatypes.ValidationError{{}, {Field: "Tag", Message: "too short"}},
+		}
+		e := cmpResponseError("create", "res", 400, errResp)
+		Expect(e.Detail).To(Equal("Validation: Tag: too short"))
+	})
+})
+
 var _ = Describe("CMPErrorIsSemantic", func() {
 	It("returns true for a semantic CMPError", func() {
 		e := &CMPError{Category: CMPErrorCategorySemantic}
 		Expect(CMPErrorIsSemantic(e)).To(BeTrue())
+	})
+
+	It("returns false for a transient CMPError", func() {
+		e := &CMPError{Category: CMPErrorCategoryTransient}
+		Expect(CMPErrorIsSemantic(e)).To(BeFalse())
 	})
 
 	It("returns false for a technical CMPError", func() {
@@ -253,6 +332,33 @@ var _ = Describe("CMPErrorIsSemantic", func() {
 	})
 })
 
+var _ = Describe("CMPErrorIsTransient", func() {
+	It("returns true for a transient CMPError", func() {
+		e := &CMPError{Category: CMPErrorCategoryTransient}
+		Expect(CMPErrorIsTransient(e)).To(BeTrue())
+	})
+
+	It("returns false for a semantic CMPError", func() {
+		e := &CMPError{Category: CMPErrorCategorySemantic}
+		Expect(CMPErrorIsTransient(e)).To(BeFalse())
+	})
+
+	It("returns false for a technical CMPError", func() {
+		e := &CMPError{Category: CMPErrorCategoryTechnical}
+		Expect(CMPErrorIsTransient(e)).To(BeFalse())
+	})
+
+	It("returns false for a plain error", func() {
+		Expect(CMPErrorIsTransient(errors.New("some error"))).To(BeFalse())
+	})
+
+	It("returns true when the error is wrapped with fmt.Errorf", func() {
+		e := &CMPError{Category: CMPErrorCategoryTransient}
+		wrapped := fmt.Errorf("outer: %w", e)
+		Expect(CMPErrorIsTransient(wrapped)).To(BeTrue())
+	})
+})
+
 var _ = Describe("CMPErrorIsTechnical", func() {
 	It("returns true for a technical CMPError", func() {
 		e := &CMPError{Category: CMPErrorCategoryTechnical}
@@ -261,6 +367,11 @@ var _ = Describe("CMPErrorIsTechnical", func() {
 
 	It("returns false for a semantic CMPError", func() {
 		e := &CMPError{Category: CMPErrorCategorySemantic}
+		Expect(CMPErrorIsTechnical(e)).To(BeFalse())
+	})
+
+	It("returns false for a transient CMPError", func() {
+		e := &CMPError{Category: CMPErrorCategoryTransient}
 		Expect(CMPErrorIsTechnical(e)).To(BeFalse())
 	})
 

@@ -20,6 +20,7 @@ The core pattern is a **three-layer reconciliation**:
 2. **`internal/controller/<resource>_controller.go`** — Resource-specific reconciler implementing `ResourceReconciler`:
    - Fetches the CMP resource from the Aruba API (nil if not found)
    - Passes both the Kubernetes object and the CMP response to `TransitionSet.Run()`
+   - Each controller file follows a canonical 14-section layout documented in `ai/CONVENTIONS.md` ("Controller file layout")
 
 3. **`internal/reconciler/transition.go`** — Generic state machine (`TransitionSet[K, A]`):
    - Evaluates transitions in order; executes the first whose condition matches
@@ -68,7 +69,7 @@ It measures the duration of each `HandleReconcile` call (the resource-specific r
 
 ### Endpoint
 
-Metrics are served on `:8080` via plain HTTP (no TLS, no authentication). The controller-runtime manager automatically handles the `/metrics` path.
+Metrics are served on `:9080` via plain HTTP (no TLS, no authentication). The controller-runtime manager automatically handles the `/metrics` path.
 
 ## Condition Reason State Machine
 
@@ -96,8 +97,10 @@ KAction and AAction are mutually exclusive by design to avoid double side-effect
 
 **Standard error-handling wiring** for CMP-facing transitions (`ShouldBeCreatedInCMP`, `ShouldBeUpdatedOnCMP`, `ShouldBeDeletedOnCMP`):
 
-- `KActionOnAError`: `KubeSetErrorMessageOnCMPError[K, A](r.Client)` — surfaces the CMP error details in the condition message without changing the resource's phase or reason. The Aruba CMP API does not reliably distinguish transient dependency blockages from permanent errors, so CMP errors never move a resource to `Failed` — only timeouts do.
-- `RequeueOnError`: `SmartRequeueOnError[K, A]` — uses `ShortRequeueAfter` for technical errors (fast infrastructure retry) and `LongRequeueAfter` for semantic errors (wait for manual fix).
+- `KActionOnAError`: `KubeSetErrorMessageOnCMPError[K, A](r.Client)` — behavior depends on the error category:
+  - **Semantic** (4xx with field-level validation errors): during `Creating` or `Updating` phase, moves the resource to `Failed+ValidationFailed` immediately so the user gets feedback. Recovery is generation-gated: `IsCMPValidationFailedAndSpecChanged` in `HandleReconcile` Stage 4 resets the phase only after the user edits the spec (generation changes).
+  - **Transient** (4xx without validation errors) or **Technical** (5xx/network): surfaces the error message in the condition without changing the resource's phase or reason. Only timeouts (`PhaseTimedOut`) may eventually move these to `Failed`.
+- `RequeueOnError`: `SmartRequeueOnError[K, A]` — uses `ShortRequeueAfter` for technical errors, `LongRequeueAfter` for transient errors, and `ctrl.Result{}` (no requeue) for semantic errors — the resource waits for a spec change to trigger the next reconcile. Exception: during the `Deleting` phase, semantic errors always get `LongRequeueAfter` (there is no "wait for spec change" recovery during deletion — the error is a temporary CMP-side condition that resolves once dependent resources are cleaned up).
 
 ## Transition Patterns
 
@@ -107,7 +110,27 @@ Every controller builds a `TransitionSet` evaluated top-to-bottom each reconcili
 
 **`PhaseTimedOut`** — if the resource has been in any transitory phase with reason `ShallSynchronize` or `Synchronizing` for longer than `MaxPhaseTimeout`, move it to `Failed`. This must be the first transition to short-circuit stuck resources before any other logic runs.
 
-### 1. Deletion flow
+### 1. Unblock deletion for ValidationFailed resources
+
+When a resource is being deleted while stuck in any `*ValidationFailed` state (`ValidationFailed`, `IntentionValidationFailed`, or `PostValidationFailed`), the `ValidationFailedAndDeleting` transition resets the phase to `Pending+Synchronized` (no `ResourceID`) or `Active+Synchronized` (has `ResourceID`), allowing the normal deletion flow to proceed on the next reconcile.
+
+| Transition | K condition | CMP condition | Action |
+|-----------|-------------|---------------|--------|
+| `ValidationFailedAndDeleting` | deleting + `Phase=Failed` + any `*ValidationFailed` reason | any (always true) | `KubeResetValidationFailedForDeletion` — reset to `Pending+Synchronized` or `Active+Synchronized` |
+
+**Trade-off**: Because this runs inside the `TransitionSet`, the CMP data fetch (Stages 5–6) executes before the transition fires, adding one unnecessary CMP API call for this rare edge case. This is acceptable because (a) it only happens once per deletion of a validation-failed resource, and (b) the reset causes a short requeue and the normal deletion flow takes over.
+
+### 2. Deletion from Pending (before CMP resource ever exists)
+
+When a resource is deleted while still in `Pending` phase (i.e., no CMP resource was ever created), the standard deletion flow is bypassed entirely. This transition must come before `ShouldBeDeleted`.
+
+| Transition | K condition | CMP condition | Action |
+|-----------|-------------|---------------|--------|
+| `PendingAndDeleting` | `Phase=Pending` + deleting + no `ResourceID` | any (always true) | `KubeDeleteFromPending` — set `Deleted+Synchronized` directly (no CMP interaction; Pending condition was already Synchronized) |
+
+After `KubeDeleteFromPending` sets `Phase=Deleted`, the base reconciler's Step 3 removes the finalizer immediately.
+
+### 3. Deletion flow
 
 Triggered by Kubernetes setting `DeletionTimestamp`. Steps:
 
@@ -122,11 +145,11 @@ Triggered by Kubernetes setting `DeletionTimestamp`. Steps:
 | `DeletionConfirmedOnCMP` | `Deleting+Synchronizing` | CMP gone | Mark `Deleting+Synchronized` |
 | `DeletionAccomplished` | `Deleting+Synchronized` | CMP gone | Mark `Deleted` → base reconciler removes finalizer |
 
-### 2. Update flow
+### 4. Update flow
 
 Triggered when `ObservedGeneration != Generation` (spec changed). Resources may additionally guard immutable fields before entering this flow.
 
-#### 2a. Standard update (CMP has an update API)
+#### 4a. Standard update (CMP has an update API)
 
 | Transition | K condition | CMP condition | Action |
 |-----------|-------------|---------------|--------|
@@ -138,7 +161,7 @@ Triggered when `ObservedGeneration != Generation` (spec changed). Resources may 
 | `UpdateConfirmedOnCMP` | `Updating+Synchronizing` + spec converged | CMP exists | Mark `Updating+Synchronized` |
 | `UpdateAccomplished` | `Updating+Synchronized` | CMP in final/active state | `SetActiveAndSetID` |
 
-#### 2b. Update-not-supported rollback (CMP has no update API)
+#### 4b. Update-not-supported rollback (CMP has no update API)
 
 When the CMP provides no update endpoint, spec changes must be rejected and rolled back. The resource visibly enters the `Updating` phase, surfaces a `Failed` condition, then reverts the spec to the CMP's current state and returns to `Active`. This uses three transitions instead of the standard update flow:
 
@@ -158,17 +181,7 @@ When the CMP provides no update endpoint, spec changes must be rejected and roll
 - The rollback transition uses `NoRequeue` because `reconciler.SetActiveAndSetID` internally stamps `ObservedGeneration` to the new generation, preventing re-entry into `ShouldBeUpdated` on the next reconcile.
 - In tests, the `UpdateRollback` test verifies that `Spec.Tags` and `Spec.Region` (or the resource's equivalent mutable fields) are restored to the CMP response values.
 
-### 0b. Deletion from Pending (before CMP resource ever exists)
-
-When a resource is deleted while still in `Pending` phase (i.e., no CMP resource was ever created), the standard deletion flow is bypassed entirely. This transition must come before `ShouldBeDeleted`.
-
-| Transition | K condition | CMP condition | Action |
-|-----------|-------------|---------------|--------|
-| `PendingAndDeleting` | `Phase=Pending` + deleting + no `ResourceID` | any (always true) | `KubeDeleteFromPending` — set `Deleted+Synchronized` directly (no CMP interaction; Pending condition was already Synchronized) |
-
-After `KubeDeleteFromPending` sets `Phase=Deleted`, the base reconciler's Step 3 removes the finalizer immediately.
-
-### 3. Creation flow
+### 5. Creation flow
 
 Triggered on the first reconciliation (`Phase=Pending`, empty `ResourceID`, `Reason=Synchronized`).
 
@@ -180,7 +193,7 @@ Triggered on the first reconciliation (`Phase=Pending`, empty `ResourceID`, `Rea
 | `CreationConfirmedOnCMP` | `Creating+Synchronizing` | CMP now found/active | Mark `Creating+Synchronized` |
 | `CreationAccomplished` | `Creating+Synchronized` | CMP active | `SetActiveAndSetID` (stores `ResourceID`, stamps `ObservedGeneration`) |
 
-### 4. CMP-side failure detection (resources with CMP failure states)
+### 6. CMP-side failure detection (resources with CMP failure states)
 
 Resources whose CMP state machine includes an explicit `Failed` state include an additional catch-all transition:
 
@@ -278,12 +291,117 @@ See `ai/KNOWN_ISSUES.md` for edge cases (concurrent sibling deletion order, stuc
 
 ## HandleReconcile responsibilities
 
-`HandleReconcile` in each controller does the following before calling `ts.Run`:
+`HandleReconcile` in each controller follows an 8-stage pipeline:
 
-1. **Resolve the Aruba API client** — calls `r.ArubaClient(kubeObj.Spec.Tenant)` to obtain a tenant-scoped `aruba.Client` and stores it in the context via `context.WithValue(ctx, reconciler.ArubaClientKey, arubaClient)`. CMP action methods (`cmpCreate`, `cmpUpdate`, `cmpDelete`) extract it with `ctx.Value(reconciler.ArubaClientKey).(aruba.Client)`.
-2. **Resolve parent references** — some resources reference others (e.g. a resource scoped to a project). The project ID is looked up from the CMP API and injected into the context so action methods can access it without re-fetching.
-3. **Fetch the CMP resource** — list by name filter, validate cardinality (must be 0 or 1), return `nil` if not found.
-4. **Validate consistency** — e.g. detect if a previously recorded parent ID no longer matches.
+1. **Setup** — type assertion, logger enrichment (`tenant` field), `isDeleting` flag.
+
+2. **Fetch K8s dependencies + set owner reference** (`fetchKubeDependencies`) — resolves the K8s parent object (Project, VPC, SecurityGroup), sets the cross-namespace owner reference annotation/label, and returns `ShortRequeue` if the patch was applied. Returns `nil` (skip silently) when the parent is not found in K8s; this preserves all existing tests that don't create K8s parents. For CloudServer, also fetches K8s dependency objects (VPC, BootVolume, Subnets, SecurityGroups, KeyPair, ElasticIP) needed for intention validation.
+
+3. **Parent readiness precondition** — blocks first-time CMP creation until the K8s parent is `Active+Synchronized`. Guard: `!isDeleting && kubeParent != nil && kubeResource.Status.ResourceID == "" && !reconciler.IsResourceReady(kubeParent)`. Returns `LongRequeue` when the parent is not yet ready. This prevents creating child CMP resources before the parent CMP resource exists.
+
+4. **Intention cross-validation (`ivs.Run`)** — K8s-only validation, runs **before** any CMP calls. Skipped during deletion (`isDeleting`). If any rule fails → `Failed+IntentionValidationFailed` + return (no requeue — wait for spec change). If rules now pass but resource was previously `IntentionValidationFailed` → recovery: reset to `Pending+Synchronized` or `Active+Synchronized` + `ShortRequeue`. After ivs passes, if resource is `Failed+ValidationFailed` (CMP semantic error) and spec was changed since failure (`IsCMPValidationFailedAndSpecChanged`) → recovery: reset phase + `ShortRequeue`. See the Cross-Resource Consistency Validation section below.
+
+5. **Aruba client creation** — calls `r.ArubaClient(kubeObj.Spec.Tenant)` to obtain a tenant-scoped `aruba.Client`.
+
+6. **Resolve CMP dependencies** (`fetchCMPDependencies`) — looks up CMP parent IDs, fetches all CMP dependency responses, and fetches the primary CMP resource by name filter (returns `nil` if not found).
+
+7. **CMP-aware drift validation (`vs.Run`)** — runs only when `!isDeleting && cmpObj != nil` (and, for CloudServer, `kubeBdl.KubeProject != nil`). If any rule fails → `Failed+PostValidationFailed` + return (no requeue). If rules now pass but resource was previously `PostValidationFailed` → recovery: reset to `Active+Synchronized` + `ShortRequeue`.
+
+8. **Call `ts.Run(ctx, kubeObj, cmpObj)`** — invoke the state machine.
+
+## Cross-Resource Consistency Validation Engine
+
+Each controller uses a **two-tier** validation model:
+
+| Set | Field | Stage | Runs when | Data source | Purpose |
+|-----|-------|-------|-----------|-------------|---------|
+| `ivs` | `r.ivs` | Stage 4 | Always (unless deleting) | K8s spec fields only | Reference presence + cross-resource K8s intent (fail-fast before any CMP calls) |
+| `vs` | `r.vs` | Stage 7 | CMP resource exists (`cmpObj != nil`) | CMP responses + K8s specs | Post-creation drift detection |
+
+Both sets use the same `ValidationSet[K, A, B]` engine in `internal/reconciler/validation.go`.
+
+### How it works
+
+**Stage 4 — ivs (intention validation)**: runs before any CMP calls. If any rule fails:
+1. `SetPhaseAndCondition` sets `Failed+IntentionValidationFailed` on the K8s object.
+2. `HandleReconcile` returns `ctrl.Result{}` (no requeue — resource waits for spec change).
+
+If the current state is `Failed+IntentionValidationFailed` but all rules now pass, a **recovery block** resets the phase to `Pending+Synchronized` (or `Active+Synchronized` if `ResourceID` is non-empty) and returns `ShortRequeue`. After ivs passes, if the resource is `Failed+ValidationFailed` (CMP semantic error) and the spec has changed since the failure (`IsCMPValidationFailedAndSpecChanged` — generation mismatch), the same recovery pattern fires.
+
+ivs is skipped when `isDeleting` is true — this ensures that resources with missing references can still be deleted (the finalizer runs unblocked).
+
+**Stage 7 — vs (drift validation)**: runs after CMP dependencies are fetched. If any rule fails → `Failed+PostValidationFailed` + return (no requeue). If the resource was previously `PostValidationFailed` but rules now pass, a recovery block resets to `Active+Synchronized` + `ShortRequeue`.
+
+**Empty bundle for ivs**: When `kubeBdl` can be nil (dependency not found in K8s), the controller passes `&kube<Resource>Bundle{}` so reference rules can fire without nil dereferences. Cross-validation rules that access bundle fields nil-guard those fields and return `nil` when the dependency object is not yet present.
+
+All rules are **always evaluated** (no short-circuit); the caller sees every violation at once.
+
+### ValidationSet API
+
+```go
+// In internal/reconciler/validation.go
+type ValidationFunc[K ResourceObject, A any, B any] func(k K, a A, b B) error
+type ValidationSet[K ResourceObject, A any, B any] struct { ... }
+func (vs *ValidationSet[K, A, B]) Add(name string, fn ValidationFunc[K, A, B])
+func (vs *ValidationSet[K, A, B]) Run(k K, a A, b B) error  // returns *ErrInvalid or nil
+```
+
+### Bundle struct
+
+Controllers that reference other resources use a **two-part bundle composition** (see `CONVENTIONS.md` for the full pattern):
+
+- `kube<Resource>Bundle` — K8s-only fields fetched by `fetchKubeDependencies`; the `ivs` type parameter is `*kube<Resource>Bundle`
+- `cmp<Resource>Bundle` — CMP-only fields fetched by `fetchCMPDependencies`; carries resolved CMP responses for parent resources
+- `<resource>Bundle` — embeds both sub-bundles via struct embedding; the `vs` type parameter is `*<resource>Bundle`
+
+**Simple controllers** (VPC, BlockStorage, ElasticIP, KeyPair) have no `cmp<Resource>Bundle` — there are no CMP-only bundle fields for these controllers. The `<resource>Bundle` embeds only `kube<Resource>Bundle`. The split is still present: `kube<Resource>Bundle` is the ivs type parameter and `<resource>Bundle` is the vs type parameter.
+
+Fields within each sub-bundle appear in the order they are fetched: `fetchKubeDependencies` fetch order for K8s fields, and `fetchCMPDependencies` / resolve* call order for CMP fields.
+
+### Validation dimensions
+
+| Dimension | `vs` (CMP drift) source | `ivs` (intention) source |
+|---|---|---|
+| **Tenant** | K8s spec fields | K8s spec fields |
+| **VPC reference** | K8s spec fields | K8s spec fields |
+| **Project reference** | K8s spec fields | K8s spec fields |
+
+### Rules per controller
+
+The `ivs` column always lists reference rules first (presence checks), followed by cross-resource consistency checks. The `vs` column contains only cross-resource consistency checks (no reference rules — the resource already exists on CMP by Stage 7).
+
+| Controller | `ivs` rules | `vs` rules |
+|---|---|---|
+| VPC | ProjectReferenceRequired, TenantMustMatchProject | TenantMustMatchProject |
+| BlockStorage | ProjectReferenceRequired, TenantMustMatchProject | TenantMustMatchProject |
+| ElasticIP | ProjectReferenceRequired, TenantMustMatchProject | TenantMustMatchProject |
+| KeyPair | ProjectReferenceRequired, TenantMustMatchProject | TenantMustMatchProject |
+| Subnet | ProjectReferenceRequired, VPCReferenceRequired, TenantMustMatchVPC, ProjectMustMatchVPC, TenantMustMatchProject | TenantMustMatchVPC, ProjectMustMatchVPC, TenantMustMatchProject |
+| SecurityGroup | ProjectReferenceRequired, VPCReferenceRequired, TenantMustMatchVPC, ProjectMustMatchVPC, TenantMustMatchProject | TenantMustMatchVPC, ProjectMustMatchVPC, TenantMustMatchProject |
+| SecurityRule | ProjectReferenceRequired, VPCReferenceRequired, SecurityGroupReferenceRequired, TenantMustMatchSecurityGroup, VPCMustMatchSecurityGroup, ProjectMustMatchSecurityGroup, TenantMustMatchProject | TenantMustMatchSecurityGroup, VPCMustMatchSecurityGroup, ProjectMustMatchSecurityGroup, TenantMustMatchProject |
+| CloudServer | ProjectReferenceRequired, VPCReferenceRequired, BootVolumeReferenceRequired, SubnetReferencesRequired, SecurityGroupReferencesRequired, TenantMustMatchProject, VPCMustMatchAllSubnets, VPCMustMatchAllSecurityGroups, TenantMustMatchVPC\†, TenantMustMatchBootVolume\†, TenantMustMatchKeyPair\*†, TenantMustMatchElasticIP\*†, TenantMustMatchAllSubnets, TenantMustMatchAllSecurityGroups, ProjectMustMatchVPC\†, ProjectMustMatchBootVolume\†, ProjectMustMatchKeyPair\*†, ProjectMustMatchElasticIP\*†, ProjectMustMatchAllSubnets, ProjectMustMatchAllSecurityGroups | TenantMustMatchProject, VPCMustMatchAllSubnets, VPCMustMatchAllSecurityGroups, TenantMustMatchVPC\†, TenantMustMatchBootVolume\†, TenantMustMatchKeyPair\*†, TenantMustMatchElasticIP\*†, TenantMustMatchAllSubnets, TenantMustMatchAllSecurityGroups, ProjectMustMatchVPC\†, ProjectMustMatchBootVolume\†, ProjectMustMatchKeyPair\*†, ProjectMustMatchElasticIP\*†, ProjectMustMatchAllSubnets, ProjectMustMatchAllSecurityGroups |
+
+\* Optional rules: silently skipped when the optional resource is not referenced.
+
+\† Nil-guarded: silently skipped when the referenced K8s object is not found (dependency not yet applied).
+
+### Condition reason
+
+`ConditionReasonValidationFailed = "ValidationFailed"` is defined in `api/v1alpha1/common_types.go`.
+
+### Nil-safety
+
+**`ivs` cross-validation rules**: All rules that access K8s dependency objects in the bundle (KubeProject, KubeVpc, KubeSG, etc.) nil-guard the field and return `nil` when the object is missing. If the user hasn't applied the referenced K8s object yet, the cross-validation rule is silently skipped. It will fire on the next reconcile once the dependency object exists.
+
+**`ivs` reference rules** (e.g. `ProjectReferenceRequired`): These only access the K8s object (`k`), never the bundle, so nil-guarding the bundle is not needed. They fire regardless of whether the bundle dependency is present.
+
+**`vs` rules**: `FieldMustMatch` is used for most vs rules where the bundle dependency is guaranteed non-nil at Stage 7 (e.g., `KubeVpc` in Subnet/SecurityGroup vs, `KubeSG` in SecurityRule vs). However, `TenantMustMatchProject` in Subnet, SecurityGroup, and SecurityRule vs uses a nil-guarded inline lambda because `KubeProject` is not a direct parent for these controllers and may be nil. For CloudServer, Stage 7 is additionally gated on `kubeBdl.KubeProject != nil` because the `TenantMustMatchProject` vs rule uses `FieldMustMatch` which dereferences `KubeProject` directly.
+
+### Project reference cross-validation
+
+`ProjectMustMatch*` rules validate that the resource's `Spec.ProjectReference.Name` matches the parent's (or dependency's) `Spec.ProjectReference.Name`. This catches misconfigured resources referencing resources from different projects before any CMP interaction occurs.
+
+Note: the `resolveProjectID` helpers also pass the project ID as a path parameter to every CMP API call, so the CMP API independently scopes responses to the resolved project. The K8s-side `ProjectMustMatch*` rules serve as an earlier, declarative consistency check that fires at the Pending phase without requiring a round-trip to CMP.
 
 ## Authentication Modes
 
@@ -304,6 +422,8 @@ When `HandleReconcile` calls `r.ArubaClient(tenant)`:
 
 Every CRD type has a `Spec.Tenant` field and satisfies `ResourceObject.GetTenant()`. Controllers read `kubeObj.Spec.Tenant` to determine which tenant-scoped client to request.
 
+`Spec.Tenant` is **intentionally mutable** — there is no CRD-level CEL XValidation rule enforcing immutability. This allows users to correct a wrong tenant on a `Failed` resource without deleting and recreating it. Tenant consistency is still enforced at reconcile time via the `TenantMustMatch*` cross-validation rules (both `ivs` and `vs`), which compare the resource's tenant against its K8s dependencies.
+
 ## Testing Conventions
 
 - Ginkgo v2 + Gomega for BDD-style tests; Testify for mocks
@@ -315,7 +435,9 @@ Every CRD type has a `Spec.Tenant` field and satisfies `ResourceObject.GetTenant
 ## Adding a New Controller
 
 1. Define the CRD type in `api/v1alpha1/` and run `make manifests generate`
-2. Create `internal/controller/<resource>_controller.go` embedding `*reconciler.Reconciler`
-3. Implement `Object()`, `Finalizer()`, `HandleReconcile()` to satisfy `ResourceReconciler`
-4. Build a `reconciler.TransitionSet` covering all expected phase transitions
+2. Create `internal/controller/<resource>_controller.go`: embed `*reconciler.Reconciler`, define `kube<Resource>Bundle` and `<resource>Bundle` structs, declare `ivs`, `vs`, and `ts` fields on the reconciler struct
+3. Implement `Object()`, `Finalizer()`, `HandleReconcile()` — use the 8-stage pipeline (see `CONVENTIONS.md` "Calling the engine in HandleReconcile")
+4. Implement `fetchKubeDependencies` (K8s parent resolution + owner reference), `fetchCMPDependencies` (CMP ID resolution + primary resource fetch), `newIntentionValidationSet` (reference rules + nil-safe cross-validation), `newValidationSet` (drift rules), `newTransitionSet` (full lifecycle state machine)
 5. Register the controller in `cmd/main.go`
+
+See `ai/templates/plans/NEW_CONTROLLER.md` for the full scaffold template.

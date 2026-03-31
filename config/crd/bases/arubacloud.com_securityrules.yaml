@@ -162,9 +162,6 @@ spec:
             - target
             - vpcReference
             type: object
-            x-kubernetes-validations:
-            - message: tenant is immutable
-              rule: self.tenant == oldSelf.tenant
           status:
             description: SecurityRuleStatus defines the observed state of SecurityRule.
             properties:

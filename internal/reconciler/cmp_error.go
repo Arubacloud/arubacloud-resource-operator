@@ -13,9 +13,15 @@ import (
 type CMPErrorCategory int
 
 const (
-	// CMPErrorCategorySemantic represents user or configuration errors (HTTP 4xx).
-	// These are permanent — retrying without a config change will not help.
+	// CMPErrorCategorySemantic represents true field-level validation errors (HTTP 4xx with a
+	// non-empty Errors array in the ErrorResponse). These are permanent — the resource spec
+	// is invalid and must be corrected before the CMP will accept it.
 	CMPErrorCategorySemantic CMPErrorCategory = iota + 1
+	// CMPErrorCategoryTransient represents temporary 4xx errors where the CMP ErrorResponse
+	// carries no field-level validation details (empty Errors array). These are caused by
+	// transient conditions (e.g. a dependency resource in a wrong state) and are candidates
+	// for long-interval retry without changing the resource phase.
+	CMPErrorCategoryTransient
 	// CMPErrorCategoryTechnical represents infrastructure or transient errors
 	// (network failures, HTTP 5xx). These are candidates for short-interval retry.
 	CMPErrorCategoryTechnical
@@ -26,6 +32,8 @@ func (c CMPErrorCategory) String() string {
 	switch c {
 	case CMPErrorCategorySemantic:
 		return "semantic"
+	case CMPErrorCategoryTransient:
+		return "transient"
 	case CMPErrorCategoryTechnical:
 		return "technical"
 	default:
@@ -97,11 +105,17 @@ func CMPTransportError(operation, resource string, err error) *CMPError {
 }
 
 // cmpResponseError creates a CMPError from a non-success HTTP response.
-// HTTP 4xx responses are classified as Semantic; 5xx and everything else as Technical.
+// For HTTP 4xx: Semantic when ErrorResponse.Errors is non-empty (field-level validation
+// failures), Transient otherwise (temporary condition, e.g. dependency in wrong state).
+// For everything else: Technical.
 func cmpResponseError(operation, resource string, statusCode int, errResp *arubatypes.ErrorResponse) *CMPError {
 	category := CMPErrorCategoryTechnical
 	if statusCode >= 400 && statusCode < 500 {
-		category = CMPErrorCategorySemantic
+		if errResp != nil && len(errResp.Errors) > 0 {
+			category = CMPErrorCategorySemantic
+		} else {
+			category = CMPErrorCategoryTransient
+		}
 	}
 
 	title, detail, instance := "", "", ""
@@ -114,6 +128,27 @@ func cmpResponseError(operation, resource string, statusCode int, errResp *aruba
 		}
 		if errResp.Instance != nil {
 			instance = sanitizeCMPString(*errResp.Instance)
+		}
+		if len(errResp.Errors) > 0 {
+			parts := make([]string, 0, len(errResp.Errors))
+			for _, ve := range errResp.Errors {
+				switch {
+				case ve.Field != "" && ve.Message != "":
+					parts = append(parts, ve.Field+": "+ve.Message)
+				case ve.Message != "":
+					parts = append(parts, ve.Message)
+				case ve.Field != "":
+					parts = append(parts, ve.Field+": invalid")
+				}
+			}
+			if len(parts) > 0 {
+				validationDetail := sanitizeCMPString(strings.Join(parts, "; "))
+				if detail != "" {
+					detail = detail + " | Validation: " + validationDetail
+				} else {
+					detail = "Validation: " + validationDetail
+				}
+			}
 		}
 	}
 
@@ -139,16 +174,25 @@ func CMPCheckResponse[T any](operation, resource string, resp *arubatypes.Respon
 }
 
 // CMPErrorIsSemantic reports whether err (or any error in its chain) is a *CMPError
-// with category Semantic. Use this in RequeueOnError and KActionOnAError to decide
-// whether a CMP failure represents a permanent user/config problem.
+// with category Semantic (HTTP 4xx with field-level validation errors). These represent
+// permanent spec validation failures that require user intervention.
 func CMPErrorIsSemantic(err error) bool {
 	var cmpErr *CMPError
 	return errors.As(err, &cmpErr) && cmpErr.Category == CMPErrorCategorySemantic
 }
 
+// CMPErrorIsTransient reports whether err (or any error in its chain) is a *CMPError
+// with category Transient (HTTP 4xx without field-level validation errors). These represent
+// temporary conditions (e.g. a dependency resource in a wrong state) that may resolve
+// without user intervention.
+func CMPErrorIsTransient(err error) bool {
+	var cmpErr *CMPError
+	return errors.As(err, &cmpErr) && cmpErr.Category == CMPErrorCategoryTransient
+}
+
 // CMPErrorIsTechnical reports whether err (or any error in its chain) is a *CMPError
-// with category Technical. Use this to distinguish transient infrastructure failures
-// from permanent semantic errors.
+// with category Technical (5xx or network failure). These are transient infrastructure
+// failures that warrant a short-interval retry.
 func CMPErrorIsTechnical(err error) bool {
 	var cmpErr *CMPError
 	return errors.As(err, &cmpErr) && cmpErr.Category == CMPErrorCategoryTechnical

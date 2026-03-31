@@ -4,7 +4,7 @@ controllerManager:
   kvMount: kw
   manager:
     args:
-    - --metrics-bind-address=:8080
+    - --metrics-bind-address=:9080
     - --leader-elect
     - --health-probe-bind-address=:8081
     - --config-map-name=aruba-controller-manager
@@ -45,9 +45,9 @@ kubernetesClusterDomain: cluster.local
 metricsService:
   ports:
   - name: http
-    port: 8080
+    port: 9080
     protocol: TCP
-    targetPort: 8080
+    targetPort: 9080
   type: ClusterIP
 serviceAccount:
   annotations: {}

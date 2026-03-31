@@ -33,6 +33,10 @@ import (
 	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
 )
 
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
 const (
 	blockStorageFinalizerName = "blockstorage.arubacloud.com/finalizer"
 )
@@ -41,21 +45,16 @@ type contextKey string
 
 const projectIDKey contextKey = "projectID"
 
-// BlockStorageReconciler reconciles a BlockStorage object
-type BlockStorageReconciler struct {
-	*reconciler.Reconciler
-	ts *reconciler.TransitionSet[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+type kubeBlockStorageBundle struct {
+	KubeProject *v1alpha1.Project // from resolveOwnerObject (already fetched for ownership)
 }
 
-// NewBlockStorageReconciler creates a new BlockStorageReconciler
-func NewBlockStorageReconciler(baseReconciler *reconciler.Reconciler) *BlockStorageReconciler {
-	r := &BlockStorageReconciler{
-		Reconciler: baseReconciler,
-	}
-
-	r.ts = r.newTransitionSet()
-
-	return r
+type blockStorageBundle struct {
+	kubeBlockStorageBundle
 }
 
 // +kubebuilder:rbac:groups=arubacloud.com,resources=blockstorages,verbs=get;list;watch;create;update;patch;delete
@@ -64,6 +63,33 @@ func NewBlockStorageReconciler(baseReconciler *reconciler.Reconciler) *BlockStor
 // +kubebuilder:rbac:groups=arubacloud.com,resources=projects,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
+
+// BlockStorageReconciler reconciles a BlockStorage object
+type BlockStorageReconciler struct {
+	*reconciler.Reconciler
+	ivs *reconciler.ValidationSet[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse, *kubeBlockStorageBundle]
+	vs  *reconciler.ValidationSet[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse, *blockStorageBundle]
+	ts  *reconciler.TransitionSet[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]
+}
+
+// ---------------------------------------------------------------------------
+// Constructor
+// ---------------------------------------------------------------------------
+
+// NewBlockStorageReconciler creates a new BlockStorageReconciler
+func NewBlockStorageReconciler(baseReconciler *reconciler.Reconciler) *BlockStorageReconciler {
+	r := &BlockStorageReconciler{
+		Reconciler: baseReconciler,
+	}
+	r.ivs = r.newIntentionValidationSet()
+	r.vs = r.newValidationSet()
+	r.ts = r.newTransitionSet()
+	return r
+}
+
+// ---------------------------------------------------------------------------
+// Interface methods
+// ---------------------------------------------------------------------------
 
 func (r *BlockStorageReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	return r.Reconciler.Reconcile(ctx, req, r)
@@ -77,8 +103,13 @@ func (r *BlockStorageReconciler) Finalizer() string {
 	return blockStorageFinalizerName
 }
 
+// ---------------------------------------------------------------------------
+// HandleReconcile
+// ---------------------------------------------------------------------------
+
 //nolint:gocyclo // complexity is intentional to maintain locality of behavior
 func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconciler.ResourceObject) (ctrl.Result, error) {
+	// Stage 1: Setup.
 	kubeBlockStorage, ok := obj.(*v1alpha1.BlockStorage)
 	if !ok {
 		return ctrl.Result{}, errors.New("obj is not a *v1alpha1.BlockStorage")
@@ -87,79 +118,197 @@ func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconc
 	logger := log.FromContext(ctx).WithValues("tenant", kubeBlockStorage.Spec.Tenant)
 	logger.Info("reconciling block storage")
 
+	isDeleting := !kubeBlockStorage.GetDeletionTimestamp().IsZero()
+
+	// Stage 2: Fetch K8s dependencies and set owner reference.
+	kubeBdl, result, err := r.fetchKubeDependencies(ctx, kubeBlockStorage, isDeleting)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if result != (ctrl.Result{}) {
+		return result, nil
+	}
+
+	// Stage 3: K8s precondition — parent must be Active+Synchronized before the CMP resource
+	// is created (ResourceID == ""). Once provisioned, parent state changes don't block the child.
+	if !isDeleting && kubeBdl != nil && kubeBlockStorage.Status.ResourceID == "" && !reconciler.IsResourceReady(kubeBdl.KubeProject) {
+		logger.V(1).Info("parent project not yet Active+Synchronized, requeuing")
+		return ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
+	}
+
+	// Stage 4: Intention cross-validation (K8s-only, before CMP calls).
+	if !isDeleting {
+		bdl := kubeBdl
+		if bdl == nil {
+			bdl = &kubeBlockStorageBundle{}
+		}
+		if validationErr := r.ivs.Run(kubeBlockStorage, nil, bdl); validationErr != nil {
+			setErr := reconciler.SetPhaseAndCondition(r.Client, ctx, kubeBlockStorage,
+				v1alpha1.ResourcePhaseFailed, v1alpha1.ConditionReasonIntentionValidationFailed, validationErr,
+			)
+			if setErr != nil {
+				return ctrl.Result{}, setErr
+			}
+			return ctrl.Result{}, nil
+		}
+		if reconciler.IsIntentionValidationFailed(kubeBlockStorage) {
+			resetPhase := v1alpha1.ResourcePhasePending
+			if kubeBlockStorage.Status.ResourceID != "" {
+				resetPhase = v1alpha1.ResourcePhaseActive
+			}
+			if setErr := reconciler.SetPhaseAndCondition(r.Client, ctx, kubeBlockStorage,
+				resetPhase, v1alpha1.ConditionReasonSynchronized, nil); setErr != nil {
+				return ctrl.Result{}, setErr
+			}
+			return ctrl.Result{RequeueAfter: reconciler.ShortRequeueAfter}, nil
+		}
+		if reconciler.IsCMPValidationFailedAndSpecChanged(kubeBlockStorage) {
+			resetPhase := v1alpha1.ResourcePhasePending
+			if kubeBlockStorage.Status.ResourceID != "" {
+				resetPhase = v1alpha1.ResourcePhaseActive
+			}
+			if setErr := reconciler.SetPhaseAndCondition(r.Client, ctx, kubeBlockStorage,
+				resetPhase, v1alpha1.ConditionReasonSynchronized, nil); setErr != nil {
+				return ctrl.Result{}, setErr
+			}
+			return ctrl.Result{RequeueAfter: reconciler.ShortRequeueAfter}, nil
+		}
+	}
+
+	// Stage 5: Create Aruba CMP client.
 	arubaClient, err := r.ArubaClient(kubeBlockStorage.Spec.Tenant)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to get Aruba client: %w", err)
 	}
 
-	if kubeBlockStorage.Spec.ProjectReference.Name == "" {
-		return ctrl.Result{}, fmt.Errorf("project reference is not valid")
+	// Stage 6: Fetch CMP dependencies.
+	prjID, cmpBlockStorage, result, err := r.fetchCMPDependencies(ctx, kubeBlockStorage, arubaClient, isDeleting)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if result != (ctrl.Result{}) {
+		return result, nil
 	}
 
-	if kubeBlockStorage.GetDeletionTimestamp().IsZero() {
-		kubeProject := &v1alpha1.Project{}
-		if err := resolveOwnerObject(ctx, r.Client, kubeBlockStorage.Spec.ProjectReference, kubeBlockStorage.Namespace, kubeProject); err != nil {
-			if !apierrors.IsNotFound(err) {
-				return ctrl.Result{}, fmt.Errorf("resolving parent project for owner reference: %w", err)
+	ctx = context.WithValue(ctx, projectIDKey, prjID)
+	ctx = context.WithValue(ctx, reconciler.ArubaClientKey, arubaClient)
+	ctx = log.IntoContext(ctx, logger)
+
+	// Stage 7: CMP-aware validation (vs only).
+	if !isDeleting && kubeBdl != nil && cmpBlockStorage != nil {
+		if validationErr := r.vs.Run(kubeBlockStorage, cmpBlockStorage, &blockStorageBundle{kubeBlockStorageBundle: *kubeBdl}); validationErr != nil {
+			setErr := reconciler.SetPhaseAndCondition(r.Client, ctx, kubeBlockStorage,
+				v1alpha1.ResourcePhaseFailed, v1alpha1.ConditionReasonPostValidationFailed, validationErr,
+				func(bs *v1alpha1.BlockStorage) {
+					if bs.Status.ProjectID == "" {
+						bs.Status.ProjectID = prjID
+					}
+				},
+			)
+			if setErr != nil {
+				return ctrl.Result{}, setErr
 			}
-			logger.V(1).Info("parent project not found for owner reference setup, skipping", "projectName", kubeBlockStorage.Spec.ProjectReference.Name)
-		} else {
-			requeue, err := ensureOwnerReference(ctx, r.Client, r.Scheme, kubeProject, kubeBlockStorage)
-			if err != nil {
-				return ctrl.Result{}, fmt.Errorf("setting owner reference on blockstorage: %w", err)
+			return ctrl.Result{}, nil
+		}
+		if reconciler.IsPostValidationFailed(kubeBlockStorage) {
+			if setErr := reconciler.SetPhaseAndCondition(r.Client, ctx, kubeBlockStorage,
+				v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, nil); setErr != nil {
+				return ctrl.Result{}, setErr
 			}
-			if requeue {
-				return ctrl.Result{RequeueAfter: reconciler.ShortRequeueAfter}, nil
-			}
+			return ctrl.Result{RequeueAfter: reconciler.ShortRequeueAfter}, nil
 		}
 	}
 
+	// Stage 8: Run transitions.
+	return r.ts.Run(ctx, kubeBlockStorage, cmpBlockStorage)
+}
+
+// ---------------------------------------------------------------------------
+// Major HandleReconcile helpers
+// ---------------------------------------------------------------------------
+
+// fetchKubeDependencies fetches the parent Project and sets the owner reference.
+// Returns (nil bundle, zero result, nil) if the project is not found — non-fatal,
+// validation and precondition checks are skipped when kubeBdl is nil.
+// Returns (nil, short-requeue result, nil) if the owner reference was just written.
+func (r *BlockStorageReconciler) fetchKubeDependencies(
+	ctx context.Context,
+	kubeBlockStorage *v1alpha1.BlockStorage,
+	isDeleting bool,
+) (*kubeBlockStorageBundle, ctrl.Result, error) {
+	if isDeleting {
+		return nil, ctrl.Result{}, nil
+	}
+	logger := log.FromContext(ctx)
+	kp := &v1alpha1.Project{}
+	if err := resolveOwnerObject(ctx, r.Client, kubeBlockStorage.Spec.ProjectReference, kubeBlockStorage.Namespace, kp); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return nil, ctrl.Result{}, fmt.Errorf("resolving parent project for owner reference: %w", err)
+		}
+		logger.V(1).Info("parent project not found for owner reference setup, skipping",
+			"projectName", kubeBlockStorage.Spec.ProjectReference.Name)
+		return nil, ctrl.Result{}, nil
+	}
+	requeue, err := ensureOwnerReference(ctx, r.Client, r.Scheme, kp, kubeBlockStorage)
+	if err != nil {
+		return nil, ctrl.Result{}, fmt.Errorf("setting owner reference on blockstorage: %w", err)
+	}
+	if requeue {
+		return nil, ctrl.Result{RequeueAfter: reconciler.ShortRequeueAfter}, nil
+	}
+	return &kubeBlockStorageBundle{KubeProject: kp}, ctrl.Result{}, nil
+}
+
+// fetchCMPDependencies resolves the CMP project ID and fetches the CMP BlockStorage representation.
+// Returns (prjID, nil cmpBlockStorage, zero result, nil) when the BlockStorage does not yet exist on CMP.
+func (r *BlockStorageReconciler) fetchCMPDependencies(
+	ctx context.Context,
+	kubeBlockStorage *v1alpha1.BlockStorage,
+	arubaClient aruba.Client,
+	isDeleting bool,
+) (string, *arubatypes.BlockStorageResponse, ctrl.Result, error) {
 	blockStorageName, projectName := kubeBlockStorage.Name, kubeBlockStorage.Spec.ProjectReference.Name
 	bsFilter := fmt.Sprintf(`name:eq("%s")`, blockStorageName)
 	prjFilter := fmt.Sprintf(`name:eq("%s")`, projectName)
 
 	var prjID string
 
-	if !kubeBlockStorage.GetDeletionTimestamp().IsZero() && kubeBlockStorage.Status.ProjectID != "" {
+	if isDeleting && kubeBlockStorage.Status.ProjectID != "" {
 		prjID = kubeBlockStorage.Status.ProjectID
 	} else {
 		cmpProjectList, err := arubaClient.FromProject().List(ctx, &arubatypes.RequestParameters{Filter: &prjFilter})
 		if err != nil {
-			return ctrl.Result{}, fmt.Errorf(
+			return "", nil, ctrl.Result{}, fmt.Errorf(
 				"failed to find project in Aruba cloud: %w, project_name: '%s', project_filter: '%s'",
 				err, projectName, prjFilter,
 			)
 		}
 		if cmpProjectList.IsError() {
-			return ctrl.Result{}, fmt.Errorf(
+			return "", nil, ctrl.Result{}, fmt.Errorf(
 				"failed to find project in Aruba cloud: status_code: %d, project_name: '%s', project_filter: '%s'",
 				cmpProjectList.StatusCode, projectName, prjFilter,
 			)
 		}
 		if cmpProjectList.Data.Total == 0 && kubeBlockStorage.Status.ProjectID != "" {
-			return ctrl.Result{}, fmt.Errorf(
+			return "", nil, ctrl.Result{}, fmt.Errorf(
 				"inconsistent data in project list: expected: 1, project not found: project_name: '%s', project_filter: '%s'", projectName, prjFilter,
 			)
 		}
-
 		if cmpProjectList.Data.Total > 1 {
-			return ctrl.Result{}, fmt.Errorf(
+			return "", nil, ctrl.Result{}, fmt.Errorf(
 				"inconsistent data in project list: expected: 1, found: %d, project_name: '%s', project_filter: '%s'",
 				cmpProjectList.Data.Total, projectName, prjFilter,
 			)
 		}
-
 		if cmpProjectList.Data.Total == 0 {
-			// Wait for the project to be created
-			logger.V(1).Info("parent project not found on CMP, requeuing", "projectName", projectName)
-			return ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
+			log.FromContext(ctx).V(1).Info("parent project not found on CMP, requeuing", "projectName", projectName)
+			return "", nil, ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
 		}
-
 		prjID = *(cmpProjectList.Data.Values[0].Metadata.ID)
 	}
 
 	if kubeBlockStorage.Status.ProjectID != "" && kubeBlockStorage.Status.ProjectID != prjID {
-		return ctrl.Result{}, fmt.Errorf(
+		return "", nil, ctrl.Result{}, fmt.Errorf(
 			"inconsistent project id in blockstorage: blockstorage_name: '%s', blockstorage_project_id: '%s', project_name: '%s', project_id: '%s'",
 			blockStorageName, kubeBlockStorage.Status.ProjectID, projectName, prjID,
 		)
@@ -167,20 +316,20 @@ func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconc
 
 	cmpBlockStorageList, err := arubaClient.FromStorage().Volumes().List(ctx, prjID, &arubatypes.RequestParameters{Filter: &bsFilter})
 	if err != nil {
-		return ctrl.Result{}, fmt.Errorf(
+		return "", nil, ctrl.Result{}, fmt.Errorf(
 			"failed to find blockstorage in Aruba cloud: %w, blockstorage_name: '%s', blockstorage_filter: '%s', project_name: '%s'",
 			err, blockStorageName, bsFilter, projectName,
 		)
 	}
 	if cmpBlockStorageList.IsError() {
-		return ctrl.Result{}, fmt.Errorf(
+		return "", nil, ctrl.Result{}, fmt.Errorf(
 			"failed to find blockstorage in Aruba cloud: status_code: %d, blockstorage_name: '%s', project_name: '%s'",
 			cmpBlockStorageList.StatusCode, blockStorageName, projectName,
 		)
 	}
 
 	if cmpBlockStorageList.Data.Total < 0 || cmpBlockStorageList.Data.Total > 1 {
-		return ctrl.Result{}, fmt.Errorf(
+		return "", nil, ctrl.Result{}, fmt.Errorf(
 			"inconsistent data in blockstorage list: blockstorage_name: '%s', blockstorage_filter: '%s', project_name: '%s', instances: %d",
 			blockStorageName, bsFilter, projectName, len(cmpBlockStorageList.Data.Values),
 		)
@@ -190,16 +339,42 @@ func (r *BlockStorageReconciler) HandleReconcile(ctx context.Context, obj reconc
 	if cmpBlockStorageList.Data.Total == 1 {
 		cmpBlockStorage = &cmpBlockStorageList.Data.Values[0]
 	}
-	logger.V(1).Info("CMP block storage state", "found", cmpBlockStorage != nil, "projectID", prjID)
-
-	ctx = context.WithValue(ctx, projectIDKey, prjID)
-	ctx = context.WithValue(ctx, reconciler.ArubaClientKey, arubaClient)
-	ctx = log.IntoContext(ctx, logger)
-
-	return r.ts.Run(ctx, kubeBlockStorage, cmpBlockStorage)
+	log.FromContext(ctx).V(1).Info("CMP block storage state", "found", cmpBlockStorage != nil, "projectID", prjID)
+	return prjID, cmpBlockStorage, ctrl.Result{}, nil
 }
 
-// Transition Set Builder
+func (r *BlockStorageReconciler) newIntentionValidationSet() *reconciler.ValidationSet[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse, *kubeBlockStorageBundle] {
+	ivs := &reconciler.ValidationSet[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse, *kubeBlockStorageBundle]{}
+	// 1. Required references
+	ivs.Add("ProjectReferenceRequired", func(k *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse, _ *kubeBlockStorageBundle) error {
+		if k.Spec.ProjectReference.Name == "" {
+			return fmt.Errorf("project reference is required")
+		}
+		return nil
+	})
+	// 2. Tenant must match Project (nil-guarded — Project may not be resolved yet)
+	ivs.Add("TenantMustMatchProject", func(k *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse, b *kubeBlockStorageBundle) error {
+		if b.KubeProject == nil {
+			return nil
+		}
+		if k.Spec.Tenant != "" && b.KubeProject.Spec.Tenant != "" && k.Spec.Tenant != b.KubeProject.Spec.Tenant {
+			return fmt.Errorf("tenant mismatch with Project: %q != %q", k.Spec.Tenant, b.KubeProject.Spec.Tenant)
+		}
+		return nil
+	})
+	return ivs
+}
+
+func (r *BlockStorageReconciler) newValidationSet() *reconciler.ValidationSet[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse, *blockStorageBundle] {
+	vs := &reconciler.ValidationSet[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse, *blockStorageBundle]{}
+	vs.Add("TenantMustMatchProject", reconciler.FieldMustMatch[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse, *blockStorageBundle](
+		"tenant",
+		func(k *v1alpha1.BlockStorage) string { return k.Spec.Tenant },
+		func(b *blockStorageBundle) string { return b.KubeProject.Spec.Tenant },
+		"Project",
+	))
+	return vs
+}
 
 func (r *BlockStorageReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse] {
 	ts := &reconciler.TransitionSet[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
@@ -217,7 +392,17 @@ func (r *BlockStorageReconciler) newTransitionSet() *reconciler.TransitionSet[*v
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
-	// 0b. PendingAndDeleting — resource deleted while still in Pending; skip CMP entirely
+	// 1. ValidationFailedAndDeleting — unblock deletion for resources stuck in any *ValidationFailed state
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
+		Name:           "ValidationFailedAndDeleting",
+		KCondition:     reconciler.KubeAnyValidationFailedAndDeleting[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		ACondition:     reconciler.AlwaysTrue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		KAction:        reconciler.KubeResetValidationFailedForDeletion[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse](r.Client),
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+		RequeueOnError: reconciler.NoRequeueAndPropagateError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
+	})
+
+	// 2. PendingAndDeleting — resource deleted while still in Pending; skip CMP entirely
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
 		Name:       "PendingAndDeleting",
 		KCondition: reconciler.KubePendingAndDeleting[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
@@ -226,7 +411,7 @@ func (r *BlockStorageReconciler) newTransitionSet() *reconciler.TransitionSet[*v
 		Requeue:    reconciler.NoRequeue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
-	// 1. ShouldBeDeleted
+	// 3. ShouldBeDeleted
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
 		Name:           "ShouldBeDeleted",
 		KCondition:     reconciler.KubeShouldDelete[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
@@ -236,7 +421,7 @@ func (r *BlockStorageReconciler) newTransitionSet() *reconciler.TransitionSet[*v
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
-	// 2. ShouldDeleteTimedOut — enter deletion flow for timed-out resources (except those that timed out during Deleting)
+	// 4. ShouldDeleteTimedOut — enter deletion flow for timed-out resources (except those that timed out during Deleting)
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
 		Name:           "ShouldDeleteTimedOut",
 		KCondition:     reconciler.KubeShouldDeleteTimedOut[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
@@ -246,7 +431,7 @@ func (r *BlockStorageReconciler) newTransitionSet() *reconciler.TransitionSet[*v
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
-	// 3. ShouldBeDeletedOnCMP
+	// 5. ShouldBeDeletedOnCMP
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
 		Name:              "ShouldBeDeletedOnCMP",
 		KCondition:        reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
@@ -258,7 +443,7 @@ func (r *BlockStorageReconciler) newTransitionSet() *reconciler.TransitionSet[*v
 		RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
-	// 4. DeletionOnCMPNotNeeded — resource marked for deletion but CMP resource doesn't exist; skip CMP delete
+	// 6. DeletionOnCMPNotNeeded — resource marked for deletion but CMP resource doesn't exist; skip CMP delete
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
 		Name:           "DeletionOnCMPNotNeeded",
 		KCondition:     reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
@@ -268,7 +453,7 @@ func (r *BlockStorageReconciler) newTransitionSet() *reconciler.TransitionSet[*v
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
-	// 5. WaitingDeletionOnCMP
+	// 7. WaitingDeletionOnCMP
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
 		Name:           "WaitingDeletionOnCMP",
 		KCondition:     reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
@@ -277,7 +462,7 @@ func (r *BlockStorageReconciler) newTransitionSet() *reconciler.TransitionSet[*v
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
-	// 6. DeletionConfirmedOnCMP
+	// 8. DeletionConfirmedOnCMP
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
 		Name:           "DeletionConfirmedOnCMP",
 		KCondition:     reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
@@ -287,7 +472,7 @@ func (r *BlockStorageReconciler) newTransitionSet() *reconciler.TransitionSet[*v
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
-	// 7. DeletionAccomplished
+	// 9. DeletionAccomplished
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
 		Name:           "DeletionAccomplished",
 		KCondition:     reconciler.KubeDeletionAccomplished[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
@@ -297,7 +482,7 @@ func (r *BlockStorageReconciler) newTransitionSet() *reconciler.TransitionSet[*v
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
-	// 8. HasDeniedChanges — surface immutable field violations before attempting update
+	// 10. HasDeniedChanges — surface immutable field violations before attempting update
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
 		Name:       "HasDeniedChanges",
 		KCondition: kubeBlockStorageHasDeniedChanges,
@@ -309,7 +494,7 @@ func (r *BlockStorageReconciler) newTransitionSet() *reconciler.TransitionSet[*v
 		RequeueOnError: reconciler.LongRequeueAndIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
-	// 9. SpecAlreadyInSyncWithCMP — generation changed but spec identical to CMP; just re-stamp ObservedGeneration
+	// 11. SpecAlreadyInSyncWithCMP — generation changed but spec identical to CMP; just re-stamp ObservedGeneration
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
 		Name:           "SpecAlreadyInSyncWithCMP",
 		KCondition:     kubeBlockStorageSpecInSyncWithCMP,
@@ -319,7 +504,7 @@ func (r *BlockStorageReconciler) newTransitionSet() *reconciler.TransitionSet[*v
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
-	// 10. ShouldBeUpdated — spec changed and CMP is ready
+	// 12. ShouldBeUpdated — spec changed and CMP is ready
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
 		Name:           "ShouldBeUpdated",
 		KCondition:     kubeBlockStorageShouldUpdate,
@@ -329,7 +514,7 @@ func (r *BlockStorageReconciler) newTransitionSet() *reconciler.TransitionSet[*v
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
-	// 11. ShouldBeUpdatedOnCMP — send update to CMP
+	// 13. ShouldBeUpdatedOnCMP — send update to CMP
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
 		Name:              "ShouldBeUpdatedOnCMP",
 		KCondition:        reconciler.KubeShouldBeUpdatedOnCMP[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
@@ -341,7 +526,7 @@ func (r *BlockStorageReconciler) newTransitionSet() *reconciler.TransitionSet[*v
 		RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
-	// 12. WaitingUpdateOnCMP — CMP is still processing the update
+	// 14. WaitingUpdateOnCMP — CMP is still processing the update
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
 		Name:           "WaitingUpdateOnCMP",
 		KCondition:     reconciler.KubeWaitingUpdateOnCMP[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
@@ -350,7 +535,7 @@ func (r *BlockStorageReconciler) newTransitionSet() *reconciler.TransitionSet[*v
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
-	// 13. UpdateConfirmedOnCMP — CMP has settled; advance to Synchronized
+	// 15. UpdateConfirmedOnCMP — CMP has settled; advance to Synchronized
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
 		Name:           "UpdateConfirmedOnCMP",
 		KCondition:     reconciler.KubeWaitingUpdateOnCMP[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
@@ -360,7 +545,7 @@ func (r *BlockStorageReconciler) newTransitionSet() *reconciler.TransitionSet[*v
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
-	// 14. UpdateAccomplished — transition back to Active and stamp generation
+	// 16. UpdateAccomplished — transition back to Active and stamp generation
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
 		Name:           "UpdateAccomplished",
 		KCondition:     reconciler.KubeUpdateAccomplished[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
@@ -370,7 +555,7 @@ func (r *BlockStorageReconciler) newTransitionSet() *reconciler.TransitionSet[*v
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
-	// 15. ShouldBeCreated
+	// 17. ShouldBeCreated
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
 		Name:           "ShouldBeCreated",
 		KCondition:     reconciler.KubeIsFirstReconciliation[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
@@ -380,7 +565,7 @@ func (r *BlockStorageReconciler) newTransitionSet() *reconciler.TransitionSet[*v
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
-	// 16. ShouldBeCreatedInCMP
+	// 18. ShouldBeCreatedInCMP
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
 		Name:              "ShouldBeCreatedInCMP",
 		KCondition:        reconciler.KubeShouldBeCreatedOnCMP[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
@@ -392,7 +577,7 @@ func (r *BlockStorageReconciler) newTransitionSet() *reconciler.TransitionSet[*v
 		RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
-	// 17. WaitingCreationInCMP
+	// 19. WaitingCreationInCMP
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
 		Name:           "WaitingCreationInCMP",
 		KCondition:     reconciler.KubeWaitingCreationInCMP[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
@@ -401,7 +586,7 @@ func (r *BlockStorageReconciler) newTransitionSet() *reconciler.TransitionSet[*v
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
-	// 18. CreationConfirmedOnCMP
+	// 20. CreationConfirmedOnCMP
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
 		Name:           "CreationConfirmedOnCMP",
 		KCondition:     reconciler.KubeWaitingCreationInCMP[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
@@ -411,7 +596,7 @@ func (r *BlockStorageReconciler) newTransitionSet() *reconciler.TransitionSet[*v
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
-	// 19. CreationAccomplished
+	// 21. CreationAccomplished
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
 		Name:           "CreationAccomplished",
 		KCondition:     reconciler.KubeIsCreatedOnCMP[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
@@ -421,7 +606,7 @@ func (r *BlockStorageReconciler) newTransitionSet() *reconciler.TransitionSet[*v
 		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
 	})
 
-	// 20. IsInError
+	// 22. IsInError
 	ts.Add(&reconciler.AbstractTransition[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse]{
 		Name:           "IsInError",
 		KCondition:     reconciler.AlwaysTrue[*v1alpha1.BlockStorage, *arubatypes.BlockStorageResponse],
@@ -434,7 +619,9 @@ func (r *BlockStorageReconciler) newTransitionSet() *reconciler.TransitionSet[*v
 	return ts
 }
 
-// Resource-specific condition functions
+// ---------------------------------------------------------------------------
+// Kube conditions
+// ---------------------------------------------------------------------------
 
 func kubeBlockStorageHasDeniedChanges(kubeBS *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockStorageResponse) bool {
 	if !kubeBS.DeletionTimestamp.IsZero() {
@@ -457,6 +644,10 @@ func kubeBlockStorageShouldUpdate(kubeBS *v1alpha1.BlockStorage, cmpBS *arubatyp
 		checkBlockStorageDeniedChanges(kubeBS, cmpBS) == nil &&
 		kubeBlockStorageNeedsUpdate(kubeBS, cmpBS)
 }
+
+// ---------------------------------------------------------------------------
+// CMP conditions
+// ---------------------------------------------------------------------------
 
 func cmpBlockStorageNotExists(_ *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockStorageResponse) bool {
 	return cmpBS == nil
@@ -498,7 +689,9 @@ func cmpBlockStorageIsFailed(_ *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockSt
 	return cmpBS != nil && cmpBS.Status.State != nil && *cmpBS.Status.State == reconciler.CSPResourceStateFailed
 }
 
-// Kube action methods
+// ---------------------------------------------------------------------------
+// Kube actions
+// ---------------------------------------------------------------------------
 
 func (r *BlockStorageReconciler) kubeSetPhaseAndCondition(ctx context.Context, kubeBS *v1alpha1.BlockStorage, phase v1alpha1.ResourcePhase, reason string, _ error) error {
 	prePatches := []func(*v1alpha1.BlockStorage){
@@ -575,7 +768,9 @@ func (r *BlockStorageReconciler) kubeSetFailed(ctx context.Context, kubeBS *v1al
 	return r.kubeSetPhaseAndCondition(ctx, kubeBS, v1alpha1.ResourcePhaseFailed, v1alpha1.ConditionReasonSynchronized, nil)
 }
 
-// CMP action methods
+// ---------------------------------------------------------------------------
+// CMP actions
+// ---------------------------------------------------------------------------
 
 func (r *BlockStorageReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockStorageResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
@@ -619,7 +814,9 @@ func (r *BlockStorageReconciler) cmpCreate(ctx context.Context, kubeBS *v1alpha1
 		http.StatusOK, http.StatusCreated, http.StatusAccepted)
 }
 
-// Helper functions
+// ---------------------------------------------------------------------------
+// Other helpers
+// ---------------------------------------------------------------------------
 
 func checkBlockStorageDeniedChanges(kubeBS *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockStorageResponse) error {
 	if cmpBS == nil {
@@ -732,6 +929,10 @@ func cmpBlockStorageRequestFromKube(kubeBS *v1alpha1.BlockStorage) *arubatypes.B
 		},
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Setup
+// ---------------------------------------------------------------------------
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *BlockStorageReconciler) SetupWithManager(mgr ctrl.Manager) error {

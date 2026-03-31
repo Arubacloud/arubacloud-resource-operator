@@ -21,7 +21,6 @@ import (
 )
 
 // BlockStorageSpec defines the desired state of BlockStorage.
-// +kubebuilder:validation:XValidation:rule="self.tenant == oldSelf.tenant",message="tenant is immutable"
 type BlockStorageSpec struct {
 	// Tenant is the owning account/tenant of this block storage
 	Tenant string `json:"tenant,omitempty"`

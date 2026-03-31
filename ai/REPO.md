@@ -22,8 +22,8 @@
 
 Defines all Custom Resource types and the shared status model.
 
-- `common_types.go` — `ResourceStatus`, `ResourcePhase` (including `ResourcePhasePending` as the initial phase set alongside the finalizer), condition reason constants (`ShallSynchronize`, `Synchronizing`, `Synchronized`, `Failed`), `ResourcePhaseNature` (Transitory / Final — `Pending` is classified as Final so timeouts never apply), `ResourceReference`, and `ArubaOwnerReference`.
-- `<resource>_types.go` — one file per CRD (Project, BlockStorage, CloudServer, ElasticIP, KeyPair, SecurityGroup, SecurityRule, Subnet, VPC); each contains the `Spec`, `Status`, and list type for that resource. Flat scalar fields are used for `Region string`, `Zone string`, `SizeGB int`, `BillingPeriod string`, and `CIDR string` — no nested structs for these.
+- `common_types.go` — `ResourceStatus`, `ResourcePhase` (including `ResourcePhasePending` as the initial phase set alongside the finalizer), condition reason constants (`ShallSynchronize`, `Synchronizing`, `Synchronized`, `Failed`, `ValidationFailed`), `ResourcePhaseNature` (Transitory / Final — `Pending` is classified as Final so timeouts never apply), `ResourceReference`, and `ArubaOwnerReference`.
+- `<resource>_types.go` — one file per CRD (Project, BlockStorage, CloudServer, ElasticIP, KeyPair, SecurityGroup, SecurityRule, Subnet, VPC); each contains the `Spec`, `Status`, and list type for that resource. Flat scalar fields are used for `Region string`, `Zone string`, `SizeGB int`, `BillingPeriod string`, and `CIDR string` — no nested structs for these. `Spec.Tenant` carries no CRD-level XValidation immutability marker — it is intentionally mutable so users can correct a wrong tenant on a failed resource (see `ARCHITECTURE.md` § "Tenant source").
 - `zz_generated.deepcopy.go` — generated; do not edit.
 
 ### `internal/reconciler/`
@@ -37,6 +37,8 @@ The complete reconciliation framework. Contains:
 - `transition_actions.go` — all reusable status-patch helpers: `SetPhaseAndCondition`, `SetActiveAndSetID`, `SetFailedOnTimeout`, `KubeSetErrorMessageOnCMPError`, and `TagsAreEqual`. These use `retry.RetryOnConflict` internally and are the canonical way to write back Kubernetes status.
 - `cmp_error.go` — CMP error types: `CMPError` struct, `CMPErrorCategory` enum (Semantic/Technical), `CMPTransportError` and `cmpResponseError` constructors, `CMPCheckResponse[T]` generic response checker, and `CMPErrorIsSemantic`/`CMPErrorIsTechnical` helpers.
 - `common.go` — CMP (Aruba-side) state constants (`CSPResourceState*`) and `AssessCSPResourceStateNature` for classifying CMP states as Transitory/Final.
+- `validation.go` — cross-resource consistency validation engine: `ValidationFunc[K,A,B]`, `ValidationSet[K,A,B]` (ordered rule list with `Add`/`Run`), and reusable rule builder `FieldMustMatch`.
+- `validation_error.go` — `ErrInvalid` (aggregate error returned by `ValidationSet.Run` when any rule fails), `ValidationViolation` (rule name + error message pair), `IsErrInvalid` predicate.
 
 Key elements of the `Reconciler` struct:
 - Private `multiTenantClient arubamt.Multitenant` — thread-safe cache of `aruba.Client` per tenant, initialized in `NewReconciler()`.
@@ -49,7 +51,7 @@ Key elements of the `Reconciler` struct:
 
 One file per concern:
 
-- `<resource>_controller.go` — embeds `*reconciler.Reconciler`, wires a `reconciler.TransitionSet`, and implements `Object()`, `Finalizer()`, `HandleReconcile()`.
+- `<resource>_controller.go` — embeds `*reconciler.Reconciler`, wires a `reconciler.TransitionSet` and two `reconciler.ValidationSet` instances (`ivs` for K8s-only intention validation at Stage 4 and `vs` for CMP-aware drift validation at Stage 7), and implements `Object()`, `Finalizer()`, `HandleReconcile()`.
 - `owner_reference.go` — custom two-layer ownership system (annotation + label, replacing standard K8s OwnerReferences): `resolveOwnerObject`, `ensureOwnerReference`, `setArubaControllerReference`, `parseArubaOwnerReferences`, `marshalArubaOwnerReferences`, `hasArubaOwnerReference`, `ownerLabelKey`, `hasOwnedChildren`, `deleteOwnedChildren`, `childToParentMapFunc`. Used by all child controllers in `HandleReconcile` (to set ownership metadata) and by parent controllers in the `WaitingChildrenDeletion` transition and `SetupWithManager`.
 - `cmp_name_filter.go` — helper for filtering CMP list results by name.
 

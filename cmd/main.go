@@ -72,8 +72,8 @@ func main() {
 	var secretName string
 	var configNamespace string
 
-	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metrics endpoint binds to. "+
-		"Use :8080 for HTTP or leave as 0 to disable the metrics service.")
+	flag.StringVar(&metricsAddr, "metrics-bind-address", ":9080", "The address the metrics endpoint binds to. "+
+		"Use :9080 for HTTP or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
@@ -178,7 +178,7 @@ func main() {
 		TLSOpts: webhookTLSOpts,
 	})
 
-	// Metrics are served over plain HTTP on :8080 (no TLS, no authentication).
+	// Metrics are served over plain HTTP on :9080 (no TLS, no authentication).
 	// More info: https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.21.0/pkg/metrics/server
 	metricsServerOptions := metricsserver.Options{
 		BindAddress:   metricsAddr,

@@ -68,14 +68,22 @@ Cross-namespace children participate fully in cascade deletion. No special cases
 
 ## 5. CMP API Does Not Distinguish Dependency Errors from Permanent Errors
 
+**Status**: **Partially resolved** (SDK v0.1.24).
+
 **Context**: When the CMP API rejects a deletion because dependent resources still exist (e.g., deleting a Project with active VPCs), it returns a generic HTTP 4xx error. The error response does not use a distinct status code or error code to differentiate "has dependencies" from other semantic errors (invalid request, permission denied, etc.).
 
-**Current mitigation**: All CMP 4xx errors are classified as `CMPErrorCategorySemantic` and retried with `LongRequeueAfter`. The `WaitingChildrenDeletion` guard prevents most dependency-related CMP errors by ensuring children are deleted first. For cases where the guard is insufficient (e.g., CMP-side resources not managed by the operator), the retry loop eventually succeeds once dependencies are manually cleared.
+**Current state**: The SDK v0.1.24 `ErrorResponse` now includes an `Errors []ValidationError` array for field-level validation failures. The operator uses this to split the former single `CMPErrorCategorySemantic` into two categories:
+- `CMPErrorCategorySemantic` — 4xx with non-empty `Errors` (true validation failure; moves resource to `Failed+ValidationFailed` during Creating/Updating).
+- `CMPErrorCategoryTransient` — 4xx with empty `Errors` (temporary condition, e.g. dependency in wrong state; surfaces error in condition, long-requeue without phase change).
 
-**Potential future solutions**:
-- Work with the CMP API team to introduce a specific error code for dependency violations (e.g., HTTP 409 Conflict with a structured error body)
-- Parse CMP error messages to detect dependency-related keywords and surface a more specific condition message to the user
-- Implement a CMP-side dependency check before attempting deletion: query the CMP for child resources and surface a clear message if any remain
+This means dependency-related 4xx errors are now correctly classified as Transient and do not prematurely move resources to `Failed+ValidationFailed`.
+
+**Resolved**: Two complementary fixes fully close the deletion-stuck gap:
+1. `ValidationFailedAndDeleting` transition (transition #1 in all controllers) — unblocks resources stuck in `Failed+*ValidationFailed` when deletion is requested, resetting the phase to allow normal deletion flow.
+2. `SmartRequeueOnError` phase-awareness — during the `Deleting` phase, semantic CMP errors (4xx with validation details) now always requeue with `LongRequeueAfter` instead of returning no-requeue. This prevents resources from getting permanently stuck in `Deleting+ShallSynchronize` when the CMP rejects the delete call with a temporary dependency error.
+
+**Potential future solution** (if finer-grained error handling is needed):
+- Work with the CMP API team to introduce a specific error code for dependency violations (e.g., HTTP 409 Conflict with a structured error body), allowing the operator to distinguish "retry later" from "permanent failure" during deletion.
 
 ---
 

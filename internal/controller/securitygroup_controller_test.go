@@ -780,4 +780,161 @@ var _ = Describe("SecurityGroupReconciler", func() {
 			Entry("5xx → ShortRequeueAfter, no phase change", "sg-cmp-err-create-500", http.StatusInternalServerError, reconciler.ShortRequeueAfter),
 		)
 	})
+
+	Describe("Validation", func() {
+		It("sets Failed+ValidationFailed when SecurityGroup tenant differs from parent VPC tenant", func() {
+			m := newSGReconcilerWithMocks(GinkgoT())
+
+			// Create a K8s VPC with a different Tenant than the SecurityGroup.
+			kubeVpc := createTestVpc(ctx, sgVpcName, v1alpha1.VPCSpec{
+				Tenant:           "other-tenant",
+				Region:           "ITBG-Bergamo",
+				ProjectReference: v1alpha1.ResourceReference{Name: "some-project", Namespace: "default"},
+			})
+			defer func() {
+				_ = k8sClient.Delete(ctx, kubeVpc)
+			}()
+
+			sg = createTestSecurityGroup(ctx, "test-sg-validation-tenant", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
+			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "sg-id-val", sgProjectID, sgVpcID, 0, time.Now())
+
+			// First reconcile: sets owner reference on the SecurityGroup → requeue, no CMP calls.
+			result, err := m.r.HandleReconcile(ctx, sg)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
+
+			// Second reconcile: ivs fires at Stage 4 (before CMP calls) → validation fails, no CMP expectations needed.
+			_, err = m.r.HandleReconcile(ctx, sg)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.SecurityGroup{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
+			Expect(cond.Message).To(ContainSubstring("tenant mismatch with VPC"))
+		})
+
+		It("sets Failed+ValidationFailed at Pending phase when SecurityGroup tenant differs from parent VPC tenant (no CMP resource yet)", func() {
+			m := newSGReconcilerWithMocks(GinkgoT())
+
+			// VPC has a different tenant AND is Active+Synchronized so Stage 3 (parent readiness) passes.
+			kubeVpc := createTestVpc(ctx, sgVpcName, v1alpha1.VPCSpec{
+				Tenant:           "other-tenant",
+				Region:           "ITBG-Bergamo",
+				ProjectReference: v1alpha1.ResourceReference{Name: "some-project", Namespace: "default"},
+			})
+			setVPCStatus(ctx, kubeVpc, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, sgVpcID, "some-proj-id", 0, time.Now())
+			defer func() {
+				_ = k8sClient.Delete(ctx, kubeVpc)
+			}()
+
+			sg = createTestSecurityGroup(ctx, "test-sg-pending-validation-tenant", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
+			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", 0, time.Now())
+
+			// First reconcile: owner reference not yet set → ShortRequeue.
+			result, err := m.r.HandleReconcile(ctx, sg)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
+
+			// Second reconcile: ivs fires at Stage 4 (before CMP calls) → validation fails, no CMP expectations needed.
+			result, err = m.r.HandleReconcile(ctx, sg)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			updated := &v1alpha1.SecurityGroup{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
+			Expect(cond.Message).To(ContainSubstring("tenant mismatch with VPC"))
+		})
+
+		It("sets Failed+ValidationFailed at Pending phase when SecurityGroup project reference differs from parent VPC project reference (no CMP resource yet)", func() {
+			m := newSGReconcilerWithMocks(GinkgoT())
+
+			// VPC has a different project reference AND is Active+Synchronized so Stage 3 (parent readiness) passes.
+			kubeVpc := createTestVpc(ctx, sgVpcName, v1alpha1.VPCSpec{
+				Tenant:           "test-tenant",
+				Region:           "ITBG-Bergamo",
+				ProjectReference: v1alpha1.ResourceReference{Name: "other-project", Namespace: "default"},
+			})
+			setVPCStatus(ctx, kubeVpc, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, sgVpcID, "other-proj-id", 0, time.Now())
+			defer func() {
+				_ = k8sClient.Delete(ctx, kubeVpc)
+			}()
+
+			sg = createTestSecurityGroup(ctx, "test-sg-pending-validation-project", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
+			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", 0, time.Now())
+
+			// First reconcile: owner reference not yet set → ShortRequeue.
+			result, err := m.r.HandleReconcile(ctx, sg)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
+
+			// Second reconcile: ivs fires at Stage 4 (before CMP calls) → validation fails, no CMP expectations needed.
+			result, err = m.r.HandleReconcile(ctx, sg)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			updated := &v1alpha1.SecurityGroup{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
+			Expect(cond.Message).To(ContainSubstring("project reference mismatch with VPC"))
+		})
+
+		It("sets Failed+ValidationFailed at Pending phase when SecurityGroup tenant differs from Project tenant (no CMP resource yet)", func() {
+			m := newSGReconcilerWithMocks(GinkgoT())
+
+			// VPC with matching attributes (same tenant/region/project) so VPC cross-validation passes.
+			kubeVpc := createTestVpc(ctx, sgVpcName, v1alpha1.VPCSpec{
+				Tenant:           "test-tenant",
+				Region:           "ITBG-Bergamo",
+				ProjectReference: v1alpha1.ResourceReference{Name: sgProjectName, Namespace: "default"},
+			})
+			setVPCStatus(ctx, kubeVpc, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, sgVpcID, sgProjectID, 0, time.Now())
+			defer func() { _ = k8sClient.Delete(ctx, kubeVpc) }()
+
+			// K8s Project with a different tenant than the SecurityGroup.
+			kubeProject := createTestProject(ctx, sgProjectName, v1alpha1.ProjectSpec{
+				Tenant:      "other-tenant",
+				Description: "test",
+			})
+			defer func() { _ = k8sClient.Delete(ctx, kubeProject) }()
+
+			sg = createTestSecurityGroup(ctx, "test-sg-pending-validation-tenant-proj", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
+			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", 0, time.Now())
+
+			// First reconcile: VPC found → owner reference set → ShortRequeue, no CMP calls.
+			result, err := m.r.HandleReconcile(ctx, sg)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
+
+			// Second reconcile: ivs fires at Stage 4 (before CMP calls) → validation fails, no CMP expectations needed.
+			result, err = m.r.HandleReconcile(ctx, sg)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			updated := &v1alpha1.SecurityGroup{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
+			Expect(cond.Message).To(ContainSubstring("tenant mismatch with Project"))
+		})
+	})
 })

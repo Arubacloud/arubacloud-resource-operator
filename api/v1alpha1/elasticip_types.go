@@ -21,7 +21,6 @@ import (
 )
 
 // ElasticIPSpec defines the desired state of ElasticIP.
-// +kubebuilder:validation:XValidation:rule="self.tenant == oldSelf.tenant",message="tenant is immutable"
 type ElasticIPSpec struct {
 	// Tenant is the owning account/tenant of this elastic IP
 	Tenant string `json:"tenant,omitempty"`

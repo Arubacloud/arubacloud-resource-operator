@@ -21,15 +21,20 @@ type DeepCopyableObject[K any] interface {
 	DeepCopy() K
 }
 
-// KubeSetErrorMessageOnCMPError returns an ActionOnErrorFunc that surfaces the CMP error
-// details in the condition message without changing the resource's phase or reason.
-// The Aruba CMP API does not reliably distinguish transient dependency blockages (e.g. deleting
-// a project with remaining resources) from permanent bad-request errors, so CMP errors must
-// never move a resource to Failed. Only timeouts (PhaseTimedOut) may set the Failed reason.
+// KubeSetErrorMessageOnCMPError returns an ActionOnErrorFunc that handles CMP errors
+// on the Kubernetes resource status. Behavior depends on the error category:
+//   - Semantic (4xx with validation errors) during Creating or Updating: moves the resource
+//     to Failed+ValidationFailed so the user gets immediate feedback. The existing
+//     IsValidationFailed recovery block in HandleReconcile resets the phase once the user
+//     fixes the spec.
+//   - Transient (4xx without validation errors) or Technical (5xx/network): surfaces the
+//     error message in the condition without changing the resource's phase or reason.
+//     Only timeouts (PhaseTimedOut) may eventually move these to Failed.
 func KubeSetErrorMessageOnCMPError[K DeepCopyableObject[K], A any](c client.Client) ActionOnErrorFunc[K, A] {
 	return func(ctx context.Context, k K, _ A, err error) error {
 		logger := log.FromContext(ctx)
 		rs := k.GetResourceStatus()
+		phase := rs.Phase
 		currentReason := v1alpha1.ConditionReasonShallSynchronize // safe fallback
 		for _, cond := range rs.Conditions {
 			if cond.Status == metav1.ConditionTrue {
@@ -45,13 +50,18 @@ func KubeSetErrorMessageOnCMPError[K DeepCopyableObject[K], A any](c client.Clie
 				"cmpErrorCategory", cmpErr.Category,
 				"cmpStatusCode", cmpErr.StatusCode,
 			)
+			if cmpErr.Category == CMPErrorCategorySemantic &&
+				(rs.Phase == v1alpha1.ResourcePhaseCreating || rs.Phase == v1alpha1.ResourcePhaseUpdating) {
+				phase = v1alpha1.ResourcePhaseFailed
+				currentReason = v1alpha1.ConditionReasonValidationFailed
+			}
 		} else {
 			logger.Error(err, "CMP error surfaced on resource condition",
 				"resource", fmt.Sprintf("%s/%s", k.GetNamespace(), k.GetName()),
 				"phase", string(rs.Phase),
 			)
 		}
-		return SetPhaseAndCondition(c, ctx, k, rs.Phase, currentReason, err)
+		return SetPhaseAndCondition(c, ctx, k, phase, currentReason, err)
 	}
 }
 
@@ -110,6 +120,7 @@ func SetPhaseAndCondition[K DeepCopyableObject[K]](
 				Reason:             reason,
 				Message:            fmt.Sprintf("%s %s%s", string(phase), reason, msgSuffix),
 				LastTransitionTime: metav1.Now(),
+				ObservedGeneration: objPatch.GetGeneration(),
 			},
 		)
 
@@ -174,6 +185,7 @@ func SetActiveAndSetID[K DeepCopyableObject[K]](
 				Reason:             v1alpha1.ConditionReasonSynchronized,
 				Message:            fmt.Sprintf("%s %s%s", string(v1alpha1.ResourcePhaseActive), v1alpha1.ConditionReasonSynchronized, msgSuffix),
 				LastTransitionTime: metav1.Now(),
+				ObservedGeneration: objPatch.GetGeneration(),
 			},
 		)
 
@@ -223,10 +235,11 @@ func SetFailedOnTimeout[K DeepCopyableObject[K]](
 
 		// Update the timed-out phase condition: Status=False, Reason=Failed
 		meta.SetStatusCondition(&rs.Conditions, metav1.Condition{
-			Type:    string(previousPhase),
-			Status:  metav1.ConditionFalse,
-			Reason:  v1alpha1.ConditionReasonFailed,
-			Message: fmt.Sprintf("%s %s - %s", string(previousPhase), v1alpha1.ConditionReasonFailed, timeoutMsg),
+			Type:               string(previousPhase),
+			Status:             metav1.ConditionFalse,
+			Reason:             v1alpha1.ConditionReasonFailed,
+			Message:            fmt.Sprintf("%s %s - %s", string(previousPhase), v1alpha1.ConditionReasonFailed, timeoutMsg),
+			ObservedGeneration: objPatch.GetGeneration(),
 		})
 
 		// Set phase to Failed
@@ -234,10 +247,11 @@ func SetFailedOnTimeout[K DeepCopyableObject[K]](
 
 		// Add Failed condition: Status=True, Reason=Failed, same message as the timed-out phase
 		meta.SetStatusCondition(&rs.Conditions, metav1.Condition{
-			Type:    string(v1alpha1.ResourcePhaseFailed),
-			Status:  metav1.ConditionTrue,
-			Reason:  v1alpha1.ConditionReasonFailed,
-			Message: fmt.Sprintf("%s %s - %s", string(previousPhase), v1alpha1.ConditionReasonFailed, timeoutMsg),
+			Type:               string(v1alpha1.ResourcePhaseFailed),
+			Status:             metav1.ConditionTrue,
+			Reason:             v1alpha1.ConditionReasonFailed,
+			Message:            fmt.Sprintf("%s %s - %s", string(previousPhase), v1alpha1.ConditionReasonFailed, timeoutMsg),
+			ObservedGeneration: objPatch.GetGeneration(),
 		})
 
 		return c.Status().Patch(ctx, objPatch, client.MergeFrom(objCopy))
@@ -251,6 +265,21 @@ func KubeDeleteFromPending[K DeepCopyableObject[K], A any](c client.Client) Acti
 	return func(ctx context.Context, k K, _ A) error {
 		return SetPhaseAndCondition(c, ctx, k,
 			v1alpha1.ResourcePhaseDeleted, v1alpha1.ConditionReasonSynchronized, nil,
+		)
+	}
+}
+
+// KubeResetValidationFailedForDeletion resets a resource stuck in any *ValidationFailed
+// state to a deletable phase (Pending or Active + Synchronized), unblocking normal
+// deletion flow on the next reconcile.
+func KubeResetValidationFailedForDeletion[K DeepCopyableObject[K], A any](c client.Client) ActionFunc[K, A] {
+	return func(ctx context.Context, k K, _ A) error {
+		resetPhase := v1alpha1.ResourcePhasePending
+		if k.GetResourceStatus().ResourceID != "" {
+			resetPhase = v1alpha1.ResourcePhaseActive
+		}
+		return SetPhaseAndCondition(c, ctx, k,
+			resetPhase, v1alpha1.ConditionReasonSynchronized, nil,
 		)
 	}
 }

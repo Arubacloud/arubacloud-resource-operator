@@ -7,6 +7,8 @@ import (
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
 )
 
 // ConditionFunc defines a function signature for checking conditions
@@ -83,14 +85,31 @@ func NoRequeueAndPropagateError[K ResourceObject, A any](_ K, _ A, err error) (c
 }
 
 // SmartRequeueOnError is a RequeueOnErrorFunc that inspects the error category of a *CMPError:
-// - Semantic errors (4xx, config/user mistakes) get a long requeue — no point retrying quickly.
-// - Technical errors (5xx, network failures) get a short requeue for faster recovery.
-// Non-CMPError errors are treated as technical and get a short requeue.
-func SmartRequeueOnError[K ResourceObject, A any](_ K, _ A, err error) (ctrl.Result, error) {
-	if CMPErrorIsSemantic(err) {
+//   - During Deleting phase: always requeue (there is no "wait for spec change" recovery
+//     during deletion — semantic errors are temporary CMP-side conditions that resolve once
+//     dependent resources are cleaned up).
+//   - Semantic errors (4xx with validation errors): no requeue. KubeSetErrorMessageOnCMPError
+//     has already moved the resource to Failed+ValidationFailed; the next reconcile only fires
+//     when the user corrects the spec (generation-gated recovery via IsCMPValidationFailedAndSpecChanged).
+//   - Transient errors (4xx without validation errors): long requeue — temporary condition.
+//   - Technical errors (5xx, network failures): short requeue for faster recovery.
+//   - Non-CMPError errors: long requeue.
+func SmartRequeueOnError[K ResourceObject, A any](k K, _ A, err error) (ctrl.Result, error) {
+	// During deletion, always requeue — the CMP-side condition is temporary
+	// and will resolve once dependent resources are cleaned up.
+	if rs := k.GetResourceStatus(); rs != nil && rs.Phase == v1alpha1.ResourcePhaseDeleting {
+		if CMPErrorIsTechnical(err) {
+			return ctrl.Result{RequeueAfter: ShortRequeueAfter}, nil
+		}
 		return ctrl.Result{RequeueAfter: LongRequeueAfter}, nil
 	}
-	return ctrl.Result{RequeueAfter: ShortRequeueAfter}, nil
+	if CMPErrorIsSemantic(err) {
+		return ctrl.Result{}, nil
+	}
+	if CMPErrorIsTechnical(err) {
+		return ctrl.Result{RequeueAfter: ShortRequeueAfter}, nil
+	}
+	return ctrl.Result{RequeueAfter: LongRequeueAfter}, nil
 }
 
 // AbstractTransition is a concrete state transition step in the reconciliation loop.

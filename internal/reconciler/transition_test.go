@@ -337,9 +337,24 @@ var _ = Describe("Requeue helpers", func() {
 		Expect(result).To(Equal(ctrl.Result{}))
 	})
 
-	It("SmartRequeueOnError returns LongRequeueAfter for semantic CMPError", func() {
+	It("SmartRequeueOnError returns no requeue for semantic CMPError during non-Deleting phase", func() {
 		semanticErr := &CMPError{Category: CMPErrorCategorySemantic, StatusCode: 400}
 		result, err := SmartRequeueOnError(proj, nilCMP, semanticErr)
+		Expect(err).To(Succeed())
+		Expect(result).To(Equal(ctrl.Result{}))
+	})
+
+	It("SmartRequeueOnError returns LongRequeueAfter for semantic CMPError during Deleting phase", func() {
+		proj.Status.Phase = v1alpha1.ResourcePhaseDeleting
+		semanticErr := &CMPError{Category: CMPErrorCategorySemantic, StatusCode: 400}
+		result, err := SmartRequeueOnError(proj, nilCMP, semanticErr)
+		Expect(err).To(Succeed())
+		Expect(result.RequeueAfter).To(Equal(LongRequeueAfter))
+	})
+
+	It("SmartRequeueOnError returns LongRequeueAfter for transient CMPError", func() {
+		transientErr := &CMPError{Category: CMPErrorCategoryTransient, StatusCode: 409}
+		result, err := SmartRequeueOnError(proj, nilCMP, transientErr)
 		Expect(err).To(Succeed())
 		Expect(result.RequeueAfter).To(Equal(LongRequeueAfter))
 	})
@@ -351,9 +366,9 @@ var _ = Describe("Requeue helpers", func() {
 		Expect(result.RequeueAfter).To(Equal(ShortRequeueAfter))
 	})
 
-	It("SmartRequeueOnError returns ShortRequeueAfter for plain (non-CMP) errors", func() {
+	It("SmartRequeueOnError returns LongRequeueAfter for plain (non-CMP) errors", func() {
 		result, err := SmartRequeueOnError(proj, nilCMP, errors.New("unknown error"))
 		Expect(err).To(Succeed())
-		Expect(result.RequeueAfter).To(Equal(ShortRequeueAfter))
+		Expect(result.RequeueAfter).To(Equal(LongRequeueAfter))
 	})
 })

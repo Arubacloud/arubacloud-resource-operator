@@ -334,6 +334,179 @@ var _ = Describe("KubeDeleteFromPending", func() {
 	})
 })
 
+var _ = Describe("KubeSetErrorMessageOnCMPError", func() {
+	var (
+		ctx  context.Context
+		proj *v1alpha1.Project
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		proj = &v1alpha1.Project{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-cmp-error-action",
+				Namespace: "default",
+			},
+			Spec: v1alpha1.ProjectSpec{Tenant: "test-tenant"},
+		}
+		Expect(k8sClient.Create(ctx, proj)).To(Succeed())
+	})
+
+	AfterEach(func() {
+		p := &v1alpha1.Project{}
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), p); err == nil {
+			_ = k8sClient.Delete(ctx, p)
+		}
+	})
+
+	It("sets Failed+ValidationFailed for a semantic error during Creating", func() {
+		Expect(SetPhaseAndCondition(k8sClient, ctx, proj,
+			v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, nil)).To(Succeed())
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), proj)).To(Succeed())
+
+		semanticErr := &CMPError{Category: CMPErrorCategorySemantic, StatusCode: 400,
+			Title: "Validation Error", Detail: "Validation: Tag: too short"}
+		action := KubeSetErrorMessageOnCMPError[*v1alpha1.Project, *arubatypes.ProjectResponse](k8sClient)
+		Expect(action(ctx, proj, nil, semanticErr)).To(Succeed())
+
+		updated := &v1alpha1.Project{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), updated)).To(Succeed())
+		Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+		cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
+		Expect(cond).NotTo(BeNil())
+		Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+		Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonValidationFailed))
+		Expect(cond.Message).To(ContainSubstring("Tag: too short"))
+	})
+
+	It("sets Failed+ValidationFailed for a semantic error during Updating", func() {
+		Expect(SetPhaseAndCondition(k8sClient, ctx, proj,
+			v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, nil)).To(Succeed())
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), proj)).To(Succeed())
+
+		semanticErr := &CMPError{Category: CMPErrorCategorySemantic, StatusCode: 400, Title: "Validation Error"}
+		action := KubeSetErrorMessageOnCMPError[*v1alpha1.Project, *arubatypes.ProjectResponse](k8sClient)
+		Expect(action(ctx, proj, nil, semanticErr)).To(Succeed())
+
+		updated := &v1alpha1.Project{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), updated)).To(Succeed())
+		Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+		cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
+		Expect(cond).NotTo(BeNil())
+		Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonValidationFailed))
+	})
+
+	It("preserves Deleting phase for a semantic error during Deleting", func() {
+		Expect(SetPhaseAndCondition(k8sClient, ctx, proj,
+			v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize, nil)).To(Succeed())
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), proj)).To(Succeed())
+
+		semanticErr := &CMPError{Category: CMPErrorCategorySemantic, StatusCode: 400, Title: "Validation Error"}
+		action := KubeSetErrorMessageOnCMPError[*v1alpha1.Project, *arubatypes.ProjectResponse](k8sClient)
+		Expect(action(ctx, proj, nil, semanticErr)).To(Succeed())
+
+		updated := &v1alpha1.Project{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), updated)).To(Succeed())
+		Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleting))
+		cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
+		Expect(cond).NotTo(BeNil())
+		Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
+	})
+
+	It("preserves phase for a transient error during Creating", func() {
+		Expect(SetPhaseAndCondition(k8sClient, ctx, proj,
+			v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, nil)).To(Succeed())
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), proj)).To(Succeed())
+
+		transientErr := &CMPError{Category: CMPErrorCategoryTransient, StatusCode: 409, Title: "Conflict"}
+		action := KubeSetErrorMessageOnCMPError[*v1alpha1.Project, *arubatypes.ProjectResponse](k8sClient)
+		Expect(action(ctx, proj, nil, transientErr)).To(Succeed())
+
+		updated := &v1alpha1.Project{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), updated)).To(Succeed())
+		Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
+		cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
+		Expect(cond).NotTo(BeNil())
+		Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
+		Expect(cond.Message).To(ContainSubstring("ERROR"))
+	})
+
+	It("preserves phase for a technical error during Creating", func() {
+		Expect(SetPhaseAndCondition(k8sClient, ctx, proj,
+			v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, nil)).To(Succeed())
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), proj)).To(Succeed())
+
+		technicalErr := &CMPError{Category: CMPErrorCategoryTechnical, StatusCode: 500, Title: "Internal Server Error"}
+		action := KubeSetErrorMessageOnCMPError[*v1alpha1.Project, *arubatypes.ProjectResponse](k8sClient)
+		Expect(action(ctx, proj, nil, technicalErr)).To(Succeed())
+
+		updated := &v1alpha1.Project{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), updated)).To(Succeed())
+		Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
+	})
+})
+
+var _ = Describe("KubeResetValidationFailedForDeletion", func() {
+	var (
+		ctx  context.Context
+		proj *v1alpha1.Project
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		proj = &v1alpha1.Project{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-reset-vf",
+				Namespace: "default",
+			},
+			Spec: v1alpha1.ProjectSpec{Tenant: "test-tenant"},
+		}
+		Expect(k8sClient.Create(ctx, proj)).To(Succeed())
+	})
+
+	AfterEach(func() {
+		p := &v1alpha1.Project{}
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), p); err == nil {
+			_ = k8sClient.Delete(ctx, p)
+		}
+	})
+
+	It("resets to Pending+Synchronized when ResourceID is empty", func() {
+		Expect(SetPhaseAndCondition(k8sClient, ctx, proj,
+			v1alpha1.ResourcePhaseFailed, v1alpha1.ConditionReasonIntentionValidationFailed, nil)).To(Succeed())
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), proj)).To(Succeed())
+
+		action := KubeResetValidationFailedForDeletion[*v1alpha1.Project, *arubatypes.ProjectResponse](k8sClient)
+		Expect(action(ctx, proj, nil)).To(Succeed())
+
+		updated := &v1alpha1.Project{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), updated)).To(Succeed())
+		Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhasePending))
+		cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhasePending))
+		Expect(cond).NotTo(BeNil())
+		Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
+	})
+
+	It("resets to Active+Synchronized when ResourceID is set", func() {
+		Expect(SetPhaseAndCondition(k8sClient, ctx, proj,
+			v1alpha1.ResourcePhaseFailed, v1alpha1.ConditionReasonValidationFailed, nil)).To(Succeed())
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), proj)).To(Succeed())
+		proj.Status.ResourceID = "cmp-res-123"
+		Expect(k8sClient.Status().Update(ctx, proj)).To(Succeed())
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), proj)).To(Succeed())
+
+		action := KubeResetValidationFailedForDeletion[*v1alpha1.Project, *arubatypes.ProjectResponse](k8sClient)
+		Expect(action(ctx, proj, nil)).To(Succeed())
+
+		updated := &v1alpha1.Project{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), updated)).To(Succeed())
+		Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseActive))
+		cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseActive))
+		Expect(cond).NotTo(BeNil())
+		Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
+	})
+})
+
 // findCondition is a test helper.
 func findCondition(conditions []metav1.Condition, condType string) *metav1.Condition {
 	for i := range conditions {

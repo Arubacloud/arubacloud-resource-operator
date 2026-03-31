@@ -812,4 +812,230 @@ var _ = Describe("SecurityRuleReconciler", func() {
 			Entry("5xx → ShortRequeueAfter, no phase change", "sr-cmp-err-create-500", http.StatusInternalServerError, reconciler.ShortRequeueAfter),
 		)
 	})
+
+	Describe("Pending-phase intention validation", func() {
+		It("sets Failed+ValidationFailed at Pending phase when SecurityRule tenant differs from parent SecurityGroup tenant (no CMP resource yet)", func() {
+			m := newSRReconcilerWithMocks(GinkgoT())
+
+			kubeSG := createTestSecurityGroup(ctx, srSGName+"-pv-tenant", v1alpha1.SecurityGroupSpec{
+				Tenant: "other-tenant",
+				Region: "ITBG-Bergamo",
+				VPCReference: v1alpha1.ResourceReference{
+					Name:      srVpcName,
+					Namespace: "default",
+				},
+				ProjectReference: v1alpha1.ResourceReference{
+					Name:      srProjectName,
+					Namespace: "default",
+				},
+			})
+			defer func() { _ = k8sClient.Delete(ctx, kubeSG) }()
+			setSecurityGroupStatus(ctx, kubeSG, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "sg-id-pv", srProjectID, srVpcID, 0, time.Now())
+
+			spec := defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName+"-pv-tenant")
+			sr = createTestSecurityRule(ctx, "test-sr-pv-tenant", spec)
+			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", "", 0, time.Now())
+
+			// First reconcile: sets owner reference → ShortRequeue, no CMP calls.
+			result, err := m.r.HandleReconcile(ctx, sr)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), sr)).To(Succeed())
+
+			// Second reconcile: ivs fires at Stage 4 (before CMP calls) → validation fails, no CMP expectations needed.
+			result, err = m.r.HandleReconcile(ctx, sr)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			updated := &v1alpha1.SecurityRule{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
+			Expect(cond.Message).To(ContainSubstring("tenant mismatch with SecurityGroup"))
+		})
+
+		It("sets Failed+ValidationFailed at Pending phase when SecurityRule VPC ref differs from parent SecurityGroup VPC ref (no CMP resource yet)", func() {
+			m := newSRReconcilerWithMocks(GinkgoT())
+
+			kubeSG := createTestSecurityGroup(ctx, srSGName+"-pv-vpc", v1alpha1.SecurityGroupSpec{
+				Tenant: "test-tenant",
+				Region: "ITBG-Bergamo",
+				VPCReference: v1alpha1.ResourceReference{
+					Name:      "other-vpc",
+					Namespace: "default",
+				},
+				ProjectReference: v1alpha1.ResourceReference{
+					Name:      srProjectName,
+					Namespace: "default",
+				},
+			})
+			defer func() { _ = k8sClient.Delete(ctx, kubeSG) }()
+			setSecurityGroupStatus(ctx, kubeSG, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "sg-id-pv-v", srProjectID, srVpcID, 0, time.Now())
+
+			spec := defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName+"-pv-vpc")
+			// defaultSecurityRuleSpec uses VPCReference.Name: srVpcName, SG has "other-vpc"
+			sr = createTestSecurityRule(ctx, "test-sr-pv-vpc", spec)
+			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", "", 0, time.Now())
+
+			result, err := m.r.HandleReconcile(ctx, sr)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), sr)).To(Succeed())
+
+			// Second reconcile: ivs fires at Stage 4 (before CMP calls) → validation fails, no CMP expectations needed.
+			result, err = m.r.HandleReconcile(ctx, sr)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			updated := &v1alpha1.SecurityRule{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
+			Expect(cond.Message).To(ContainSubstring("VPC reference mismatch with SecurityGroup"))
+		})
+
+		It("sets Failed+ValidationFailed at Pending phase when SecurityRule project reference differs from parent SecurityGroup project reference (no CMP resource yet)", func() {
+			m := newSRReconcilerWithMocks(GinkgoT())
+
+			kubeSG := createTestSecurityGroup(ctx, srSGName+"-pv-proj", v1alpha1.SecurityGroupSpec{
+				Tenant: "test-tenant",
+				Region: "ITBG-Bergamo",
+				VPCReference: v1alpha1.ResourceReference{
+					Name:      srVpcName,
+					Namespace: "default",
+				},
+				ProjectReference: v1alpha1.ResourceReference{
+					Name:      "other-project",
+					Namespace: "default",
+				},
+			})
+			defer func() { _ = k8sClient.Delete(ctx, kubeSG) }()
+			setSecurityGroupStatus(ctx, kubeSG, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "sg-id-pv-proj", srProjectID, srVpcID, 0, time.Now())
+
+			spec := defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName+"-pv-proj")
+			sr = createTestSecurityRule(ctx, "test-sr-pv-proj", spec)
+			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", "", 0, time.Now())
+
+			result, err := m.r.HandleReconcile(ctx, sr)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), sr)).To(Succeed())
+
+			// Second reconcile: ivs fires at Stage 4 (before CMP calls) → validation fails, no CMP expectations needed.
+			result, err = m.r.HandleReconcile(ctx, sr)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			updated := &v1alpha1.SecurityRule{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
+			Expect(cond.Message).To(ContainSubstring("project reference mismatch with SecurityGroup"))
+		})
+
+		It("sets Failed+ValidationFailed at Pending phase when SecurityRule tenant differs from Project tenant (no CMP resource yet)", func() {
+			m := newSRReconcilerWithMocks(GinkgoT())
+
+			// SecurityGroup with matching attributes (same tenant/region/project/vpc) so SG cross-validation passes.
+			kubeSG := createTestSecurityGroup(ctx, srSGName+"-pv-tenant-proj", v1alpha1.SecurityGroupSpec{
+				Tenant: "test-tenant",
+				Region: "ITBG-Bergamo",
+				VPCReference: v1alpha1.ResourceReference{
+					Name:      srVpcName,
+					Namespace: "default",
+				},
+				ProjectReference: v1alpha1.ResourceReference{
+					Name:      srProjectName,
+					Namespace: "default",
+				},
+			})
+			setSecurityGroupStatus(ctx, kubeSG, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "sg-id-pv-tp", srProjectID, srVpcID, 0, time.Now())
+			defer func() { _ = k8sClient.Delete(ctx, kubeSG) }()
+
+			// K8s Project with a different tenant than the SecurityRule.
+			kubeProject := createTestProject(ctx, srProjectName, v1alpha1.ProjectSpec{
+				Tenant:      "other-tenant",
+				Description: "test",
+			})
+			defer func() { _ = k8sClient.Delete(ctx, kubeProject) }()
+
+			spec := defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName+"-pv-tenant-proj")
+			sr = createTestSecurityRule(ctx, "test-sr-pv-tenant-proj", spec)
+			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", "", 0, time.Now())
+
+			// First reconcile: SG found → owner reference set → ShortRequeue, no CMP calls.
+			result, err := m.r.HandleReconcile(ctx, sr)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), sr)).To(Succeed())
+
+			// Second reconcile: ivs fires at Stage 4 (before CMP calls) → validation fails, no CMP expectations needed.
+			result, err = m.r.HandleReconcile(ctx, sr)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			updated := &v1alpha1.SecurityRule{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
+			Expect(cond.Message).To(ContainSubstring("tenant mismatch with Project"))
+		})
+	})
+
+	Describe("Validation", func() {
+		It("sets Failed+ValidationFailed when SecurityRule tenant differs from parent SecurityGroup tenant", func() {
+			m := newSRReconcilerWithMocks(GinkgoT())
+
+			// Create a K8s SecurityGroup with a different Tenant than the SecurityRule.
+			kubeSG := createTestSecurityGroup(ctx, srSGName, v1alpha1.SecurityGroupSpec{
+				Tenant: "other-tenant",
+				Region: "ITBG-Bergamo",
+				VPCReference: v1alpha1.ResourceReference{
+					Name:      srVpcName,
+					Namespace: "default",
+				},
+				ProjectReference: v1alpha1.ResourceReference{
+					Name:      srProjectName,
+					Namespace: "default",
+				},
+			})
+			defer func() {
+				_ = k8sClient.Delete(ctx, kubeSG)
+			}()
+
+			sr = createTestSecurityRule(ctx, "test-sr-validation-tenant", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
+			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "sr-id-val", srProjectID, srVpcID, srSGID, 0, time.Now())
+
+			// First reconcile: sets owner reference on the SecurityRule → requeue, no CMP calls.
+			result, err := m.r.HandleReconcile(ctx, sr)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), sr)).To(Succeed())
+
+			// Second reconcile: ivs fires at Stage 4 (before CMP calls) → validation fails, no CMP expectations needed.
+			_, err = m.r.HandleReconcile(ctx, sr)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.SecurityRule{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
+			Expect(cond.Message).To(ContainSubstring("tenant mismatch with SecurityGroup"))
+		})
+	})
 })

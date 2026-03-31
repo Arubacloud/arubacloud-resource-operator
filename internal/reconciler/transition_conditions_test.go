@@ -56,6 +56,18 @@ func withCondition(condType v1alpha1.ResourcePhase, status metav1.ConditionStatu
 	}
 }
 
+func withConditionObservedGeneration(condType v1alpha1.ResourcePhase, status metav1.ConditionStatus, reason string, observedGen int64) projectOpt {
+	return func(proj *v1alpha1.Project) {
+		proj.Status.Conditions = append(proj.Status.Conditions, metav1.Condition{
+			Type:               string(condType),
+			Status:             status,
+			Reason:             reason,
+			LastTransitionTime: metav1.Now(),
+			ObservedGeneration: observedGen,
+		})
+	}
+}
+
 func newTestProject(opts ...projectOpt) *v1alpha1.Project {
 	proj := &v1alpha1.Project{
 		ObjectMeta: metav1.ObjectMeta{
@@ -500,6 +512,81 @@ var _ = Describe("Transition Conditions", func() {
 		})
 	})
 
+	Describe("IsResourceReady", func() {
+		It("returns true when not deleting, Phase=Active, Reason=Synchronized", func() {
+			proj := newTestProject(
+				withPhase(v1alpha1.ResourcePhaseActive),
+				withCondition(v1alpha1.ResourcePhaseActive, metav1.ConditionTrue, v1alpha1.ConditionReasonSynchronized, time.Now()),
+			)
+			Expect(IsResourceReady(proj)).To(BeTrue())
+		})
+
+		It("returns false when phase is not Active", func() {
+			proj := newTestProject(
+				withPhase(v1alpha1.ResourcePhaseCreating),
+				withCondition(v1alpha1.ResourcePhaseCreating, metav1.ConditionTrue, v1alpha1.ConditionReasonSynchronized, time.Now()),
+			)
+			Expect(IsResourceReady(proj)).To(BeFalse())
+		})
+
+		It("returns false when reason is not Synchronized", func() {
+			proj := newTestProject(
+				withPhase(v1alpha1.ResourcePhaseActive),
+				withCondition(v1alpha1.ResourcePhaseActive, metav1.ConditionTrue, v1alpha1.ConditionReasonShallSynchronize, time.Now()),
+			)
+			Expect(IsResourceReady(proj)).To(BeFalse())
+		})
+
+		It("returns false when deleting", func() {
+			proj := newTestProject(
+				withDeleting(),
+				withPhase(v1alpha1.ResourcePhaseActive),
+				withCondition(v1alpha1.ResourcePhaseActive, metav1.ConditionTrue, v1alpha1.ConditionReasonSynchronized, time.Now()),
+			)
+			Expect(IsResourceReady(proj)).To(BeFalse())
+		})
+
+		It("returns false when no status", func() {
+			proj := &v1alpha1.Project{}
+			Expect(IsResourceReady(proj)).To(BeFalse())
+		})
+	})
+
+	Describe("IsValidationFailed", func() {
+		It("returns true when not deleting, Phase=Failed, Reason=ValidationFailed", func() {
+			proj := newTestProject(
+				withPhase(v1alpha1.ResourcePhaseFailed),
+				withCondition(v1alpha1.ResourcePhaseFailed, metav1.ConditionTrue, v1alpha1.ConditionReasonValidationFailed, time.Now()),
+			)
+			Expect(IsValidationFailed(proj)).To(BeTrue())
+		})
+
+		It("returns false when Phase=Failed but Reason=Failed (timeout)", func() {
+			proj := newTestProject(
+				withPhase(v1alpha1.ResourcePhaseFailed),
+				withCondition(v1alpha1.ResourcePhaseFailed, metav1.ConditionTrue, v1alpha1.ConditionReasonFailed, time.Now()),
+			)
+			Expect(IsValidationFailed(proj)).To(BeFalse())
+		})
+
+		It("returns false when Phase is not Failed", func() {
+			proj := newTestProject(
+				withPhase(v1alpha1.ResourcePhaseActive),
+				withCondition(v1alpha1.ResourcePhaseActive, metav1.ConditionTrue, v1alpha1.ConditionReasonValidationFailed, time.Now()),
+			)
+			Expect(IsValidationFailed(proj)).To(BeFalse())
+		})
+
+		It("returns false when deleting", func() {
+			proj := newTestProject(
+				withDeleting(),
+				withPhase(v1alpha1.ResourcePhaseFailed),
+				withCondition(v1alpha1.ResourcePhaseFailed, metav1.ConditionTrue, v1alpha1.ConditionReasonValidationFailed, time.Now()),
+			)
+			Expect(IsValidationFailed(proj)).To(BeFalse())
+		})
+	})
+
 	Describe("KubeActiveAndGenerationChanged", func() {
 		It("returns true when Active, ResourceID set, gen != observedGen, condition True+Synchronized", func() {
 			proj := newTestProject(
@@ -554,6 +641,181 @@ var _ = Describe("Transition Conditions", func() {
 				withCondition(v1alpha1.ResourcePhaseActive, metav1.ConditionTrue, v1alpha1.ConditionReasonSynchronized, time.Now()),
 			)
 			Expect(KubeActiveAndGenerationChanged[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
+		})
+	})
+
+	Describe("IsIntentionValidationFailed", func() {
+		It("returns true when not deleting, Phase=Failed, Reason=IntentionValidationFailed", func() {
+			proj := newTestProject(
+				withPhase(v1alpha1.ResourcePhaseFailed),
+				withCondition(v1alpha1.ResourcePhaseFailed, metav1.ConditionTrue, v1alpha1.ConditionReasonIntentionValidationFailed, time.Now()),
+			)
+			Expect(IsIntentionValidationFailed(proj)).To(BeTrue())
+		})
+
+		It("returns false when Reason=ValidationFailed (CMP error)", func() {
+			proj := newTestProject(
+				withPhase(v1alpha1.ResourcePhaseFailed),
+				withCondition(v1alpha1.ResourcePhaseFailed, metav1.ConditionTrue, v1alpha1.ConditionReasonValidationFailed, time.Now()),
+			)
+			Expect(IsIntentionValidationFailed(proj)).To(BeFalse())
+		})
+
+		It("returns false when Phase is not Failed", func() {
+			proj := newTestProject(
+				withPhase(v1alpha1.ResourcePhaseActive),
+				withCondition(v1alpha1.ResourcePhaseActive, metav1.ConditionTrue, v1alpha1.ConditionReasonIntentionValidationFailed, time.Now()),
+			)
+			Expect(IsIntentionValidationFailed(proj)).To(BeFalse())
+		})
+
+		It("returns false when deleting", func() {
+			proj := newTestProject(
+				withDeleting(),
+				withPhase(v1alpha1.ResourcePhaseFailed),
+				withCondition(v1alpha1.ResourcePhaseFailed, metav1.ConditionTrue, v1alpha1.ConditionReasonIntentionValidationFailed, time.Now()),
+			)
+			Expect(IsIntentionValidationFailed(proj)).To(BeFalse())
+		})
+	})
+
+	Describe("IsPostValidationFailed", func() {
+		It("returns true when not deleting, Phase=Failed, Reason=PostValidationFailed", func() {
+			proj := newTestProject(
+				withPhase(v1alpha1.ResourcePhaseFailed),
+				withCondition(v1alpha1.ResourcePhaseFailed, metav1.ConditionTrue, v1alpha1.ConditionReasonPostValidationFailed, time.Now()),
+			)
+			Expect(IsPostValidationFailed(proj)).To(BeTrue())
+		})
+
+		It("returns false when Reason=ValidationFailed (CMP error)", func() {
+			proj := newTestProject(
+				withPhase(v1alpha1.ResourcePhaseFailed),
+				withCondition(v1alpha1.ResourcePhaseFailed, metav1.ConditionTrue, v1alpha1.ConditionReasonValidationFailed, time.Now()),
+			)
+			Expect(IsPostValidationFailed(proj)).To(BeFalse())
+		})
+
+		It("returns false when deleting", func() {
+			proj := newTestProject(
+				withDeleting(),
+				withPhase(v1alpha1.ResourcePhaseFailed),
+				withCondition(v1alpha1.ResourcePhaseFailed, metav1.ConditionTrue, v1alpha1.ConditionReasonPostValidationFailed, time.Now()),
+			)
+			Expect(IsPostValidationFailed(proj)).To(BeFalse())
+		})
+	})
+
+	Describe("IsCMPValidationFailedAndSpecChanged", func() {
+		It("returns true when Failed+ValidationFailed and condition.ObservedGeneration < current generation", func() {
+			proj := newTestProject(
+				withPhase(v1alpha1.ResourcePhaseFailed),
+				withGeneration(5),
+				withConditionObservedGeneration(v1alpha1.ResourcePhaseFailed, metav1.ConditionTrue, v1alpha1.ConditionReasonValidationFailed, 4),
+			)
+			Expect(IsCMPValidationFailedAndSpecChanged(proj)).To(BeTrue())
+		})
+
+		It("returns false when Failed+ValidationFailed but generation is the same (no spec change yet)", func() {
+			proj := newTestProject(
+				withPhase(v1alpha1.ResourcePhaseFailed),
+				withGeneration(4),
+				withConditionObservedGeneration(v1alpha1.ResourcePhaseFailed, metav1.ConditionTrue, v1alpha1.ConditionReasonValidationFailed, 4),
+			)
+			Expect(IsCMPValidationFailedAndSpecChanged(proj)).To(BeFalse())
+		})
+
+		It("returns false when Reason=IntentionValidationFailed (not CMP error)", func() {
+			proj := newTestProject(
+				withPhase(v1alpha1.ResourcePhaseFailed),
+				withGeneration(5),
+				withConditionObservedGeneration(v1alpha1.ResourcePhaseFailed, metav1.ConditionTrue, v1alpha1.ConditionReasonIntentionValidationFailed, 4),
+			)
+			Expect(IsCMPValidationFailedAndSpecChanged(proj)).To(BeFalse())
+		})
+
+		It("returns false when deleting", func() {
+			proj := newTestProject(
+				withDeleting(),
+				withPhase(v1alpha1.ResourcePhaseFailed),
+				withGeneration(5),
+				withConditionObservedGeneration(v1alpha1.ResourcePhaseFailed, metav1.ConditionTrue, v1alpha1.ConditionReasonValidationFailed, 4),
+			)
+			Expect(IsCMPValidationFailedAndSpecChanged(proj)).To(BeFalse())
+		})
+	})
+
+	Describe("KubeAnyValidationFailedAndDeleting", func() {
+		It("returns true when the resource satisfies IsAnyValidationFailedAndDeleting", func() {
+			proj := newTestProject(
+				withDeleting(),
+				withPhase(v1alpha1.ResourcePhaseFailed),
+				withCondition(v1alpha1.ResourcePhaseFailed, metav1.ConditionTrue, v1alpha1.ConditionReasonIntentionValidationFailed, time.Now()),
+			)
+			Expect(KubeAnyValidationFailedAndDeleting[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeTrue())
+		})
+
+		It("returns false when the resource does not satisfy IsAnyValidationFailedAndDeleting", func() {
+			proj := newTestProject(
+				withPhase(v1alpha1.ResourcePhaseFailed),
+				withCondition(v1alpha1.ResourcePhaseFailed, metav1.ConditionTrue, v1alpha1.ConditionReasonValidationFailed, time.Now()),
+			)
+			Expect(KubeAnyValidationFailedAndDeleting[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
+		})
+	})
+
+	Describe("IsAnyValidationFailedAndDeleting", func() {
+		It("returns true when deleting and Reason=ValidationFailed", func() {
+			proj := newTestProject(
+				withDeleting(),
+				withPhase(v1alpha1.ResourcePhaseFailed),
+				withCondition(v1alpha1.ResourcePhaseFailed, metav1.ConditionTrue, v1alpha1.ConditionReasonValidationFailed, time.Now()),
+			)
+			Expect(IsAnyValidationFailedAndDeleting(proj)).To(BeTrue())
+		})
+
+		It("returns true when deleting and Reason=IntentionValidationFailed", func() {
+			proj := newTestProject(
+				withDeleting(),
+				withPhase(v1alpha1.ResourcePhaseFailed),
+				withCondition(v1alpha1.ResourcePhaseFailed, metav1.ConditionTrue, v1alpha1.ConditionReasonIntentionValidationFailed, time.Now()),
+			)
+			Expect(IsAnyValidationFailedAndDeleting(proj)).To(BeTrue())
+		})
+
+		It("returns true when deleting and Reason=PostValidationFailed", func() {
+			proj := newTestProject(
+				withDeleting(),
+				withPhase(v1alpha1.ResourcePhaseFailed),
+				withCondition(v1alpha1.ResourcePhaseFailed, metav1.ConditionTrue, v1alpha1.ConditionReasonPostValidationFailed, time.Now()),
+			)
+			Expect(IsAnyValidationFailedAndDeleting(proj)).To(BeTrue())
+		})
+
+		It("returns false when not deleting (even if ValidationFailed)", func() {
+			proj := newTestProject(
+				withPhase(v1alpha1.ResourcePhaseFailed),
+				withCondition(v1alpha1.ResourcePhaseFailed, metav1.ConditionTrue, v1alpha1.ConditionReasonValidationFailed, time.Now()),
+			)
+			Expect(IsAnyValidationFailedAndDeleting(proj)).To(BeFalse())
+		})
+
+		It("returns false when deleting but Reason=Failed (timeout)", func() {
+			proj := newTestProject(
+				withDeleting(),
+				withPhase(v1alpha1.ResourcePhaseFailed),
+				withCondition(v1alpha1.ResourcePhaseFailed, metav1.ConditionTrue, v1alpha1.ConditionReasonFailed, time.Now()),
+			)
+			Expect(IsAnyValidationFailedAndDeleting(proj)).To(BeFalse())
+		})
+
+		It("returns false when Phase is not Failed", func() {
+			proj := newTestProject(
+				withDeleting(),
+				withPhase(v1alpha1.ResourcePhaseActive),
+				withCondition(v1alpha1.ResourcePhaseFailed, metav1.ConditionTrue, v1alpha1.ConditionReasonValidationFailed, time.Now()),
+			)
+			Expect(IsAnyValidationFailedAndDeleting(proj)).To(BeFalse())
 		})
 	})
 })

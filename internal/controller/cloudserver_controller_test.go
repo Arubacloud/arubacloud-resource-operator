@@ -1108,4 +1108,539 @@ var _ = Describe("CloudServerReconciler", func() {
 			Entry("5xx → ShortRequeueAfter, no phase change", "cs-cmp-err-delete-500", http.StatusInternalServerError, reconciler.ShortRequeueAfter),
 		)
 	})
+
+	Describe("Pending-phase intention validation", func() {
+		// Helper: create a K8s project and set it Active+Synchronized so Stage 3 (parent readiness) passes.
+		csIVSProjectName := "cs-ivs-project"
+		var kubeIVSProject *v1alpha1.Project
+
+		BeforeEach(func() {
+			kubeIVSProject = createTestProject(ctx, csIVSProjectName, v1alpha1.ProjectSpec{
+				Tenant:      "test-tenant",
+				Description: "ivs test project",
+				Tags:        []string{},
+			})
+			setProjectStatus(ctx, kubeIVSProject, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "ivs-proj-id", 0, time.Now())
+		})
+
+		AfterEach(func() {
+			_ = k8sClient.Delete(ctx, kubeIVSProject)
+		})
+
+		It("sets Failed+ValidationFailed at Pending phase when CloudServer VPC ref differs from Subnet VPC ref (no CMP resource yet)", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+
+			kubeSubnet := createTestSubnet(ctx, csSubnetName+"-ivs-vpc", v1alpha1.SubnetSpec{
+				Tenant: "test-tenant",
+				Region: "ITBG-Bergamo",
+				Type:   "Advanced",
+				CIDR:   "10.0.0.0/24",
+				VPCReference: v1alpha1.ResourceReference{
+					Name:      "other-vpc",
+					Namespace: "default",
+				},
+				ProjectReference: v1alpha1.ResourceReference{Name: csIVSProjectName, Namespace: "default"},
+			})
+			defer func() { _ = k8sClient.Delete(ctx, kubeSubnet) }()
+
+			spec := defaultCSSpec(csIVSProjectName, csVpcName, csBootVolName, csSubnetName+"-ivs-vpc", csSGName)
+			// CS VPCReference.Name is csVpcName, subnet VPCReference is "other-vpc"
+			cs = createTestCS(ctx, "test-cs-pv-vpc-subnet", spec)
+			setCSStatus(ctx, cs, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", "", "", nil, nil, 0, time.Now())
+
+			result, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
+
+			// ivs fires at Stage 4 (before CMP calls) → validation fails, no CMP expectations needed.
+			result, err = m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			updated := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
+			Expect(cond.Message).To(ContainSubstring("VPC reference mismatch with Subnets"))
+		})
+
+		It("sets Failed+ValidationFailed at Pending phase when CloudServer tenant differs from VPC tenant (no CMP resource yet)", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+
+			kubeVpc := createTestVpc(ctx, csVpcName+"-ivs-tenant-vpc", v1alpha1.VPCSpec{
+				Tenant:           "other-tenant",
+				Region:           "ITBG-Bergamo",
+				ProjectReference: v1alpha1.ResourceReference{Name: csIVSProjectName, Namespace: "default"},
+			})
+			defer func() { _ = k8sClient.Delete(ctx, kubeVpc) }()
+
+			spec := defaultCSSpec(csIVSProjectName, csVpcName+"-ivs-tenant-vpc", csBootVolName, csSubnetName, csSGName)
+			cs = createTestCS(ctx, "test-cs-pv-tenant-vpc", spec)
+			setCSStatus(ctx, cs, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", "", "", nil, nil, 0, time.Now())
+
+			result, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
+
+			// ivs fires at Stage 4 (before CMP calls) → validation fails, no CMP expectations needed.
+			result, err = m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			updated := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
+			Expect(cond.Message).To(ContainSubstring("tenant"))
+		})
+
+		It("sets Failed+ValidationFailed at Pending phase when CloudServer tenant differs from BootVolume tenant (no CMP resource yet)", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+
+			kubeBootVol := createTestBlockStorage(ctx, csBootVolName+"-ivs-tenant-bv", v1alpha1.BlockStorageSpec{
+				Tenant:           "other-tenant",
+				Region:           "ITBG-Bergamo",
+				Zone:             "ITBG",
+				SizeGB:           20,
+				BillingPeriod:    "Hour",
+				ProjectReference: v1alpha1.ResourceReference{Name: csIVSProjectName, Namespace: "default"},
+			})
+			defer func() { _ = k8sClient.Delete(ctx, kubeBootVol) }()
+
+			spec := defaultCSSpec(csIVSProjectName, csVpcName, csBootVolName+"-ivs-tenant-bv", csSubnetName, csSGName)
+			cs = createTestCS(ctx, "test-cs-pv-tenant-bv", spec)
+			setCSStatus(ctx, cs, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", "", "", nil, nil, 0, time.Now())
+
+			result, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
+
+			// ivs fires at Stage 4 (before CMP calls) → validation fails, no CMP expectations needed.
+			result, err = m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			updated := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
+			Expect(cond.Message).To(ContainSubstring("tenant"))
+		})
+
+		It("sets Failed+ValidationFailed at Pending phase when CloudServer tenant differs from Subnet tenant (no CMP resource yet)", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+
+			kubeSubnet := createTestSubnet(ctx, csSubnetName+"-ivs-tenant-sn", v1alpha1.SubnetSpec{
+				Tenant:           "other-tenant",
+				Region:           "ITBG-Bergamo",
+				Type:             "Advanced",
+				CIDR:             "10.1.0.0/24",
+				VPCReference:     v1alpha1.ResourceReference{Name: csVpcName, Namespace: "default"},
+				ProjectReference: v1alpha1.ResourceReference{Name: csIVSProjectName, Namespace: "default"},
+			})
+			defer func() { _ = k8sClient.Delete(ctx, kubeSubnet) }()
+
+			spec := defaultCSSpec(csIVSProjectName, csVpcName, csBootVolName, csSubnetName+"-ivs-tenant-sn", csSGName)
+			cs = createTestCS(ctx, "test-cs-pv-tenant-sn", spec)
+			setCSStatus(ctx, cs, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", "", "", nil, nil, 0, time.Now())
+
+			result, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
+
+			// ivs fires at Stage 4 (before CMP calls) → validation fails, no CMP expectations needed.
+			result, err = m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			updated := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
+			Expect(cond.Message).To(ContainSubstring("tenant mismatch"))
+		})
+
+		It("sets Failed+ValidationFailed at Pending phase when CloudServer project reference differs from VPC project reference (no CMP resource yet)", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+
+			kubeVpc := createTestVpc(ctx, csVpcName+"-ivs-proj-vpc", v1alpha1.VPCSpec{
+				Tenant:           "test-tenant",
+				Region:           "ITBG-Bergamo",
+				ProjectReference: v1alpha1.ResourceReference{Name: "other-project", Namespace: "default"},
+			})
+			defer func() { _ = k8sClient.Delete(ctx, kubeVpc) }()
+
+			spec := defaultCSSpec(csIVSProjectName, csVpcName+"-ivs-proj-vpc", csBootVolName, csSubnetName, csSGName)
+			cs = createTestCS(ctx, "test-cs-pv-proj-vpc", spec)
+			setCSStatus(ctx, cs, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", "", "", nil, nil, 0, time.Now())
+
+			result, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
+
+			// ivs fires at Stage 4 (before CMP calls) → validation fails, no CMP expectations needed.
+			result, err = m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			updated := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
+			Expect(cond.Message).To(ContainSubstring("project reference"))
+		})
+
+		It("sets Failed+ValidationFailed at Pending phase when CloudServer project reference differs from BootVolume project reference (no CMP resource yet)", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+
+			kubeBootVol := createTestBlockStorage(ctx, csBootVolName+"-ivs-proj-bv", v1alpha1.BlockStorageSpec{
+				Tenant:           "test-tenant",
+				Region:           "ITBG-Bergamo",
+				Zone:             "ITBG",
+				SizeGB:           20,
+				BillingPeriod:    "Hour",
+				ProjectReference: v1alpha1.ResourceReference{Name: "other-project", Namespace: "default"},
+			})
+			defer func() { _ = k8sClient.Delete(ctx, kubeBootVol) }()
+
+			spec := defaultCSSpec(csIVSProjectName, csVpcName, csBootVolName+"-ivs-proj-bv", csSubnetName, csSGName)
+			cs = createTestCS(ctx, "test-cs-pv-proj-bv", spec)
+			setCSStatus(ctx, cs, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", "", "", nil, nil, 0, time.Now())
+
+			result, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
+
+			// ivs fires at Stage 4 (before CMP calls) → validation fails, no CMP expectations needed.
+			result, err = m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			updated := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
+			Expect(cond.Message).To(ContainSubstring("project reference"))
+		})
+
+		It("sets Failed+ValidationFailed at Pending phase when CloudServer project reference differs from Subnet project reference (no CMP resource yet)", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+
+			kubeSubnet := createTestSubnet(ctx, csSubnetName+"-ivs-proj-sn", v1alpha1.SubnetSpec{
+				Tenant:           "test-tenant",
+				Region:           "ITBG-Bergamo",
+				Type:             "Advanced",
+				CIDR:             "10.2.0.0/24",
+				VPCReference:     v1alpha1.ResourceReference{Name: csVpcName, Namespace: "default"},
+				ProjectReference: v1alpha1.ResourceReference{Name: "other-project", Namespace: "default"},
+			})
+			defer func() { _ = k8sClient.Delete(ctx, kubeSubnet) }()
+
+			spec := defaultCSSpec(csIVSProjectName, csVpcName, csBootVolName, csSubnetName+"-ivs-proj-sn", csSGName)
+			cs = createTestCS(ctx, "test-cs-pv-proj-sn", spec)
+			setCSStatus(ctx, cs, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", "", "", nil, nil, 0, time.Now())
+
+			result, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
+
+			// ivs fires at Stage 4 (before CMP calls) → validation fails, no CMP expectations needed.
+			result, err = m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			updated := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
+			Expect(cond.Message).To(ContainSubstring("project reference mismatch"))
+		})
+
+		It("sets Failed+ValidationFailed at Pending phase when CloudServer tenant differs from KeyPair tenant (no CMP resource yet)", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+
+			kubeKP := createTestKeyPair(ctx, csKPName+"-ivs-tenant-kp", v1alpha1.KeyPairSpec{
+				Tenant:           "other-tenant",
+				Region:           "ITBG-Bergamo",
+				Tags:             []string{},
+				Value:            "ssh-rsa AAAAB3NzaC1 test-key",
+				ProjectReference: v1alpha1.ResourceReference{Name: csIVSProjectName, Namespace: "default"},
+			})
+			defer func() { _ = k8sClient.Delete(ctx, kubeKP) }()
+
+			spec := defaultCSSpec(csIVSProjectName, csVpcName, csBootVolName, csSubnetName, csSGName)
+			spec.KeyPairReference = v1alpha1.ResourceReference{Name: csKPName + "-ivs-tenant-kp", Namespace: "default"}
+			cs = createTestCS(ctx, "test-cs-pv-tenant-kp", spec)
+			setCSStatus(ctx, cs, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", "", "", nil, nil, 0, time.Now())
+
+			result, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
+
+			// ivs fires at Stage 4 (before CMP calls) → validation fails, no CMP expectations needed.
+			result, err = m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			updated := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
+			Expect(cond.Message).To(ContainSubstring("tenant"))
+		})
+
+		It("sets Failed+ValidationFailed at Pending phase when CloudServer tenant differs from ElasticIP tenant (no CMP resource yet)", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+
+			eipName := "cs-test-eip-ivs-tenant"
+			kubeEIP := createTestElasticIP(ctx, eipName, v1alpha1.ElasticIPSpec{
+				Tenant:           "other-tenant",
+				Region:           "ITBG-Bergamo",
+				Tags:             []string{},
+				BillingPeriod:    "Hour",
+				ProjectReference: v1alpha1.ResourceReference{Name: csIVSProjectName, Namespace: "default"},
+			})
+			defer func() { _ = k8sClient.Delete(ctx, kubeEIP) }()
+
+			spec := defaultCSSpec(csIVSProjectName, csVpcName, csBootVolName, csSubnetName, csSGName)
+			spec.ElasticIPReference = &v1alpha1.ResourceReference{Name: eipName, Namespace: "default"}
+			cs = createTestCS(ctx, "test-cs-pv-tenant-eip", spec)
+			setCSStatus(ctx, cs, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", "", "", nil, nil, 0, time.Now())
+
+			result, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
+
+			// ivs fires at Stage 4 (before CMP calls) → validation fails, no CMP expectations needed.
+			result, err = m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			updated := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
+			Expect(cond.Message).To(ContainSubstring("tenant"))
+		})
+
+		It("sets Failed+ValidationFailed at Pending phase when CloudServer tenant differs from SecurityGroup tenant (no CMP resource yet)", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+
+			kubeSG := createTestSecurityGroup(ctx, csSGName+"-ivs-tenant-sg", v1alpha1.SecurityGroupSpec{
+				Tenant:           "other-tenant",
+				Region:           "ITBG-Bergamo",
+				VPCReference:     v1alpha1.ResourceReference{Name: csVpcName, Namespace: "default"},
+				ProjectReference: v1alpha1.ResourceReference{Name: csIVSProjectName, Namespace: "default"},
+			})
+			defer func() { _ = k8sClient.Delete(ctx, kubeSG) }()
+
+			spec := defaultCSSpec(csIVSProjectName, csVpcName, csBootVolName, csSubnetName, csSGName+"-ivs-tenant-sg")
+			cs = createTestCS(ctx, "test-cs-pv-tenant-sg", spec)
+			setCSStatus(ctx, cs, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", "", "", nil, nil, 0, time.Now())
+
+			result, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
+
+			// ivs fires at Stage 4 (before CMP calls) → validation fails, no CMP expectations needed.
+			result, err = m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			updated := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
+			Expect(cond.Message).To(ContainSubstring("tenant mismatch"))
+		})
+
+		It("sets Failed+ValidationFailed at Pending phase when CloudServer project reference differs from KeyPair project reference (no CMP resource yet)", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+
+			kubeKP := createTestKeyPair(ctx, csKPName+"-ivs-proj-kp", v1alpha1.KeyPairSpec{
+				Tenant:           "test-tenant",
+				Region:           "ITBG-Bergamo",
+				Tags:             []string{},
+				Value:            "ssh-rsa AAAAB3NzaC1 test-key",
+				ProjectReference: v1alpha1.ResourceReference{Name: "other-project", Namespace: "default"},
+			})
+			defer func() { _ = k8sClient.Delete(ctx, kubeKP) }()
+
+			spec := defaultCSSpec(csIVSProjectName, csVpcName, csBootVolName, csSubnetName, csSGName)
+			spec.KeyPairReference = v1alpha1.ResourceReference{Name: csKPName + "-ivs-proj-kp", Namespace: "default"}
+			cs = createTestCS(ctx, "test-cs-pv-proj-kp", spec)
+			setCSStatus(ctx, cs, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", "", "", nil, nil, 0, time.Now())
+
+			result, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
+
+			// ivs fires at Stage 4 (before CMP calls) → validation fails, no CMP expectations needed.
+			result, err = m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			updated := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
+			Expect(cond.Message).To(ContainSubstring("project reference"))
+		})
+
+		It("sets Failed+ValidationFailed at Pending phase when CloudServer project reference differs from ElasticIP project reference (no CMP resource yet)", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+
+			eipName := "cs-test-eip-ivs-proj"
+			kubeEIP := createTestElasticIP(ctx, eipName, v1alpha1.ElasticIPSpec{
+				Tenant:           "test-tenant",
+				Region:           "ITBG-Bergamo",
+				Tags:             []string{},
+				BillingPeriod:    "Hour",
+				ProjectReference: v1alpha1.ResourceReference{Name: "other-project", Namespace: "default"},
+			})
+			defer func() { _ = k8sClient.Delete(ctx, kubeEIP) }()
+
+			spec := defaultCSSpec(csIVSProjectName, csVpcName, csBootVolName, csSubnetName, csSGName)
+			spec.ElasticIPReference = &v1alpha1.ResourceReference{Name: eipName, Namespace: "default"}
+			cs = createTestCS(ctx, "test-cs-pv-proj-eip", spec)
+			setCSStatus(ctx, cs, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", "", "", nil, nil, 0, time.Now())
+
+			result, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
+
+			// ivs fires at Stage 4 (before CMP calls) → validation fails, no CMP expectations needed.
+			result, err = m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			updated := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
+			Expect(cond.Message).To(ContainSubstring("project reference"))
+		})
+
+		It("sets Failed+ValidationFailed at Pending phase when CloudServer project reference differs from SecurityGroup project reference (no CMP resource yet)", func() {
+			m := newCSReconcilerWithMocks(GinkgoT())
+
+			kubeSG := createTestSecurityGroup(ctx, csSGName+"-ivs-proj-sg", v1alpha1.SecurityGroupSpec{
+				Tenant:           "test-tenant",
+				Region:           "ITBG-Bergamo",
+				VPCReference:     v1alpha1.ResourceReference{Name: csVpcName, Namespace: "default"},
+				ProjectReference: v1alpha1.ResourceReference{Name: "other-project", Namespace: "default"},
+			})
+			defer func() { _ = k8sClient.Delete(ctx, kubeSG) }()
+
+			spec := defaultCSSpec(csIVSProjectName, csVpcName, csBootVolName, csSubnetName, csSGName+"-ivs-proj-sg")
+			cs = createTestCS(ctx, "test-cs-pv-proj-sg", spec)
+			setCSStatus(ctx, cs, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", "", "", nil, nil, 0, time.Now())
+
+			result, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
+
+			// ivs fires at Stage 4 (before CMP calls) → validation fails, no CMP expectations needed.
+			result, err = m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			updated := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
+			Expect(cond.Message).To(ContainSubstring("project reference mismatch"))
+		})
+	})
+
+	Describe("Validation", func() {
+		It("sets Failed+ValidationFailed when CloudServer tenant does not match Project tenant", func() {
+			// Create Project with a different tenant than the CloudServer.
+			csValidationProjectName := "cs-validation-project"
+			kubeProj := createTestProject(ctx, csValidationProjectName, v1alpha1.ProjectSpec{
+				Tenant:      "other-tenant",
+				Description: "validation test project",
+				Tags:        []string{},
+			})
+			setProjectStatus(ctx, kubeProj, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "cs-val-proj-id", 0, time.Now())
+			defer func() {
+				_ = k8sClient.Delete(ctx, kubeProj)
+			}()
+
+			m := newCSReconcilerWithMocks(GinkgoT())
+			cs = createTestCS(ctx, "test-cs-validation", defaultCSSpec(csValidationProjectName, csVpcName, csBootVolName, csSubnetName, csSGName))
+
+			// First reconcile: ensureOwnerReference patches the CS and requeues.
+			result, err := m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
+
+			// Re-fetch so the owner-ref label is visible.
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
+
+			// ivs fires at Stage 4 (before CMP calls) → validation fails, no CMP expectations needed.
+			_, err = m.r.HandleReconcile(ctx, cs)
+			Expect(err).To(Succeed())
+
+			updated := &v1alpha1.CloudServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
+			Expect(cond.Message).To(ContainSubstring("tenant mismatch with Project"))
+		})
+	})
 })

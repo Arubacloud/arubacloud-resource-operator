@@ -57,6 +57,15 @@ func buildProjectCRUDResponse(statusCode int) *arubatypes.Response[arubatypes.Pr
 	}
 }
 
+func buildProjectCRUDValidationErrorResponse(statusCode int, field, message string) *arubatypes.Response[arubatypes.ProjectResponse] {
+	return &arubatypes.Response[arubatypes.ProjectResponse]{
+		StatusCode: statusCode,
+		Error: &arubatypes.ErrorResponse{
+			Errors: []arubatypes.ValidationError{{Field: field, Message: message}},
+		},
+	}
+}
+
 func buildDeleteResponse(statusCode int) *arubatypes.Response[any] {
 	return &arubatypes.Response[any]{StatusCode: statusCode}
 }
@@ -744,5 +753,51 @@ var _ = Describe("ProjectReconciler", func() {
 			Entry("4xx → LongRequeueAfter, no phase change", "proj-cmp-err-delete-400", http.StatusBadRequest, reconciler.LongRequeueAfter),
 			Entry("5xx → ShortRequeueAfter, no phase change", "proj-cmp-err-delete-500", http.StatusInternalServerError, reconciler.ShortRequeueAfter),
 		)
+
+		It("CMP create semantic error moves to Failed+ValidationFailed, then recovers on next reconcile after spec change", func() {
+			r, mockArubaClient, mockProjectClient := newProjectReconcilerWithMocks(GinkgoT())
+			proj = createTestProject(ctx, "proj-semantic-recovery", defaultProjectSpec())
+			setProjectStatus(ctx, proj, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, "", 0, time.Now())
+
+			// First reconcile: CMP returns 400 with validation errors → Failed+ValidationFailed.
+			// FromProject is called twice: once for the List call and once inside cmpCreate.
+			mockArubaClient.EXPECT().FromProject().Return(mockProjectClient).Times(2)
+			mockProjectClient.EXPECT().List(mock.Anything, mock.Anything).Return(buildProjectList(), nil).Once()
+			mockProjectClient.EXPECT().Create(mock.Anything, mock.Anything, mock.Anything).
+				Return(buildProjectCRUDValidationErrorResponse(http.StatusBadRequest, "Tag", "length must be at least 4"), nil).Once()
+
+			result, err := r.HandleReconcile(ctx, proj)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(BeZero()) // semantic error → no requeue
+
+			updated := &v1alpha1.Project{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+			failedCond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
+			Expect(failedCond).NotTo(BeNil())
+			Expect(failedCond.Reason).To(Equal(v1alpha1.ConditionReasonValidationFailed))
+			Expect(failedCond.Message).To(ContainSubstring("Tag: length must be at least 4"))
+
+			// Simulate spec change to increment generation so IsCMPValidationFailedAndSpecChanged returns true.
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), proj)).To(Succeed())
+			proj.Spec.Description = "updated description after validation fix"
+			Expect(k8sClient.Update(ctx, proj)).To(Succeed())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), proj)).To(Succeed())
+
+			// Second reconcile: generation-gated recovery fires, resets to Pending+Synchronized.
+			// The CMP list is still called (before the recovery check), but no CMP create is attempted.
+			mockArubaClient.EXPECT().FromProject().Return(mockProjectClient).Once()
+			mockProjectClient.EXPECT().List(mock.Anything, mock.Anything).Return(buildProjectList(), nil).Once()
+
+			result, err = r.HandleReconcile(ctx, proj)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhasePending))
+			pendingCond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhasePending))
+			Expect(pendingCond).NotTo(BeNil())
+			Expect(pendingCond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
+		})
 	})
 })

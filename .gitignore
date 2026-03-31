@@ -41,3 +41,9 @@ cmd/__debug_bin*
 # OS files
 .DS_Store
 Thumbs.db
+
+# Node / Docusaurus (docs website)
+node_modules/
+docs/website/node_modules/
+docs/website/build/
+docs/website/.docusaurus/

@@ -357,6 +357,35 @@ devtools-image-clean: ## Remove the devtools container image and its named cache
 sh: ## Open an interactive shell (use as: make sh-ctzd).
 	bash
 
+# Documentation targets
+.PHONY: docs-install
+docs-install: ## Install documentation dependencies
+	@echo "Installing documentation dependencies..."
+	@cd docs/website && npm install
+
+.PHONY: docs-serve
+docs-serve: docs-install ## Start documentation development server (English locale)
+	@echo "Starting documentation server (English locale)..."
+	@cd docs/website && npm start
+
+.PHONY: docs-serve-it
+docs-serve-it: docs-install ## Start documentation development server (Italian locale)
+	@echo "Starting documentation server (Italian locale)..."
+	@cd docs/website && npm start -- --locale it
+
+.PHONY: docs-build
+docs-build: docs-install ## Build documentation for production
+	@echo "Building documentation..."
+	@cd docs/website && npm run build
+
+.PHONY: docs-test
+docs-test: docs-install ## Test documentation (build and validate)
+	@echo "Testing documentation..."
+	@cd docs/website && npm run build -- --no-minify
+
+.PHONY: docs
+docs: docs-serve ## Alias for docs-serve
+
 # Local development targets
 .PHONY: dev-setup
 dev-setup: ## Setup local development environment

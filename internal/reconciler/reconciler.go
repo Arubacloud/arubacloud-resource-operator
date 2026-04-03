@@ -271,9 +271,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request, resourceRe
 	if obj == nil || err != nil {
 		return ctrl.Result{}, err
 	}
+	previousPhase, previousReason := getPhaseAndReason(obj)
 
 	result, err = resourceReconciler.HandleReconcile(ctx, obj)
-	captureMetrics(ctx, r, req, resourceReconciler.Object(), startTs, err)
+	captureMetrics(ctx, r, req, resourceReconciler.Object(), previousPhase, previousReason, startTs, err)
 	if err != nil {
 		logger.Error(err, "reconcile failed")
 		return ctrl.Result{}, err

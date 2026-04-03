@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"time"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -262,7 +263,11 @@ func (s *TransitionSet[K, A]) Run(ctx context.Context, k K, a A) (ctrl.Result, e
 	for _, t := range s.transitions {
 		if t.condition(k, a) {
 			logger.V(2).Info("transition matched", "transition", t.Name)
-			if err := t.action(ctx, k, a); err != nil {
+			previousPhase, previousReason := getPhaseAndReason(k)
+			start := time.Now()
+			err := t.action(ctx, k, a)
+			observeTransition(k, t.Name, previousPhase, previousReason, start, err)
+			if err != nil {
 				logger.Error(err, "transition action failed", "transition", t.Name)
 				return t.RequeueOnError(k, a, err)
 			}
@@ -273,6 +278,7 @@ func (s *TransitionSet[K, A]) Run(ctx context.Context, k K, a A) (ctrl.Result, e
 	}
 
 	// For the case which no transition gives condition we run the default actions
+	countUnmatchedTransition(k)
 	logger.V(2).Info("no transition matched, running default action")
 	if err := s.defaultAction(ctx, k, a); err != nil {
 		return s.DefaultRequeueOnError(k, a, err)

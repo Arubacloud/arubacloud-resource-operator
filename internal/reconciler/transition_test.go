@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 
@@ -285,6 +286,121 @@ var _ = Describe("TransitionSet.Run()", func() {
 		result, err := ts.Run(ctx, proj, nil)
 		Expect(err).To(Succeed()) // requeueOnError swallowed the error
 		Expect(result.RequeueAfter).To(Equal(LongRequeueAfter))
+	})
+})
+
+var _ = Describe("TransitionSet.Run() metrics", func() {
+	var (
+		ctx  = context.Background()
+		proj testProject
+	)
+
+	buildMetricsTS := func(transitions ...*AbstractTransition[testProject, testCMP]) *TransitionSet[testProject, testCMP] {
+		ts := &TransitionSet[testProject, testCMP]{
+			DefaultRequeue:        NoRequeue[testProject, testCMP],
+			DefaultRequeueOnError: NoRequeueAndPropagateError[testProject, testCMP],
+		}
+		for _, t := range transitions {
+			ts.Add(t)
+		}
+		return ts
+	}
+
+	BeforeEach(func() {
+		proj = &v1alpha1.Project{
+			ObjectMeta: metav1.ObjectMeta{Name: "t", Namespace: "default"},
+			Status: v1alpha1.ResourceStatus{
+				Phase: v1alpha1.ResourcePhasePending,
+				Conditions: []metav1.Condition{
+					{
+						Type:   string(v1alpha1.ResourcePhasePending),
+						Status: metav1.ConditionTrue,
+						Reason: v1alpha1.ConditionReasonSynchronized,
+					},
+				},
+			},
+		}
+		TransitionActionDuration.Reset()
+		TransitionUnmatchedTotal.Reset()
+	})
+
+	It("records one duration series with result=success on a successful transition", func() {
+		ts := buildMetricsTS(&AbstractTransition[testProject, testCMP]{
+			Name:           "test-transition",
+			KCondition:     AlwaysTrue[testProject, testCMP],
+			ACondition:     AlwaysTrue[testProject, testCMP],
+			KAction:        NoAction[testProject, testCMP],
+			Requeue:        NoRequeue[testProject, testCMP],
+			RequeueOnError: NoRequeueAndPropagateError[testProject, testCMP],
+		})
+
+		_, err := ts.Run(ctx, proj, nil)
+		Expect(err).To(Succeed())
+
+		// One series should have been observed (result=success, transition_name=test-transition)
+		Expect(testutil.CollectAndCount(TransitionActionDuration)).To(Equal(1))
+	})
+
+	It("records one duration series with result=error on a failed transition", func() {
+		actionErr := errors.New("action failed")
+		ts := buildMetricsTS(&AbstractTransition[testProject, testCMP]{
+			Name:       "failing-transition",
+			KCondition: AlwaysTrue[testProject, testCMP],
+			ACondition: AlwaysTrue[testProject, testCMP],
+			KAction: func(_ context.Context, _ testProject, _ testCMP) error {
+				return actionErr
+			},
+			Requeue: NoRequeue[testProject, testCMP],
+			RequeueOnError: func(_ testProject, _ testCMP, _ error) (ctrl.Result, error) {
+				return ctrl.Result{}, nil // swallow so Run doesn't propagate the error
+			},
+		})
+
+		_, err := ts.Run(ctx, proj, nil)
+		Expect(err).To(Succeed())
+
+		// One series should have been observed (result=error)
+		Expect(testutil.CollectAndCount(TransitionActionDuration)).To(Equal(1))
+	})
+
+	It("increments the unmatched counter when no transition matches", func() {
+		ts := buildMetricsTS(&AbstractTransition[testProject, testCMP]{
+			Name:           "no-match",
+			KCondition:     func(_ testProject, _ testCMP) bool { return false },
+			ACondition:     AlwaysTrue[testProject, testCMP],
+			Requeue:        NoRequeue[testProject, testCMP],
+			RequeueOnError: NoRequeueAndPropagateError[testProject, testCMP],
+		})
+
+		_, err := ts.Run(ctx, proj, nil)
+		Expect(err).To(Succeed())
+
+		Expect(testutil.ToFloat64(TransitionUnmatchedTotal.WithLabelValues(
+			"Project",
+			string(v1alpha1.ResourcePhasePending),
+			v1alpha1.ConditionReasonSynchronized,
+		))).To(Equal(float64(1)))
+		Expect(testutil.CollectAndCount(TransitionActionDuration)).To(Equal(0))
+	})
+
+	It("does not increment the unmatched counter when a transition matches", func() {
+		ts := buildMetricsTS(&AbstractTransition[testProject, testCMP]{
+			Name:           "matches",
+			KCondition:     AlwaysTrue[testProject, testCMP],
+			ACondition:     AlwaysTrue[testProject, testCMP],
+			KAction:        NoAction[testProject, testCMP],
+			Requeue:        NoRequeue[testProject, testCMP],
+			RequeueOnError: NoRequeueAndPropagateError[testProject, testCMP],
+		})
+
+		_, err := ts.Run(ctx, proj, nil)
+		Expect(err).To(Succeed())
+
+		Expect(testutil.ToFloat64(TransitionUnmatchedTotal.WithLabelValues(
+			"Project",
+			string(v1alpha1.ResourcePhasePending),
+			v1alpha1.ConditionReasonSynchronized,
+		))).To(Equal(float64(0)))
 	})
 })
 

@@ -35,47 +35,62 @@ Key paths:
 
 ## 3. Conventions — how to write CRD doc pages
 
-Every CRD page follows this template (see `docs/website/docs/VPC.md` as a reference example):
+Every CRD page follows this standard template (see `docs/website/docs/VPC.md` or `docs/website/docs/CloudServer.md` as reference examples):
 
 ```markdown
 ---
 sidebar_position: <N>
 ---
 
-## <Resource>
+# <Resource>
 
-- **Kind**: `<Resource>`
-- **CRD**: `<plural>.arubacloud.com`
-- **Scope**: Namespaced
+| Property | Value |
+|----------|-------|
+| **Kind** | `<Resource>` |
+| **API Group/Version** | `arubacloud.com/v1alpha1` |
+| **CRD Name** | `<plural>.arubacloud.com` |
+| **Scope** | Namespaced |
+| **Short Names** | `<abbr>`, `aru<abbr>` |
 
-<One or two sentences describing what this resource represents.>
+## Description
+2-4 sentences: what it represents, when to create it, role in the hierarchy.
 
-### Key fields *(include only if the resource has notable spec fields beyond references)*
+## Spec Fields
+| Field | Type | Required | Default | Validation | Description |
+|-------|------|----------|---------|------------|-------------|
+...rows...
 
-- **`spec.<field>`**: <description>
+## Status Fields
+| Field | Type | Description |
+|-------|------|-------------|
+...common fields (phase, resourceID, message, observedGeneration, phaseStartTime, conditions) + resource-specific resolved IDs...
 
-### Common references
+## References
+- Ownership references (parent)
+- Use references (consumed by other resources)
 
-- `spec.<parent>Reference`: owning `<Parent>`
+## Lifecycle
+- Creation ordering (what must be Active first)
+- Deletion behaviour (finalizer, cascade)
+- Update behaviour (mutable fields, update cycle)
+- Immutable fields (if any)
 
-### Example
+## Example
+Complete YAML with realistic placeholder values (not __PLACEHOLDER__ style).
 
-\`\`\`yaml
-apiVersion: arubacloud.com/v1alpha1
-kind: <Resource>
-metadata:
-  name: example-<resource>
-spec:
-  tenant: example-tenant
-  ...
+## kubectl Quick Reference
+\`\`\`bash
+kubectl get <shortname> -n <ns>
+kubectl describe aru<shortname> <name> -n <ns>
 \`\`\`
 ```
 
 Additional conventions:
-- **English is the source of truth.** Italian files mirror the English structure and translate prose. When unable to translate, copy the English content and add `<!-- TODO: translate to Italian -->` at the top of the Italian file.
-- **YAML examples** use placeholder values: `example-tenant`, `example-<resource>`, namespace `default`.
+- **English is the source of truth.** Italian files mirror the English structure and translate all prose. Keep technical terms (Kind, CRD, Spec, Status, Phase, namespace, YAML, kubectl) and field names in backticks untranslated. Translate headings (e.g., "Description" → "Descrizione", "Lifecycle" → "Ciclo di vita").
+- **YAML examples** use realistic placeholder values (e.g., `my-project`, `web-vpc`, `ARU-123456`), not `example-tenant` style.
+- **Italian table headers** use: Campo, Tipo, Obbligatorio, Predefinito, Validazione, Descrizione, Proprietà, Valore.
 - **`sidebars.js`** lists CRD pages as bare string IDs matching the filename without `.md` (e.g. `'VPC'`). New resources are appended to the CRDs category `items` array.
-- **`sidebar_position`** increments from 2 (Project) through the sidebar order. Match the order in `sidebars.js`.
+- **`sidebar_position`**: Project=2, VPC=3, Subnet=4, SecurityGroup=5, SecurityRule=6, KeyPair=7, ElasticIP=8, BlockStorage=9, CloudServer=10. New resources append beyond 10.
 
 ## 4. Build commands
 

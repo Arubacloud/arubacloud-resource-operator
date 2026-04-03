@@ -2,7 +2,7 @@
 sidebar_position: 99
 ---
 
-## Contribuire
+# Contribuire
 
 I contributi sono benvenuti! Sentiti libero di inviare una Pull Request.
 

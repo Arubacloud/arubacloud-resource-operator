@@ -15,6 +15,7 @@
 | `config/samples/` | Example CR manifests used in manual and e2e testing |
 | `test/scripts/` | Manual testing tooling (`test_runner.sh` + fixtures) |
 | `devex/build/` | Containerized development environment (`Dockerfile` for the devtools image) |
+| `docs/website/` | Docusaurus documentation site (EN + IT); see `ai/DOCS.md` for structure and conventions |
 
 ## Package details
 

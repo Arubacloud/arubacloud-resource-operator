@@ -86,6 +86,18 @@ When running the operator locally, metrics are available at `http://localhost:80
 curl http://localhost:8080/metrics | grep aruba_
 ```
 
+## Documentation
+
+```bash
+make docs-install    # Install npm dependencies for the docs site (one-time)
+make docs            # Start English locale dev server at http://localhost:3000
+make docs-serve-it   # Start Italian locale dev server
+make docs-build      # Production build of the docs site
+make docs-test       # Build with validation (catches broken links)
+```
+
+> See `ai/DOCS.md` for documentation conventions and when to update docs.
+
 ## Manual Testing with test_runner.sh
 
 `test/scripts/test_runner.sh` applies or deletes a set of Kubernetes resources against a live cluster for manual integration testing.

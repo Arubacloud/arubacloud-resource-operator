@@ -332,3 +332,27 @@ Create or identify a fixture file for this resource, then exercise the scenarios
 | 7 | Timeout detection | Force resource into transitory phase and wait | Phase moves to `Failed` after `MaxPhaseTimeout` (10 min) |
 
 > Add resource-specific scenarios as needed.
+
+---
+
+## 7. Documentation
+
+Update user-facing docs for the new/refactored resource. See `ai/DOCS.md` for full conventions.
+
+### 7.1 CRD documentation page
+
+- [ ] Create (or update) `docs/website/docs/<Resource>.md` following the CRD page template in `ai/DOCS.md`.
+- [ ] Create (or update) the Italian mirror at `docs/website/i18n/it/docusaurus-plugin-content-docs/current/<Resource>.md`. If unable to translate, copy English content and add `<!-- TODO: translate to Italian -->` at the top.
+
+### 7.2 Sidebar and index
+
+- [ ] **New controller only**: Add `'<Resource>'` to the CRDs category in `docs/website/sidebars.js`.
+- [ ] **New controller only**: Add a link to `<Resource>` in `docs/website/docs/crds.md`.
+
+### 7.3 Examples
+
+- [ ] If new sample manifests were added to `config/samples/`, update `docs/website/docs/examples.md`.
+
+### 7.4 Verify
+
+- [ ] Run `make docs-test` to confirm the docs build without errors.

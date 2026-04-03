@@ -660,3 +660,6 @@ Every `*Reconciler` must implement both:
 
 Within **CMP actions** (section 12), always use the order `cmpDelete` → `cmpUpdate` → `cmpCreate`. This mirrors the lifecycle priority: deletion before update before creation.
 
+## Documentation
+
+When code changes affect CRD types, user-facing behaviour, or installation/configuration, update the corresponding documentation. See `ai/DOCS.md` for the full mapping of code paths to documentation files, page structure conventions, and i18n requirements.

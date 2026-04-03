@@ -1,5 +1,5 @@
 apiVersion: arubacloud.com/v1alpha1
-kind: ElasticIp
+kind: ElasticIP
 metadata:
   name: __NAME__05
   namespace: __NAMESPACE__
@@ -9,10 +9,8 @@ spec:
     - sample
     - elastic-ip
     - test
-  location:
-    value: ITBG-Bergamo
-  billingPlan:
-    billingPeriod: Hour
+  region: ITBG-Bergamo
+  billingPeriod: Hour
   projectReference:
     name: __NAME__
     namespace: __NAMESPACE__

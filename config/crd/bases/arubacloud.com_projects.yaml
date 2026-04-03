@@ -12,7 +12,8 @@ spec:
     listKind: ProjectList
     plural: projects
     shortNames:
-    - proj
+    - prj
+    - aruprj
     singular: project
   scope: Namespaced
   versions:
@@ -54,9 +55,6 @@ spec:
           spec:
             description: ProjectSpec defines the desired state of Project.
             properties:
-              default:
-                description: Default indicates if this should be the default project
-                type: boolean
               description:
                 description: Description provides a description for the project
                 maxLength: 1000
@@ -70,6 +68,9 @@ spec:
                 description: Tenant is the owning account/tenant of this project
                 type: string
             type: object
+            x-kubernetes-validations:
+            - message: tenant is immutable
+              rule: self.tenant == oldSelf.tenant
           status:
             description: Common status for all resources
             properties:

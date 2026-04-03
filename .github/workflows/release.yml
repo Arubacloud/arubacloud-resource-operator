@@ -10,9 +10,33 @@ permissions:
   packages: write
 
 jobs:
+  devtools:
+    name: Build Devtools Image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Cache devtools image
+        id: cache-devtools
+        uses: actions/cache@v4
+        with:
+          path: /tmp/devtools-image.tar
+          key: devtools-${{ hashFiles('ci/devtools/Dockerfile') }}
+
+      - name: Build devtools image
+        if: steps.cache-devtools.outputs.cache-hit != 'true'
+        run: make devtools-image
+
+      - name: Save devtools image to cache
+        if: steps.cache-devtools.outputs.cache-hit != 'true'
+        run: docker save arubacloud-resource-operator-devtools:local -o /tmp/devtools-image.tar
+
   release:
     name: Create Release
     runs-on: ubuntu-latest
+    needs: [devtools]
 
     env:
       REGISTRY: ghcr.io
@@ -24,11 +48,16 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Go
-        uses: actions/setup-go@v6
+      - name: Restore devtools image
+        uses: actions/cache@v4
         with:
-          go-version-file: "go.mod"
-          cache: true
+          path: /tmp/devtools-image.tar
+          key: devtools-${{ hashFiles('ci/devtools/Dockerfile') }}
+
+      - name: Load devtools image
+        run: |
+          docker load -i /tmp/devtools-image.tar
+          mkdir -p bin && touch bin/.devtools-image.stamp
 
       - name: Prepare image environment
         run: |
@@ -40,11 +69,11 @@ jobs:
 
       # === Build manager binary ===
       - name: Build manager binary
-        run: make build
+        run: make build-ctzd
 
       # === Build Docker image ===
       - name: Build Docker image
-        run: make docker-build          # uses $IMG from GITHUB_ENV
+        run: make docker-build     # uses $IMG from GITHUB_ENV
 
       # === Login to GitHub Container Registry ===
       - name: Log in to GitHub Container Registry

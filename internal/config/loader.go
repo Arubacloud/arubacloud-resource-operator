@@ -34,9 +34,9 @@ func Load(ctx context.Context, mgr ctrl.Manager, configMapName, configNamespace,
 		roleID = os.Getenv("ROLE_ID")
 	}
 
-	roleSecret := string(secret.Data["role-secret"])
-	if roleSecret == "" {
-		roleSecret = os.Getenv("ROLE_SECRET")
+	roleSecretID := string(secret.Data["secret-id"])
+	if roleSecretID == "" {
+		roleSecretID = os.Getenv("SECRET_ID")
 	}
 
 	mainConfig := &MainConfig{
@@ -49,7 +49,7 @@ func Load(ctx context.Context, mgr ctrl.Manager, configMapName, configNamespace,
 		RolePath:       cfg.Data["role-path"],
 		KVMount:        cfg.Data["kv-mount"],
 		RoleID:         roleID,
-		RoleSecret:     roleSecret,
+		RoleSecretID:   roleSecretID,
 		ClientID:       string(secret.Data["client-id"]),
 		ClientSecret:   string(secret.Data["client-secret"]),
 	}

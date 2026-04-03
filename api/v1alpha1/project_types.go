@@ -21,6 +21,7 @@ import (
 )
 
 // ProjectSpec defines the desired state of Project.
+// +kubebuilder:validation:XValidation:rule="self.tenant == oldSelf.tenant",message="tenant is immutable"
 type ProjectSpec struct {
 	// Description provides a description for the project
 	// +kubebuilder:validation:Optional
@@ -33,15 +34,11 @@ type ProjectSpec struct {
 	// Tags are labels associated with the project
 	// +kubebuilder:validation:Optional
 	Tags []string `json:"tags,omitempty"`
-
-	// Default indicates if this should be the default project
-	// +kubebuilder:validation:Optional
-	Default bool `json:"default,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:scope=Namespaced,shortName=proj
+// +kubebuilder:resource:scope=Namespaced,shortName=prj;aruprj
 // +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase"
 // +kubebuilder:printcolumn:name="Resource ID",type="string",JSONPath=".status.resourceID"
 // +kubebuilder:printcolumn:name="Message",type="string",JSONPath=".status.message"

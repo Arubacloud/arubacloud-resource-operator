@@ -20,7 +20,6 @@ rules:
   - cloudservers
   - elasticips
   - keypairs
-  - projects
   - securitygroups
   - securityrules
   - subnets
@@ -40,7 +39,6 @@ rules:
   - cloudservers/finalizers
   - elasticips/finalizers
   - keypairs/finalizers
-  - projects/finalizers
   - securitygroups/finalizers
   - securityrules/finalizers
   - subnets/finalizers
@@ -54,7 +52,6 @@ rules:
   - cloudservers/status
   - elasticips/status
   - keypairs/status
-  - projects/status
   - securitygroups/status
   - securityrules/status
   - subnets/status
@@ -63,3 +60,11 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - arubacloud.com
+  resources:
+  - projects
+  verbs:
+  - get
+  - list
+  - watch

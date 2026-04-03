@@ -12,7 +12,8 @@ spec:
     listKind: SubnetList
     plural: subnets
     shortNames:
-    - asn
+    - sn
+    - arusn
     singular: subnet
   scope: Namespaced
   versions:
@@ -54,9 +55,10 @@ spec:
           spec:
             description: SubnetSpec defines the desired state of Subnet.
             properties:
-              default:
-                description: Default indicates whether this is a default subnet
-                type: boolean
+              cidr:
+                description: CIDR specifies the network address in CIDR notation
+                pattern: ^([0-9]{1,3}\.){3}[0-9]{1,3}\/[0-9]{1,2}$
+                type: string
               dhcp:
                 description: DHCP specifies the DHCP configuration
                 properties:
@@ -66,16 +68,6 @@ spec:
                     type: boolean
                 required:
                 - enabled
-                type: object
-              network:
-                description: Network specifies the network configuration
-                properties:
-                  address:
-                    description: Address specifies the network address in CIDR notation
-                    pattern: ^([0-9]{1,3}\.){3}[0-9]{1,3}\/[0-9]{1,2}$
-                    type: string
-                required:
-                - address
                 type: object
               projectReference:
                 description: ProjectReference references the Project that owns this
@@ -91,6 +83,10 @@ spec:
                 - name
                 - namespace
                 type: object
+              region:
+                default: ITBG-Bergamo
+                description: Region specifies the region for the subnet
+                type: string
               tags:
                 description: Tags are labels associated with the subnet
                 items:
@@ -106,7 +102,7 @@ spec:
                 - Basic
                 type: string
               vpcReference:
-                description: VpcReference references the ArubaVpc that owns this subnet
+                description: VPCReference references the ArubaVpc that owns this subnet
                 properties:
                   name:
                     description: Name is the name of the referenced resource
@@ -119,9 +115,10 @@ spec:
                 - namespace
                 type: object
             required:
+            - cidr
             - dhcp
-            - network
             - projectReference
+            - region
             - type
             - vpcReference
             type: object
@@ -213,7 +210,7 @@ spec:
                   the remote system
                 type: string
               vpcID:
-                description: VpcID is the VPC ID where this subnet is created
+                description: VPCID is the VPC ID where this subnet is created
                 type: string
             type: object
         type: object

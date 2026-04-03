@@ -77,6 +77,12 @@ To apply a sample:
 kubectl apply -f config/samples/arubacloud.com_v1alpha1_cloudserver.yaml
 ```
 
+## Documentation
+
+Project documentation (EN/IT) is published via GitHub Pages and built from `docs/website/`.
+
+- Local docs: `docs/README.md`
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.

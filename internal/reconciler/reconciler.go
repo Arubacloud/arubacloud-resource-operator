@@ -2,736 +2,328 @@ package reconciler
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"slices"
+	"strings"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"github.com/Arubacloud/sdk-go/pkg/aruba"
+	arubamt "github.com/Arubacloud/sdk-go/pkg/multitenant"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
-	arubaClient "github.com/Arubacloud/arubacloud-resource-operator/internal/client"
-	"github.com/Arubacloud/arubacloud-resource-operator/internal/util"
 )
 
 const (
-	requeueAfter = 20 * time.Second
-	// maxPhaseTimeout defines the maximum time a resource can remain in a non-final phase
-	maxPhaseTimeout = 5 * time.Minute
+	// ShortRequeueAfter is the requeue delay used after transient operations such as
+	// setting finalizers, where a quick re-check is expected.
+	ShortRequeueAfter = 1 * time.Second
+	// LongRequeueAfter is the requeue delay used when polling for slow cloud-side
+	// operations (e.g. waiting for a resource to become active).
+	LongRequeueAfter = 20 * time.Second
+	// MaxPhaseTimeout defines the maximum time a resource can remain in a non-final phase
+	MaxPhaseTimeout = 10 * time.Minute
 )
 
-// ResourceReconciler is an interface that must be implemented by all resource reconcilers
+type contextKey string
+
+const (
+	ArubaClientKey contextKey = "arubaClient"
+)
+
+// ResourceReconciler is an interface that must be implemented by all resource reconcilers.
+// Each concrete controller embeds or delegates to a Reconciler and provides resource-specific
+// behaviour through this interface.
 type ResourceReconciler interface {
-	Init(ctx context.Context, obj ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error)
-	Creating(ctx context.Context, obj ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error)
-	Provisioning(ctx context.Context, obj ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error)
-	Updating(ctx context.Context, obj ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error)
-	Created(ctx context.Context, obj ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error)
-	Deleting(ctx context.Context, obj ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error)
+	// Object returns a zero-value instance of the managed resource type used as a
+	// target for API-server GET calls.
+	Object() ResourceObject
+	// Finalizer returns the finalizer string registered on the managed resource to
+	// prevent premature garbage collection before cloud-side cleanup is complete.
+	Finalizer() string
+	// HandleReconcile contains the resource-specific reconciliation logic, including
+	// phase transitions and cloud API interactions. It is called after finalizer
+	// registration and before finalizer removal.
+	HandleReconcile(ctx context.Context, obj ResourceObject) (ctrl.Result, error)
 }
 
-// Reconciler provides base functionality for all resource controllers
+// Reconciler provides base functionality for all resource controllers. It holds the
+// Kubernetes client, the runtime scheme, and the Aruba cloud API client shared across
+// all concrete controllers.
 type Reconciler struct {
+	// Client is the controller-runtime client used to read and write Kubernetes objects.
 	client.Client
+	// Scheme is the runtime scheme used for object type registration.
 	*runtime.Scheme
-	*arubaClient.HelperClient
-	*arubaClient.AppRoleClient
-	TokenManager   arubaClient.ITokenManager
-	VaultIsEnabled bool
+	// ArubaClient is the authenticated Aruba cloud API client.
+	config            ReconcilerConfig
+	multiTenantClient arubamt.Multitenant
+
+	// ArubaClient aruba.Client
 }
 
+// ResourceObject is the constraint that every managed custom resource must satisfy.
+// It extends the standard controller-runtime client.Object with Aruba-specific accessors.
 type ResourceObject interface {
 	client.Object
+	// GetResourceStatus returns a pointer to the embedded ResourceStatus, which tracks
+	// the current phase and conditions of the cloud resource.
 	GetResourceStatus() *v1alpha1.ResourceStatus
+	// GetTenant returns the tenant identifier associated with this resource, used to
+	// scope Aruba API calls to the correct account.
 	GetTenant() string
 }
 
-// ReconcilerConfig holds configuration for setting up Reconciler
+// ReconcilerConfig holds configuration for setting up a Reconciler. Values are
+// typically populated from environment variables or a ConfigMap at operator startup.
 type ReconcilerConfig struct {
-	APIGateway     string
+	// APIGateway is the base URL of the Aruba cloud API endpoint.
+	APIGateway string
+	// VaultIsEnabled controls whether credentials are fetched from HashiCorp Vault
+	// instead of being supplied directly as ClientID/ClientSecret.
 	VaultIsEnabled bool
-	VaultAddress   string
-	KeycloakURL    string
-	RealmAPI       string
-	Namespace      string
-	RolePath       string
-	ClientID       string
-	ClientSecret   string //nolint:gosec // G117: ClientSecret is intentionally storing OAuth secret
-	RoleID         string
-	RoleSecret     string
-	KVMount        string
-	HTTPClient     *http.Client
+	// VaultAddress is the address of the HashiCorp Vault server (used when VaultIsEnabled is true).
+	VaultAddress string
+	// KeycloakURL is the base URL of the Keycloak instance used for token issuance.
+	KeycloakURL string
+	// RealmAPI is the Keycloak realm used for authentication.
+	RealmAPI string
+	// Namespace is the Kubernetes namespace the operator runs in, used for Vault path scoping.
+	Namespace string
+	// RolePath is the Vault AppRole mount path used to retrieve credentials.
+	RolePath string
+	// ClientID is the OAuth2 client ID used when VaultIsEnabled is false.
+	ClientID string
+	// ClientSecret is the OAuth2 client secret used when VaultIsEnabled is false.
+	ClientSecret string //nolint:gosec // G117: ClientSecret is intentionally storing OAuth secret
+	// RoleID is the Vault AppRole role ID used when VaultIsEnabled is true.
+	RoleID string
+	// RoleSecret is the Vault AppRole secret ID used when VaultIsEnabled is true.
+	RoleSecret string
+	// KVMount is the Vault KV secrets engine mount path where credentials are stored.
+	KVMount string
+	// HTTPClient is an optional custom HTTP client injected for testing or proxy support.
+	HTTPClient *http.Client
 }
 
-// NewReconciler creates a new base reconciler
+// NewReconcilerForTest creates a Reconciler suitable for unit testing. It accepts a
+// pre-populated Multitenant client cache and a Kubernetes client+scheme directly,
+// bypassing the ctrl.Manager requirement and real credential configuration.
+func NewReconcilerForTest(k8sClient client.Client, scheme *runtime.Scheme, mtClient arubamt.Multitenant) *Reconciler {
+	return &Reconciler{
+		Client:            k8sClient,
+		Scheme:            scheme,
+		multiTenantClient: mtClient,
+	}
+}
+
+// NewReconciler creates a new base Reconciler wired to the given controller-runtime
+// Manager and configured via cfg. It initialises the Aruba cloud client, selecting
+// either Vault-based or direct client-credential authentication depending on
+// cfg.VaultIsEnabled. The process is terminated with log.Fatalf if the Aruba client
+// cannot be created, since the operator cannot function without a valid API client.
 func NewReconciler(mgr ctrl.Manager, cfg ReconcilerConfig) *Reconciler {
-	var vaultAuth *arubaClient.AppRoleClient
-	helperClientInstance := arubaClient.NewHelperClient(mgr.GetClient(), cfg.HTTPClient, cfg.APIGateway)
-
-	if cfg.VaultIsEnabled {
-		vaultClient := arubaClient.VaultClient(cfg.VaultAddress)
-		var err error
-		vaultAuth, err = arubaClient.NewAppRoleClient(cfg.Namespace, cfg.RolePath, cfg.RoleID, cfg.RoleSecret, cfg.KVMount, vaultClient)
-		if err != nil {
-			ctrl.Log.Error(err, "failed to init vault client: %v")
-			os.Exit(1)
-		}
-		defer vaultAuth.Close()
-		ctrl.Log.V(1).Info("Vault integration is enabled; Vault client initialized")
-	}
-
-	oauthClient := arubaClient.NewTokenManager(cfg.KeycloakURL, cfg.RealmAPI, "", "", nil)
-
-	if !cfg.VaultIsEnabled {
-		ctrl.Log.V(1).Info("Vault integration is disabled; using static Keycloak client credentials")
-		oauthClient.SetClientIdAndSecret(cfg.ClientID, cfg.ClientSecret)
-	}
+	// arubaClient, err := aruba.NewClient(options)
+	// if err != nil {
+	// 	log.Fatalf("failed to create Aruba Client: %v, options: `%v`", err, options)
+	// }
 
 	return &Reconciler{
-		Client:         mgr.GetClient(),
-		Scheme:         mgr.GetScheme(),
-		HelperClient:   helperClientInstance,
-		AppRoleClient:  vaultAuth,
-		TokenManager:   oauthClient,
-		VaultIsEnabled: cfg.VaultIsEnabled,
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+		config: cfg,
+		// ArubaClient: arubaClient,
+		multiTenantClient: arubamt.New(),
 	}
 }
 
-// Reconcile handles the common reconciliation logic for all resources
-func (r *Reconciler) Reconcile(
-	ctx context.Context,
-	req ctrl.Request,
-	obj ResourceObject,
-	resourceReconciler ResourceReconciler) (ctrl.Result, error) {
-	tenant := obj.GetTenant()
-	status := obj.GetResourceStatus()
-
-	if tenant == "" {
-		if r.VaultIsEnabled {
-			errMsg := "Tenant ID is not specified in the resource spec"
-			ctrl.Log.Error(fmt.Errorf("%s", errMsg), "Cannot proceed without Tenant ID when Vault integration is enabled", "Resource", req.NamespacedName)
-			return ctrl.Result{}, fmt.Errorf("%s", errMsg)
-		} else {
-			ctrl.Log.V(1).Info("Vault integration is disabled; proceeding without Tenant ID")
-		}
+// ArubaClient returns an authenticated Aruba cloud API client scoped to the tenant associated
+// with the given resource. It first checks if a client for the tenant already exists in
+// the multi-tenant client cache, and if not, it creates a new client using the Reconciler's
+// configuration (either Vault-based or direct credentials) and adds it to the cache for
+// future use. Errors during client creation are returned to the caller for handling.
+func (r *Reconciler) ArubaClient(tenant string) (aruba.Client, error) {
+	c, ok := r.multiTenantClient.Get(tenant)
+	if ok {
+		return c, nil
 	}
 
-	ctrl.Log.V(1).Info("Setting tenant in Aruba client", "TenantID", tenant)
-	if err := r.Authenticate(ctx, tenant); err != nil {
-		ctrl.Log.Error(err, "Failed to authenticate Aruba client", "tenantID", tenant)
+	options := aruba.NewOptions().WithBaseURL(r.config.APIGateway).WithDefaultTokenIssuerURL()
+
+	if r.config.VaultIsEnabled {
+		options = options.WithVaultCredentialsRepository(
+			r.config.VaultAddress, r.config.KVMount, tenant, r.config.Namespace, r.config.RolePath, r.config.RoleID, r.config.RoleSecret,
+		)
+	} else {
+		ctrl.Log.Info("vault disabled, using direct credentials", "tenant", tenant)
+		options = options.WithClientCredentials(r.config.ClientID, r.config.ClientSecret)
+	}
+
+	arubaClient, err := aruba.NewClient(options)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Aruba Client: %w, options: `%v`", err, options)
+	}
+
+	r.multiTenantClient.Add(tenant, arubaClient)
+
+	return arubaClient, nil
+}
+
+// setupResource registers the finalizer and sets the initial Pending status for a new
+// resource. It is called as Step 1 of Reconcile. Both writes (metadata and status) are
+// performed inside a single retry.RetryOnConflict loop. When changes are made it returns
+// a non-zero Result so Reconcile can requeue immediately.
+func (r *Reconciler) setupResource(ctx context.Context, req ctrl.Request, resourceReconciler ResourceReconciler) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+	var result ctrl.Result
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		obj, err := r.getResource(ctx, req, resourceReconciler.Object())
+		if obj == nil || err != nil {
+			return err
+		}
+
+		var mustUpdateMeta, mustUpdateStatus bool
+
+		if obj.GetDeletionTimestamp().IsZero() && !slices.Contains(obj.GetFinalizers(), resourceReconciler.Finalizer()) {
+			obj.SetFinalizers(append(obj.GetFinalizers(), resourceReconciler.Finalizer()))
+			logger.V(2).Info("finalizer added", "finalizer", resourceReconciler.Finalizer())
+			mustUpdateMeta = true
+		}
+
+		if obj.GetResourceStatus().Phase == "" {
+			mustUpdateStatus = true
+		}
+
+		if !mustUpdateMeta && !mustUpdateStatus {
+			return nil
+		}
+
+		// Write metadata (finalizer) first — status subresource is separate
+		if mustUpdateMeta {
+			if err := r.Update(ctx, obj); err != nil {
+				return err
+			}
+		}
+
+		if mustUpdateStatus {
+			if mustUpdateMeta {
+				// Re-GET to pick up the new ResourceVersion from the metadata write
+				if err := r.Get(ctx, req.NamespacedName, obj); err != nil {
+					return err
+				}
+			}
+			rs := obj.GetResourceStatus()
+			rs.Phase = v1alpha1.ResourcePhasePending
+			meta.SetStatusCondition(&rs.Conditions, metav1.Condition{
+				Type:               string(v1alpha1.ResourcePhasePending),
+				Status:             metav1.ConditionTrue,
+				Reason:             v1alpha1.ConditionReasonSynchronized,
+				Message:            "Pending Synchronized - OK",
+				LastTransitionTime: metav1.Now(),
+			})
+			if err := r.Status().Update(ctx, obj); err != nil {
+				return err
+			}
+		}
+
+		result = ctrl.Result{RequeueAfter: ShortRequeueAfter}
+		return nil
+	})
+	return result, err
+}
+
+// Reconcile implements the shared three-step reconciliation loop used by all resource
+// controllers:
+//
+//  1. Finalizer registration — adds the resource-specific finalizer when the object is
+//     not being deleted, then requeues so the next iteration starts with the finalizer
+//     already present. Also sets Phase=Pending on the first reconciliation.
+//  2. Resource-specific reconciliation — delegates to resourceReconciler.HandleReconcile
+//     which drives phase transitions and interacts with the Aruba cloud API.
+//  3. Finalizer removal — once HandleReconcile reports the resource has reached the
+//     Deleted phase, the finalizer is stripped so Kubernetes can garbage-collect the object.
+//
+// Both finalizer operations are wrapped in retry.RetryOnConflict to handle optimistic
+// concurrency conflicts from concurrent writes.
+func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request, resourceReconciler ResourceReconciler) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	// 1 - Register finalizer and set initial Pending status for new resources
+	result, err := r.setupResource(ctx, req, resourceReconciler)
+	if err != nil {
+		return ctrl.Result{}, err
+	} else if !result.IsZero() {
+		return result, nil
+	}
+
+	// 2 - Call the specific resource reconciler to handle the details of the
+	//     reconciliation and the phase drifting
+	startTs := time.Now()
+	obj, err := r.getResource(ctx, req, resourceReconciler.Object())
+	if obj == nil || err != nil {
 		return ctrl.Result{}, err
 	}
+	previousPhase, previousReason := getPhaseAndReason(obj)
 
-	isPhaseTimeout, phaseTimeoutResult, phaseTimeoutError := r.HandlePhaseTimeout(ctx, obj, status)
-	if isPhaseTimeout {
-		return phaseTimeoutResult, phaseTimeoutError
+	result, err = resourceReconciler.HandleReconcile(ctx, obj)
+	captureMetrics(ctx, r, req, resourceReconciler.Object(), previousPhase, previousReason, startTs, err)
+	if err != nil {
+		logger.Error(err, "reconcile failed")
+		return ctrl.Result{}, err
+	} else if !result.IsZero() {
+		return result, nil
 	}
 
-	shouldBeDeleted, handleDeletionResult, handleDeletionError := r.HandleToDelete(ctx, obj, status)
-	if shouldBeDeleted {
-		return handleDeletionResult, handleDeletionError
-	}
-
-	var reconcileResult ctrl.Result
-	var reconcileError error
-
-	switch status.Phase {
-	case "":
-		reconcileResult, reconcileError = resourceReconciler.Init(ctx, obj, status)
-	case v1alpha1.ResourcePhaseCreating:
-		reconcileResult, reconcileError = resourceReconciler.Creating(ctx, obj, status)
-	case v1alpha1.ResourcePhaseProvisioning:
-		reconcileResult, reconcileError = resourceReconciler.Provisioning(ctx, obj, status)
-	case v1alpha1.ResourcePhaseUpdating:
-		reconcileResult, reconcileError = resourceReconciler.Updating(ctx, obj, status)
-	case v1alpha1.ResourcePhaseCreated:
-		reconcileResult, reconcileError = resourceReconciler.Created(ctx, obj, status)
-	case v1alpha1.ResourcePhaseDeleting:
-		reconcileResult, reconcileError = resourceReconciler.Deleting(ctx, obj, status)
-	case v1alpha1.ResourcePhaseDeleted:
-		// Resource is already deleted, nothing to do
-		reconcileResult, reconcileError = ctrl.Result{}, nil
-	case v1alpha1.ResourcePhaseFailed:
-		// Resource is in failed state, nothing to do unless spec changes
-		reconcileResult, reconcileError = ctrl.Result{}, nil
-	}
-
-	return reconcileResult, reconcileError
-}
-
-// HandlePhaseTimeout transitions the resource to failed state due to timeout
-func (r *Reconciler) HandlePhaseTimeout(ctx context.Context, obj ResourceObject, status *v1alpha1.ResourceStatus) (bool, ctrl.Result, error) {
-	isTimeout := false
-
-	if status.PhaseStartTime == nil {
-		return isTimeout, ctrl.Result{}, nil
-	}
-
-	transitioningPhases := []v1alpha1.ResourcePhase{
-		v1alpha1.ResourcePhaseCreating,
-		v1alpha1.ResourcePhaseProvisioning,
-		v1alpha1.ResourcePhaseUpdating,
-		v1alpha1.ResourcePhaseDeleting,
-	}
-
-	if !slices.Contains(transitioningPhases, status.Phase) {
-		return isTimeout, ctrl.Result{}, nil
-	}
-
-	elapsed := time.Since(status.PhaseStartTime.Time)
-	isTimeout = elapsed > maxPhaseTimeout
-
-	if !isTimeout {
-		return isTimeout, ctrl.Result{}, nil
-	}
-
-	phaseLogger := ctrl.Log.WithValues("Phase", status.Phase, "Kind", obj.GetObjectKind().GroupVersionKind().Kind, "Name", obj.GetName())
-	message := fmt.Sprintf("Reconciliation took too much time (timeout: %+v)", maxPhaseTimeout)
-	phaseLogger.Info(message)
-
-	nextCtrlResult, err := r.Next(
-		ctx,
-		obj,
-		status,
-		v1alpha1.ResourcePhaseFailed,
-		metav1.ConditionFalse,
-		"ReconciliationTimeout",
-		message,
-		false,
-	)
-
-	return isTimeout, nextCtrlResult, err
-}
-
-// HandleToDelete checks if resource should transition to deleting phase
-func (r *Reconciler) HandleToDelete(ctx context.Context, obj ResourceObject, status *v1alpha1.ResourceStatus) (bool, ctrl.Result, error) {
-	shouldBeDeleted := status.Phase != v1alpha1.ResourcePhaseCreating &&
-		status.Phase != v1alpha1.ResourcePhaseUpdating &&
-		status.Phase != v1alpha1.ResourcePhaseDeleting &&
-		!obj.GetDeletionTimestamp().IsZero()
-
-	if !shouldBeDeleted {
-		return shouldBeDeleted, ctrl.Result{}, nil
-	}
-
-	nextCtrlResult, err := r.Next(
-		ctx,
-		obj,
-		status,
-		v1alpha1.ResourcePhaseDeleting,
-		metav1.ConditionFalse,
-		"ToBeDeleted",
-		"deletion timestamp detected",
-		true,
-	)
-	return shouldBeDeleted, nextCtrlResult, err
-}
-
-// Next transitions to the next phase with message and condition updates
-func (r *Reconciler) Next(
-	ctx context.Context,
-	obj ResourceObject,
-	resStatus *v1alpha1.ResourceStatus,
-	nextPhase v1alpha1.ResourcePhase,
-	condStatus metav1.ConditionStatus,
-	reason, message string,
-	requeue bool,
-) (ctrl.Result, error) {
-
-	status := obj.GetResourceStatus()
-	currentPhase := status.Phase
-	if currentPhase == "" {
-		currentPhase = "Initializing"
-	}
-
-	phaseLogger := ctrl.Log.WithValues("Phase", currentPhase, "NextPhase", nextPhase, "Kind", obj.GetObjectKind().GroupVersionKind().Kind, "Name", obj.GetName())
-	// Debouncing logic: if this is a retry (requeue=true) with the same phase, check timing
-	if requeue && currentPhase == nextPhase && status.PhaseStartTime != nil {
-		timeSincePhaseStart := time.Since(status.PhaseStartTime.Time)
-		intervalsElapsed := int(timeSincePhaseStart / requeueAfter)
-		nextInterval := time.Duration(intervalsElapsed+1) * requeueAfter
-		timeToNextInterval := nextInterval - timeSincePhaseStart
-
-		phaseLogger.Info("Reconcile Debounce",
-			"reason", reason,
-			"message", message,
-			"timeSincePhaseStart", timeSincePhaseStart,
-			"timeToNextInterval", timeToNextInterval,
-			"intervalsElapsed", intervalsElapsed,
-			"requeueAfter", requeueAfter)
-
-		if timeToNextInterval > 0 && timeToNextInterval < requeueAfter {
-			return ctrl.Result{RequeueAfter: timeToNextInterval}, nil
-		}
-	}
-
-	// Update phase start time ONLY if phase is changing or not set
-	if status.PhaseStartTime == nil || currentPhase != nextPhase {
-		now := metav1.Now()
-		status.PhaseStartTime = &now
-	}
-
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-
-		// ALWAYS fetch fresh object into obj
-		if err := r.Get(ctx, client.ObjectKeyFromObject(obj), obj); err != nil {
+	// 3 - Handle de deletion case by removing the finalizer
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		obj, err := r.getResource(ctx, req, resourceReconciler.Object())
+		if obj == nil || err != nil {
 			return err
 		}
 
 		status := obj.GetResourceStatus()
 
-		// Update phase start time only if phase changes
-		if status.PhaseStartTime == nil || status.Phase != nextPhase {
-			now := metav1.Now()
-			status.PhaseStartTime = &now
+		if !obj.GetDeletionTimestamp().IsZero() &&
+			status != nil &&
+			status.Phase == v1alpha1.ResourcePhaseDeleted &&
+			slices.Contains(obj.GetFinalizers(), resourceReconciler.Finalizer()) {
+			obj.SetFinalizers(slices.DeleteFunc(obj.GetFinalizers(), func(v string) bool {
+				return strings.EqualFold(v, resourceReconciler.Finalizer())
+			}))
+			if err := r.Update(ctx, obj); err != nil {
+				return err
+			}
+			logger.V(2).Info("finalizer removed, resource deleted", "finalizer", resourceReconciler.Finalizer())
 		}
 
-		status.Phase = nextPhase
-		status.Message = message
-		status.ObservedGeneration = obj.GetGeneration()
-		status.Conditions = util.UpdateConditions(
-			status.Conditions,
-			v1alpha1.ConditionTypeSynchronized,
-			condStatus,
-			reason,
-			message,
-		)
-
-		return r.Status().Update(ctx, obj)
+		return nil
 	})
 	if err != nil {
-		if apierrors.IsConflict(err) {
-			phaseLogger.Info("Conflict detected while updating status, will requeue")
-			return ctrl.Result{Requeue: true}, nil
-		}
-
-		phaseLogger.Error(err, "failed to update status after retry")
 		return ctrl.Result{}, err
-	}
-	phaseLogger.Info(message)
-	return ctrl.Result{Requeue: requeue, RequeueAfter: requeueAfter}, nil
-}
-
-// NextToFailedOnApiError handles API errors with proper 4xx/5xx logic and condition management
-func (r *Reconciler) NextToFailedOnApiError(ctx context.Context, obj ResourceObject, status *v1alpha1.ResourceStatus, err error) (ctrl.Result, error) {
-	var apiErr *arubaClient.ApiError
-	if errors.As(err, &apiErr) {
-		statusCode := apiErr.Status
-		message := apiErr.Error()
-
-		// Handle notReady/invalidStatus errors during transitioning phases - should retry
-		if apiErr.IsInvalidStatus() {
-			return r.Next(
-				ctx,
-				obj,
-				status,
-				status.Phase,
-				metav1.ConditionFalse,
-				"ResourceNotReady",
-				fmt.Sprintf("Remote resource is not ready, will retry: %s", message),
-				true,
-			)
-		}
-
-		// Handle other 4xx errors (client errors) - fail immediately
-		if statusCode >= 400 && statusCode < 500 {
-			return r.Next(
-				ctx,
-				obj,
-				status,
-				v1alpha1.ResourcePhaseFailed,
-				metav1.ConditionFalse,
-				"ClientError",
-				fmt.Sprintf("Client error (HTTP %d): %s", statusCode, message),
-				false,
-			)
-		}
-
-		// Handle 5xx errors (server errors) - should retry
-		if statusCode >= 500 {
-			return r.Next(
-				ctx,
-				obj,
-				status,
-				status.Phase,
-				metav1.ConditionFalse,
-				"ServerError",
-				fmt.Sprintf("Server error (HTTP %d): %s - will retry", statusCode, message),
-				true,
-			)
-		}
-	}
-
-	// Unknown error, treat as retriable
-	return r.NextToFailedOnReconcileError(ctx, obj, status, err)
-}
-
-// NextToFailedOnReconcileError handles generic reconcile errors
-func (r *Reconciler) NextToFailedOnReconcileError(ctx context.Context, obj ResourceObject, status *v1alpha1.ResourceStatus, err error) (ctrl.Result, error) {
-	return r.Next(
-		ctx,
-		obj,
-		status,
-		status.Phase,
-		metav1.ConditionFalse,
-		"ReconcileError",
-		fmt.Sprintf("Reconcile error encountered, will retry: %s", err.Error()),
-		true,
-	)
-}
-
-// InitializeResource handles the initialization phase with finalizer management
-func (r *Reconciler) InitializeResource(ctx context.Context, obj ResourceObject, status *v1alpha1.ResourceStatus, finalizerName string) (ctrl.Result, error) {
-	// Add finalizer if not present
-	if !controllerutil.ContainsFinalizer(obj, finalizerName) {
-		controllerutil.AddFinalizer(obj, finalizerName)
-		err := r.Update(ctx, obj)
-		if err != nil {
-			return r.NextToFailedOnApiError(ctx, obj, status, err)
-		}
-	}
-
-	return r.Next(ctx, obj, status, v1alpha1.ResourcePhaseCreating, metav1.ConditionFalse, "Initialized", "Resource initialized successfully", true)
-}
-
-// HandleDeletion handles the deletion phase with finalizer removal
-func (r *Reconciler) HandleDeletion(ctx context.Context, obj ResourceObject, status *v1alpha1.ResourceStatus, finalizerName string, deleteFunc func(context.Context) error) (ctrl.Result, error) {
-	err := deleteFunc(ctx)
-	if err != nil {
-		return r.NextToFailedOnApiError(ctx, obj, status, err)
-	}
-
-	// Remove finalizer to allow Kubernetes to delete the resource
-	if controllerutil.ContainsFinalizer(obj, finalizerName) {
-		controllerutil.RemoveFinalizer(obj, finalizerName)
-		err := r.Update(ctx, obj)
-		if err != nil {
-			return r.NextToFailedOnApiError(ctx, obj, status, err)
-		}
 	}
 
 	return ctrl.Result{}, nil
 }
 
-// HandleCreating handles the resource creation phase
-func (r *Reconciler) HandleCreating(ctx context.Context, obj ResourceObject, status *v1alpha1.ResourceStatus, createFunc func(context.Context) (string, string, error)) (ctrl.Result, error) {
-	if status.ResourceID != "" {
-		// Resource already created, skip create call
-		return r.Next(
-			ctx,
-			obj,
-			status,
-			v1alpha1.ResourcePhaseCreated,
-			metav1.ConditionTrue,
-			"AlreadyCreated",
-			"Resource already has an ID",
-			true,
-		)
-	}
-
-	resourceID, state, err := createFunc(ctx)
-	if err != nil {
-		return r.NextToFailedOnApiError(ctx, obj, status, err)
-	}
-
-	// Update status with resource ID
-	status.ResourceID = resourceID
-	if err := r.Status().Update(ctx, obj); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	if state == "InCreation" || state == "Provisioning" {
-		return r.Next(
-			ctx,
-			obj,
-			status,
-			v1alpha1.ResourcePhaseProvisioning,
-			metav1.ConditionFalse,
-			"Provisioning",
-			"Resource is being provisioned",
-			true,
-		)
-	}
-
-	return r.Next(
-		ctx,
-		obj,
-		status,
-		v1alpha1.ResourcePhaseCreated,
-		metav1.ConditionTrue,
-		"Created",
-		"Resource created successfully",
-		true,
-	)
-}
-
-// HandleUpdating handles the resource update phase
-func (r *Reconciler) HandleUpdating(ctx context.Context, obj ResourceObject, status *v1alpha1.ResourceStatus, updateFunc func(context.Context) error) (ctrl.Result, error) {
-	err := updateFunc(ctx)
-	if err != nil {
-		return r.NextToFailedOnApiError(ctx, obj, status, err)
-	}
-
-	return r.Next(
-		ctx,
-		obj,
-		status,
-		v1alpha1.ResourcePhaseCreated,
-		metav1.ConditionTrue,
-		"Updated",
-		"Resource updated successfully",
-		true,
-	)
-}
-
-// HandleProvisioning handles the provisioning state check with configurable state transitions
-func (r *Reconciler) HandleProvisioning(ctx context.Context, obj ResourceObject, status *v1alpha1.ResourceStatus, getStatusFunc func(context.Context) (string, error)) (ctrl.Result, error) {
-	state, err := getStatusFunc(ctx)
-	if err != nil {
-		return r.NextToFailedOnApiError(ctx, obj, status, err)
-	}
-
-	message := ""
-	switch state {
-	case "Available", "Active", "NotUsed", "Used":
-		return r.Next(
-			ctx,
-			obj,
-			status,
-			v1alpha1.ResourcePhaseCreated,
-			metav1.ConditionTrue,
-			"Created",
-			"Resource created successfully",
-			true,
-		)
-	case "Failed", "Error":
-		return r.Next(
-			ctx,
-			obj,
-			status,
-			v1alpha1.ResourcePhaseFailed,
-			metav1.ConditionTrue,
-			"ProvisioningFailed",
-			message,
-			false,
-		)
-	default:
-		return r.Next(
-			ctx,
-			obj,
-			status,
-			v1alpha1.ResourcePhaseProvisioning,
-			metav1.ConditionTrue,
-			"Provisioning",
-			message,
-			true,
-		)
-	}
-}
-
-// CheckForUpdates checks if resource needs update based on generation
-func (r *Reconciler) CheckForUpdates(ctx context.Context, obj ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
-	phaseLogger := ctrl.Log.WithValues("Phase", status.Phase, "Kind", obj.GetObjectKind().GroupVersionKind().Kind, "Name", obj.GetName())
-
-	// Check if resource needs update
-	if status.ObservedGeneration != obj.GetGeneration() {
-		phaseLogger.Info("resource needs update - generation mismatch detected",
-			"generation", obj.GetGeneration(),
-			"observedGeneration", status.ObservedGeneration)
-
-		return r.Next(
-			ctx,
-			obj,
-			status,
-			v1alpha1.ResourcePhaseUpdating,
-			metav1.ConditionFalse,
-			"Updating",
-			"Resource update initiated",
-			true,
-		)
-	}
-
-	phaseLogger.Info("resource is up to date")
-	return ctrl.Result{}, nil
-}
-
-// Authenticate authenticates the client with the given tenant
-func (r *Reconciler) Authenticate(ctx context.Context, tenantId string) error {
-	if r.Client == nil {
-		return fmt.Errorf("client configuration not loaded")
-	}
-
-	token := r.TokenManager.GetActiveToken(tenantId)
-	if token != "" {
-		r.SetAPIToken(token)
-		return nil
-	}
-
-	if r.VaultIsEnabled {
-		apiKeyData, err := r.GetSecret(ctx, tenantId)
-		if err != nil {
-			ctrl.Log.Error(err, "Failed to get API key from Vault", "TenantID", tenantId)
-			return err
+// getResource fetches the resource identified by req into obj. It returns (nil, nil)
+// when the object is not found (i.e. it has already been deleted from the API server),
+// allowing callers to treat a missing object as a no-op rather than an error.
+func (r *Reconciler) getResource(ctx context.Context, req ctrl.Request, obj ResourceObject) (ResourceObject, error) {
+	if err := r.Get(ctx, req.NamespacedName, obj); err != nil {
+		if client.IgnoreNotFound(err) == nil {
+			log.FromContext(ctx).V(2).Info("resource not found, skipping", "resource", req.NamespacedName)
+			return nil, nil
 		}
-
-		ctrl.Log.V(1).Info("Retrieved API key from Vault", "secretData", apiKeyData)
-		clientId, _ := apiKeyData["client-id"].(string)
-		ctrl.Log.V(1).Info("Authenticating Aruba client", "ClientID", clientId)
-		clientSecret, _ := apiKeyData["client-secret"].(string)
-
-		r.TokenManager.SetClientIdAndSecret(clientId, clientSecret)
+		return nil, err
 	}
 
-	token, err := r.TokenManager.GetAccessToken(false, tenantId)
-
-	if err != nil {
-		return err
-	}
-
-	r.SetAPIToken(token)
-	return nil
-}
-
-// Helper methods for getting resource references
-func (r *Reconciler) GetProjectID(ctx context.Context, name string, namespace string) (string, error) {
-	project := &v1alpha1.Project{}
-	err := r.Get(ctx, types.NamespacedName{
-		Name:      name,
-		Namespace: namespace,
-	}, project)
-	if err != nil {
-		return "", fmt.Errorf("failed to get referenced Project %s/%s: %w",
-			namespace, name, err)
-	}
-
-	if project.Status.ResourceID == "" {
-		return "", fmt.Errorf("referenced Project %s/%s does not have a project ID yet",
-			namespace, name)
-	}
-
-	return project.Status.ResourceID, nil
-}
-
-func (r *Reconciler) GetElasticIpID(ctx context.Context, name string, namespace string) (string, error) {
-	elasticIp := &v1alpha1.ElasticIp{}
-	err := r.Get(ctx, types.NamespacedName{
-		Name:      name,
-		Namespace: namespace,
-	}, elasticIp)
-	if err != nil {
-		return "", fmt.Errorf("failed to get referenced ElasticIp %s/%s: %w",
-			namespace, name, err)
-	}
-
-	if elasticIp.Status.ResourceID == "" {
-		return "", fmt.Errorf("referenced ElasticIp %s/%s does not have an elastic IP ID yet",
-			namespace, name)
-	}
-
-	return elasticIp.Status.ResourceID, nil
-}
-
-func (r *Reconciler) GetSubnetID(ctx context.Context, name string, namespace string) (string, error) {
-	subnet := &v1alpha1.Subnet{}
-	err := r.Get(ctx, types.NamespacedName{
-		Name:      name,
-		Namespace: namespace,
-	}, subnet)
-	if err != nil {
-		return "", fmt.Errorf("failed to get referenced Subnet %s/%s: %w",
-			namespace, name, err)
-	}
-
-	if subnet.Status.ResourceID == "" {
-		return "", fmt.Errorf("referenced Subnet %s/%s does not have a subnet ID yet",
-			namespace, name)
-	}
-
-	return subnet.Status.ResourceID, nil
-}
-
-func (r *Reconciler) GetSecurityGroupID(ctx context.Context, name string, namespace string) (string, error) {
-	securityGroup := &v1alpha1.SecurityGroup{}
-	err := r.Get(ctx, types.NamespacedName{
-		Name:      name,
-		Namespace: namespace,
-	}, securityGroup)
-	if err != nil {
-		return "", fmt.Errorf("failed to get referenced SecurityGroup %s/%s: %w",
-			namespace, name, err)
-	}
-
-	if securityGroup.Status.ResourceID == "" {
-		return "", fmt.Errorf("referenced SecurityGroup %s/%s does not have a security group ID yet",
-			namespace, name)
-	}
-
-	return securityGroup.Status.ResourceID, nil
-}
-
-func (r *Reconciler) GetBlockStorageID(ctx context.Context, name string, namespace string) (string, error) {
-	blockStorage := &v1alpha1.BlockStorage{}
-	err := r.Get(ctx, types.NamespacedName{
-		Name:      name,
-		Namespace: namespace,
-	}, blockStorage)
-	if err != nil {
-		return "", fmt.Errorf("failed to get referenced BlockStorage %s/%s: %w",
-			namespace, name, err)
-	}
-
-	if blockStorage.Status.ResourceID == "" {
-		return "", fmt.Errorf("referenced BlockStorage %s/%s does not have a volume ID yet",
-			namespace, name)
-	}
-
-	return blockStorage.Status.ResourceID, nil
-}
-
-func (r *Reconciler) GetVpcID(ctx context.Context, name string, namespace string) (string, error) {
-	vpc := &v1alpha1.Vpc{}
-	err := r.Get(ctx, types.NamespacedName{
-		Name:      name,
-		Namespace: namespace,
-	}, vpc)
-	if err != nil {
-		return "", fmt.Errorf("failed to get referenced Vpc %s/%s: %w",
-			namespace, name, err)
-	}
-
-	if vpc.Status.ResourceID == "" {
-		return "", fmt.Errorf("referenced Vpc %s/%s does not have a VPC ID yet",
-			namespace, name)
-	}
-
-	return vpc.Status.ResourceID, nil
-}
-
-func (r *Reconciler) GetKeyPairID(ctx context.Context, name string, namespace string) (string, error) {
-	keyPair := &v1alpha1.KeyPair{}
-	err := r.Get(ctx, types.NamespacedName{
-		Name:      name,
-		Namespace: namespace,
-	}, keyPair)
-	if err != nil {
-		return "", fmt.Errorf("failed to get referenced KeyPair %s/%s: %w",
-			namespace, name, err)
-	}
-
-	if keyPair.Status.ResourceID == "" {
-		return "", fmt.Errorf("referenced KeyPair %s/%s does not have a key pair ID yet",
-			namespace, name)
-	}
-
-	return keyPair.Status.ResourceID, nil
+	return obj, nil
 }

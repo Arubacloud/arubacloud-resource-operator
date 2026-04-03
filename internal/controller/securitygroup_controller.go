@@ -18,177 +18,1060 @@ package controller
 
 import (
 	"context"
-	"log"
+	"errors"
+	"fmt"
+	"net/http"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/event"
-	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	"github.com/Arubacloud/sdk-go/pkg/aruba"
+	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
-	arubaClient "github.com/Arubacloud/arubacloud-resource-operator/internal/client"
 	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
-	"github.com/google/go-cmp/cmp"
 )
 
-// SecurityGroupReconciler reconciles a SecurityGroup object
-type SecurityGroupReconciler struct {
-	*reconciler.Reconciler
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const (
+	securityGroupFinalizerName = "securitygroup.arubacloud.com/finalizer"
+)
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+type kubeSecurityGroupBundle struct {
+	KubeVpc     *v1alpha1.VPC     // from resolveOwnerObject (already fetched for ownership)
+	KubeProject *v1alpha1.Project // from additional K8s lookup for TenantMustMatchProject
 }
 
-// NewSecurityGroupReconciler creates a new SecurityGroupReconciler
-func NewSecurityGroupReconciler(reconciler *reconciler.Reconciler) *SecurityGroupReconciler {
-	return &SecurityGroupReconciler{
-		Reconciler: reconciler,
-	}
+type cmpSecurityGroupBundle struct {
+	CMPVpc *arubatypes.VPCResponse // from the VPC list fetch
+}
+
+type securityGroupBundle struct {
+	kubeSecurityGroupBundle
+	cmpSecurityGroupBundle
 }
 
 // +kubebuilder:rbac:groups=arubacloud.com,resources=securitygroups,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=arubacloud.com,resources=securitygroups/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=arubacloud.com,resources=securitygroups/finalizers,verbs=update
 // +kubebuilder:rbac:groups=arubacloud.com,resources=projects,verbs=get;list;watch
+// +kubebuilder:rbac:groups=arubacloud.com,resources=vpcs,verbs=get;list;watch
+// +kubebuilder:rbac:groups=arubacloud.com,resources=securityrules,verbs=get;list;watch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 
+// SecurityGroupReconciler reconciles a SecurityGroup object
+type SecurityGroupReconciler struct {
+	*reconciler.Reconciler
+	ivs *reconciler.ValidationSet[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse, *kubeSecurityGroupBundle]
+	vs  *reconciler.ValidationSet[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse, *securityGroupBundle]
+	ts  *reconciler.TransitionSet[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]
+}
+
+// ---------------------------------------------------------------------------
+// Constructor
+// ---------------------------------------------------------------------------
+
+// NewSecurityGroupReconciler creates a new SecurityGroupReconciler
+func NewSecurityGroupReconciler(baseReconciler *reconciler.Reconciler) *SecurityGroupReconciler {
+	r := &SecurityGroupReconciler{
+		Reconciler: baseReconciler,
+	}
+	r.ivs = r.newIntentionValidationSet()
+	r.vs = r.newValidationSet()
+	r.ts = r.newTransitionSet()
+	return r
+}
+
+// ---------------------------------------------------------------------------
+// Interface methods
+// ---------------------------------------------------------------------------
+
 func (r *SecurityGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	obj := &v1alpha1.SecurityGroup{}
-	if err := r.Get(ctx, req.NamespacedName, obj); err != nil {
-		return ctrl.Result{}, client.IgnoreNotFound(err)
+	return r.Reconciler.Reconcile(ctx, req, r)
+}
+
+func (r *SecurityGroupReconciler) Object() reconciler.ResourceObject {
+	return &v1alpha1.SecurityGroup{}
+}
+
+func (r *SecurityGroupReconciler) Finalizer() string {
+	return securityGroupFinalizerName
+}
+
+// ---------------------------------------------------------------------------
+// HandleReconcile
+// ---------------------------------------------------------------------------
+
+//nolint:gocyclo // complexity is intentional to maintain locality of behavior
+func (r *SecurityGroupReconciler) HandleReconcile(ctx context.Context, obj reconciler.ResourceObject) (ctrl.Result, error) {
+	// Stage 1: Setup.
+	kubeSG, ok := obj.(*v1alpha1.SecurityGroup)
+	if !ok {
+		return ctrl.Result{}, errors.New("obj is not a *v1alpha1.SecurityGroup")
 	}
 
-	return r.Reconciler.Reconcile(ctx, req, obj, r)
+	logger := log.FromContext(ctx).WithValues("tenant", kubeSG.Spec.Tenant)
+	logger.Info("reconciling SecurityGroup")
+
+	isDeleting := !kubeSG.GetDeletionTimestamp().IsZero()
+
+	// Stage 2: Fetch K8s dependencies and set owner reference.
+	kubeBdl, result, err := r.fetchKubeDependencies(ctx, kubeSG, isDeleting)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if result != (ctrl.Result{}) {
+		return result, nil
+	}
+
+	// Stage 3: K8s precondition — parent must be Active+Synchronized before the CMP resource
+	// is created (ResourceID == ""). Once provisioned, parent state changes don't block the child.
+	if !isDeleting && kubeBdl != nil && kubeSG.Status.ResourceID == "" && !reconciler.IsResourceReady(kubeBdl.KubeVpc) {
+		logger.V(1).Info("parent VPC not yet Active+Synchronized, requeuing")
+		return ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
+	}
+
+	// Stage 4: Intention cross-validation (K8s-only, before CMP calls).
+	if !isDeleting {
+		bdl := kubeBdl
+		if bdl == nil {
+			bdl = &kubeSecurityGroupBundle{}
+		}
+		if validationErr := r.ivs.Run(kubeSG, nil, bdl); validationErr != nil {
+			setErr := reconciler.SetPhaseAndCondition(r.Client, ctx, kubeSG,
+				v1alpha1.ResourcePhaseFailed, v1alpha1.ConditionReasonIntentionValidationFailed, validationErr,
+			)
+			if setErr != nil {
+				return ctrl.Result{}, setErr
+			}
+			return ctrl.Result{}, nil
+		}
+		if reconciler.IsIntentionValidationFailed(kubeSG) {
+			resetPhase := v1alpha1.ResourcePhasePending
+			if kubeSG.Status.ResourceID != "" {
+				resetPhase = v1alpha1.ResourcePhaseActive
+			}
+			if setErr := reconciler.SetPhaseAndCondition(r.Client, ctx, kubeSG,
+				resetPhase, v1alpha1.ConditionReasonSynchronized, nil); setErr != nil {
+				return ctrl.Result{}, setErr
+			}
+			return ctrl.Result{RequeueAfter: reconciler.ShortRequeueAfter}, nil
+		}
+		if reconciler.IsCMPValidationFailedAndSpecChanged(kubeSG) {
+			resetPhase := v1alpha1.ResourcePhasePending
+			if kubeSG.Status.ResourceID != "" {
+				resetPhase = v1alpha1.ResourcePhaseActive
+			}
+			if setErr := reconciler.SetPhaseAndCondition(r.Client, ctx, kubeSG,
+				resetPhase, v1alpha1.ConditionReasonSynchronized, nil); setErr != nil {
+				return ctrl.Result{}, setErr
+			}
+			return ctrl.Result{RequeueAfter: reconciler.ShortRequeueAfter}, nil
+		}
+	}
+
+	// Stage 5: Create Aruba client.
+	arubaClient, err := r.ArubaClient(kubeSG.Spec.Tenant)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to get Aruba client: %w", err)
+	}
+
+	// Stage 6: Resolve CMP dependencies.
+	cmpSG, cmpVpc, prjID, vpcID, result, err := r.fetchCMPDependencies(ctx, kubeSG, arubaClient, isDeleting)
+	if err != nil || result != (ctrl.Result{}) {
+		return result, err
+	}
+
+	logger.V(1).Info("CMP SecurityGroup state", "found", cmpSG != nil, "projectID", prjID, "vpcID", vpcID)
+
+	ctx = context.WithValue(ctx, projectIDKey, prjID)
+	ctx = context.WithValue(ctx, vpcIDKey, vpcID)
+	ctx = context.WithValue(ctx, reconciler.ArubaClientKey, arubaClient)
+	ctx = log.IntoContext(ctx, logger)
+
+	// Stage 7: CMP-aware validation (vs only).
+	if !isDeleting && kubeBdl != nil && cmpSG != nil && cmpVpc != nil {
+		if validationErr := r.vs.Run(kubeSG, cmpSG, &securityGroupBundle{kubeSecurityGroupBundle: *kubeBdl, cmpSecurityGroupBundle: cmpSecurityGroupBundle{CMPVpc: cmpVpc}}); validationErr != nil {
+			setErr := reconciler.SetPhaseAndCondition(r.Client, ctx, kubeSG,
+				v1alpha1.ResourcePhaseFailed, v1alpha1.ConditionReasonPostValidationFailed, validationErr,
+				func(sg *v1alpha1.SecurityGroup) {
+					if sg.Status.ProjectID == "" {
+						sg.Status.ProjectID = prjID
+					}
+					if sg.Status.VPCID == "" {
+						sg.Status.VPCID = vpcID
+					}
+				},
+			)
+			if setErr != nil {
+				return ctrl.Result{}, setErr
+			}
+			return ctrl.Result{}, nil
+		}
+		if reconciler.IsPostValidationFailed(kubeSG) {
+			if setErr := reconciler.SetPhaseAndCondition(r.Client, ctx, kubeSG,
+				v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, nil); setErr != nil {
+				return ctrl.Result{}, setErr
+			}
+			return ctrl.Result{RequeueAfter: reconciler.ShortRequeueAfter}, nil
+		}
+	}
+
+	// Stage 8: Run transitions.
+	return r.ts.Run(ctx, kubeSG, cmpSG)
 }
+
+// ---------------------------------------------------------------------------
+// Major HandleReconcile helpers
+// ---------------------------------------------------------------------------
+
+// fetchKubeDependencies fetches the parent VPC and sets the owner reference.
+// Returns (nil bundle, zero result, nil) if the VPC is not found — non-fatal,
+// validation and precondition checks are skipped when kubeBdl is nil.
+// Returns (nil, short-requeue result, nil) if the owner reference was just written.
+func (r *SecurityGroupReconciler) fetchKubeDependencies(
+	ctx context.Context,
+	kubeSG *v1alpha1.SecurityGroup,
+	isDeleting bool,
+) (*kubeSecurityGroupBundle, ctrl.Result, error) {
+	if isDeleting {
+		return nil, ctrl.Result{}, nil
+	}
+	logger := log.FromContext(ctx)
+	kv := &v1alpha1.VPC{}
+	if err := resolveOwnerObject(ctx, r.Client, kubeSG.Spec.VPCReference, kubeSG.Namespace, kv); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return nil, ctrl.Result{}, fmt.Errorf("resolving parent vpc for owner reference: %w", err)
+		}
+		logger.V(1).Info("parent vpc not found for owner reference setup, skipping",
+			"vpcName", kubeSG.Spec.VPCReference.Name)
+		return nil, ctrl.Result{}, nil
+	}
+	requeue, err := ensureOwnerReference(ctx, r.Client, r.Scheme, kv, kubeSG)
+	if err != nil {
+		return nil, ctrl.Result{}, fmt.Errorf("setting owner reference on security group: %w", err)
+	}
+	if requeue {
+		return nil, ctrl.Result{RequeueAfter: reconciler.ShortRequeueAfter}, nil
+	}
+	bdl := &kubeSecurityGroupBundle{KubeVpc: kv}
+	kp := &v1alpha1.Project{}
+	if err := r.Get(ctx, client.ObjectKey{Name: kubeSG.Spec.ProjectReference.Name, Namespace: kubeSG.Namespace}, kp); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return nil, ctrl.Result{}, fmt.Errorf("fetching k8s project %q for validation: %w", kubeSG.Spec.ProjectReference.Name, err)
+		}
+	} else {
+		bdl.KubeProject = kp
+	}
+	return bdl, ctrl.Result{}, nil
+}
+
+// fetchCMPDependencies resolves the CMP project ID, VPC ID, VPC resource, and SecurityGroup resource.
+//
+//nolint:gocyclo // complexity is intentional to maintain locality of behavior
+func (r *SecurityGroupReconciler) fetchCMPDependencies(
+	ctx context.Context,
+	kubeSG *v1alpha1.SecurityGroup,
+	arubaClient aruba.Client,
+	isDeleting bool,
+) (*arubatypes.SecurityGroupResponse, *arubatypes.VPCResponse, string, string, ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	var cmpSG *arubatypes.SecurityGroupResponse
+	var cmpVpc *arubatypes.VPCResponse
+	var prjID string
+	var vpcID string
+
+	sgName := kubeSG.Name
+	projectName := kubeSG.Spec.ProjectReference.Name
+	vpcName := kubeSG.Spec.VPCReference.Name
+	prjFilter := fmt.Sprintf(`name:eq("%s")`, projectName)
+	vpcFilter := fmt.Sprintf(`name:eq("%s")`, vpcName)
+	sgFilter := fmt.Sprintf(`name:eq("%s")`, sgName)
+
+	// Stage 3a: Resolve Project ID.
+	if isDeleting && kubeSG.Status.ProjectID != "" {
+		prjID = kubeSG.Status.ProjectID
+	} else {
+		cmpProjectList, listErr := arubaClient.FromProject().List(ctx, &arubatypes.RequestParameters{Filter: &prjFilter})
+		if listErr != nil {
+			return nil, nil, "", "", ctrl.Result{}, fmt.Errorf(
+				"failed to find project in Aruba cloud: %w, project_name: '%s', project_filter: '%s'",
+				listErr, projectName, prjFilter,
+			)
+		}
+		if cmpProjectList.IsError() {
+			return nil, nil, "", "", ctrl.Result{}, fmt.Errorf(
+				"failed to find project in Aruba cloud: status_code: %d, project_name: '%s', project_filter: '%s'",
+				cmpProjectList.StatusCode, projectName, prjFilter,
+			)
+		}
+		if cmpProjectList.Data.Total == 0 && kubeSG.Status.ProjectID != "" {
+			return nil, nil, "", "", ctrl.Result{}, fmt.Errorf(
+				"inconsistent data in project list: expected: 1, project not found: project_name: '%s', project_filter: '%s'", projectName, prjFilter,
+			)
+		}
+		if cmpProjectList.Data.Total > 1 {
+			return nil, nil, "", "", ctrl.Result{}, fmt.Errorf(
+				"inconsistent data in project list: expected: 1, found: %d, project_name: '%s', project_filter: '%s'",
+				cmpProjectList.Data.Total, projectName, prjFilter,
+			)
+		}
+		if cmpProjectList.Data.Total == 0 {
+			logger.V(1).Info("parent project not found on CMP, requeuing", "projectName", projectName)
+			return nil, nil, "", "", ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
+		}
+		prjID = *(cmpProjectList.Data.Values[0].Metadata.ID)
+	}
+
+	if kubeSG.Status.ProjectID != "" && kubeSG.Status.ProjectID != prjID {
+		return nil, nil, prjID, "", ctrl.Result{}, fmt.Errorf(
+			"inconsistent project id in security group: sg_name: '%s', sg_project_id: '%s', project_name: '%s', project_id: '%s'",
+			sgName, kubeSG.Status.ProjectID, projectName, prjID,
+		)
+	}
+
+	// Stage 3b: Resolve VPC ID.
+	if isDeleting && kubeSG.Status.VPCID != "" {
+		vpcID = kubeSG.Status.VPCID
+	} else {
+		cmpVpcList, listErr := arubaClient.FromNetwork().VPCs().List(ctx, prjID, &arubatypes.RequestParameters{Filter: &vpcFilter})
+		if listErr != nil {
+			return nil, nil, prjID, "", ctrl.Result{}, fmt.Errorf(
+				"failed to find vpc in Aruba cloud: %w, vpc_name: '%s', vpc_filter: '%s', project_name: '%s'",
+				listErr, vpcName, vpcFilter, projectName,
+			)
+		}
+		if cmpVpcList.IsError() {
+			return nil, nil, prjID, "", ctrl.Result{}, fmt.Errorf(
+				"failed to find vpc in Aruba cloud: status_code: %d, vpc_name: '%s', project_name: '%s'",
+				cmpVpcList.StatusCode, vpcName, projectName,
+			)
+		}
+		// TODO: Remove once CMP API name:eq() filter is fixed (issue https://jira.aruba.it/browse/DEV-66643).
+		applyNameFilterToVPCList(cmpVpcList, vpcName, logger)
+		if cmpVpcList.Data.Total == 0 && kubeSG.Status.VPCID != "" {
+			return nil, nil, prjID, "", ctrl.Result{}, fmt.Errorf(
+				"inconsistent data in vpc list: expected: 1, vpc not found: vpc_name: '%s', vpc_filter: '%s'", vpcName, vpcFilter,
+			)
+		}
+		if cmpVpcList.Data.Total > 1 {
+			return nil, nil, prjID, "", ctrl.Result{}, fmt.Errorf(
+				"inconsistent data in vpc list: expected: 1, found: %d, vpc_name: '%s', vpc_filter: '%s'",
+				cmpVpcList.Data.Total, vpcName, vpcFilter,
+			)
+		}
+		if cmpVpcList.Data.Total == 0 {
+			logger.V(1).Info("parent vpc not found on CMP, requeuing", "vpcName", vpcName)
+			return nil, nil, prjID, "", ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
+		}
+		cmpVpc = &cmpVpcList.Data.Values[0]
+		vpcID = *(cmpVpc.Metadata.ID)
+	}
+
+	if kubeSG.Status.VPCID != "" && kubeSG.Status.VPCID != vpcID {
+		return nil, nil, prjID, vpcID, ctrl.Result{}, fmt.Errorf(
+			"inconsistent vpc id in security group: sg_name: '%s', sg_vpc_id: '%s', vpc_name: '%s', vpc_id: '%s'",
+			sgName, kubeSG.Status.VPCID, vpcName, vpcID,
+		)
+	}
+
+	// Stage 3c: Fetch CMP SecurityGroup.
+	cmpSGList, listErr := arubaClient.FromNetwork().SecurityGroups().List(ctx, prjID, vpcID, &arubatypes.RequestParameters{Filter: &sgFilter})
+	if listErr != nil {
+		return nil, nil, prjID, vpcID, ctrl.Result{}, fmt.Errorf(
+			"failed to find security group in Aruba cloud: %w, sg_name: '%s', sg_filter: '%s', project_name: '%s', vpc_name: '%s'",
+			listErr, sgName, sgFilter, projectName, vpcName,
+		)
+	}
+	if cmpSGList.IsError() && cmpSGList.StatusCode != http.StatusNotFound {
+		return nil, nil, prjID, vpcID, ctrl.Result{}, fmt.Errorf(
+			"failed to find security group in Aruba cloud: status_code: %d, sg_name: '%s', project_name: '%s', vpc_name: '%s'",
+			cmpSGList.StatusCode, sgName, projectName, vpcName,
+		)
+	}
+	// TODO: Remove once CMP API name:eq() filter is fixed (issue https://jira.aruba.it/browse/DEV-66643).
+	applyNameFilterToSecurityGroupList(cmpSGList, sgName, logger)
+	if !cmpSGList.IsError() && (cmpSGList.Data.Total < 0 || cmpSGList.Data.Total > 1) {
+		return nil, nil, prjID, vpcID, ctrl.Result{}, fmt.Errorf(
+			"inconsistent data in security group list: sg_name: '%s', sg_filter: '%s', project_name: '%s', vpc_name: '%s', instances: %d",
+			sgName, sgFilter, projectName, vpcName, cmpSGList.Data.Total,
+		)
+	}
+
+	if cmpSGList.Data != nil && cmpSGList.Data.Total == 1 {
+		cmpSG = &cmpSGList.Data.Values[0]
+	}
+	return cmpSG, cmpVpc, prjID, vpcID, ctrl.Result{}, nil
+}
+
+// newIntentionValidationSet returns K8s-only validation rules that run at Stage 4,
+// before any CMP calls. All rules nil-guard bundle fields to handle an empty bundle.
+func (r *SecurityGroupReconciler) newIntentionValidationSet() *reconciler.ValidationSet[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse, *kubeSecurityGroupBundle] {
+	ivs := &reconciler.ValidationSet[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse, *kubeSecurityGroupBundle]{}
+	// 1. Required references
+	ivs.Add("ProjectReferenceRequired", func(k *v1alpha1.SecurityGroup, _ *arubatypes.SecurityGroupResponse, _ *kubeSecurityGroupBundle) error {
+		if k.Spec.ProjectReference.Name == "" {
+			return fmt.Errorf("project reference is required")
+		}
+		return nil
+	})
+	ivs.Add("VPCReferenceRequired", func(k *v1alpha1.SecurityGroup, _ *arubatypes.SecurityGroupResponse, _ *kubeSecurityGroupBundle) error {
+		if k.Spec.VPCReference.Name == "" {
+			return fmt.Errorf("vpc reference is required")
+		}
+		return nil
+	})
+	// 2. Cross-resource rules (nil-guarded — VPC/Project may not be resolved yet)
+	ivs.Add("TenantMustMatchVPC", func(k *v1alpha1.SecurityGroup, _ *arubatypes.SecurityGroupResponse, b *kubeSecurityGroupBundle) error {
+		if b.KubeVpc == nil {
+			return nil
+		}
+		if k.Spec.Tenant != "" && b.KubeVpc.Spec.Tenant != "" && k.Spec.Tenant != b.KubeVpc.Spec.Tenant {
+			return fmt.Errorf("tenant mismatch with VPC: %q != %q", k.Spec.Tenant, b.KubeVpc.Spec.Tenant)
+		}
+		return nil
+	})
+	ivs.Add("ProjectMustMatchVPC", func(k *v1alpha1.SecurityGroup, _ *arubatypes.SecurityGroupResponse, b *kubeSecurityGroupBundle) error {
+		if b.KubeVpc == nil {
+			return nil
+		}
+		if k.Spec.ProjectReference.Name != "" && b.KubeVpc.Spec.ProjectReference.Name != "" && k.Spec.ProjectReference.Name != b.KubeVpc.Spec.ProjectReference.Name {
+			return fmt.Errorf("project reference mismatch with VPC: %q != %q", k.Spec.ProjectReference.Name, b.KubeVpc.Spec.ProjectReference.Name)
+		}
+		return nil
+	})
+	ivs.Add("TenantMustMatchProject", func(k *v1alpha1.SecurityGroup, _ *arubatypes.SecurityGroupResponse, b *kubeSecurityGroupBundle) error {
+		if b.KubeProject == nil {
+			return nil
+		}
+		if k.Spec.Tenant != "" && b.KubeProject.Spec.Tenant != "" && k.Spec.Tenant != b.KubeProject.Spec.Tenant {
+			return fmt.Errorf("tenant mismatch with Project: %q != %q", k.Spec.Tenant, b.KubeProject.Spec.Tenant)
+		}
+		return nil
+	})
+	return ivs
+}
+
+func (r *SecurityGroupReconciler) newValidationSet() *reconciler.ValidationSet[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse, *securityGroupBundle] {
+	vs := &reconciler.ValidationSet[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse, *securityGroupBundle]{}
+	vs.Add("TenantMustMatchVPC", reconciler.FieldMustMatch[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse, *securityGroupBundle](
+		"tenant",
+		func(k *v1alpha1.SecurityGroup) string { return k.Spec.Tenant },
+		func(b *securityGroupBundle) string { return b.KubeVpc.Spec.Tenant },
+		"VPC",
+	))
+	vs.Add("ProjectMustMatchVPC", reconciler.FieldMustMatch[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse, *securityGroupBundle](
+		"project reference",
+		func(k *v1alpha1.SecurityGroup) string { return k.Spec.ProjectReference.Name },
+		func(b *securityGroupBundle) string { return b.KubeVpc.Spec.ProjectReference.Name },
+		"VPC",
+	))
+	vs.Add("TenantMustMatchProject", func(k *v1alpha1.SecurityGroup, _ *arubatypes.SecurityGroupResponse, b *securityGroupBundle) error {
+		if b.KubeProject == nil {
+			return nil
+		}
+		if k.Spec.Tenant != "" && b.KubeProject.Spec.Tenant != "" && k.Spec.Tenant != b.KubeProject.Spec.Tenant {
+			return fmt.Errorf("tenant mismatch with Project: %q != %q", k.Spec.Tenant, b.KubeProject.Spec.Tenant)
+		}
+		return nil
+	})
+	return vs
+}
+
+func (r *SecurityGroupReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse] {
+	ts := &reconciler.TransitionSet[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
+		DefaultRequeue:        reconciler.NoRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		DefaultRequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+	}
+
+	// 0. PhaseTimedOut — safety net: fail if stuck in a transitory phase too long
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
+		Name:           "PhaseTimedOut",
+		KCondition:     reconciler.KubePhaseTimedOut[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:     reconciler.AlwaysTrue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		KAction:        r.kubeSetFailedOnTimeout,
+		Requeue:        reconciler.NoRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+	})
+
+	// 1. ValidationFailedAndDeleting — unblock deletion for resources stuck in any *ValidationFailed state
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
+		Name:           "ValidationFailedAndDeleting",
+		KCondition:     reconciler.KubeAnyValidationFailedAndDeleting[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:     reconciler.AlwaysTrue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		KAction:        reconciler.KubeResetValidationFailedForDeletion[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse](r.Client),
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		RequeueOnError: reconciler.NoRequeueAndPropagateError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+	})
+
+	// 2. PendingAndDeleting — resource deleted while still in Pending; skip CMP entirely
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
+		Name:       "PendingAndDeleting",
+		KCondition: reconciler.KubePendingAndDeleting[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition: reconciler.AlwaysTrue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		KAction:    reconciler.KubeDeleteFromPending[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse](r.Client),
+		Requeue:    reconciler.NoRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+	})
+
+	// 3. ShouldBeDeleted
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
+		Name:           "ShouldBeDeleted",
+		KCondition:     reconciler.KubeShouldDelete[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:     cmpSecurityGroupIsFinal,
+		KAction:        r.kubeMarkToDelete,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+	})
+
+	// 4. ShouldDeleteTimedOut — enter deletion flow for timed-out resources (except those that timed out during Deleting)
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
+		Name:           "ShouldDeleteTimedOut",
+		KCondition:     reconciler.KubeShouldDeleteTimedOut[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:     reconciler.AlwaysTrue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		KAction:        r.kubeMarkToDelete,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+	})
+
+	// 5. WaitingChildrenDeletion — block CMP delete until all owned K8s children are gone.
+	// The kAction explicitly deletes children because the K8s GC only cascades after the
+	// owner is fully removed from etcd (impossible while the SecurityGroup finalizer is present).
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
+		Name: "WaitingChildrenDeletion",
+		KCondition: func(k *v1alpha1.SecurityGroup, a *arubatypes.SecurityGroupResponse) bool {
+			return reconciler.KubeShouldBeDeletedOnCMP(k, a) && r.kubeSecurityGroupHasOwnedChildren(k, a)
+		},
+		ACondition:     cmpSecurityGroupIsFinal,
+		KAction:        r.kubeSecurityGroupDeleteOwnedChildren,
+		Requeue:        reconciler.LongRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		RequeueOnError: reconciler.ShortRequeueAndIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+	})
+
+	// 6. ShouldBeDeletedOnCMP
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
+		Name:              "ShouldBeDeletedOnCMP",
+		KCondition:        reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:        cmpSecurityGroupIsFinal,
+		AAction:           r.cmpDelete,
+		KActionOnASuccess: r.kubeMarkDeleting,
+		KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse](r.Client),
+		Requeue:           reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+	})
+
+	// 7. DeletionOnCMPNotNeeded — resource marked for deletion but CMP resource doesn't exist; skip CMP delete
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
+		Name:           "DeletionOnCMPNotNeeded",
+		KCondition:     reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:     cmpSecurityGroupNotExists,
+		KAction:        r.kubeMarkDeletingDone,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+	})
+
+	// 8. WaitingDeletionOnCMP
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
+		Name:           "WaitingDeletionOnCMP",
+		KCondition:     reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:     cmpSecurityGroupIsTransitory,
+		Requeue:        reconciler.LongRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+	})
+
+	// 9. DeletionConfirmedOnCMP
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
+		Name:           "DeletionConfirmedOnCMP",
+		KCondition:     reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:     cmpSecurityGroupNotExists,
+		KAction:        r.kubeMarkDeletingDone,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+	})
+
+	// 10. DeletionAccomplished
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
+		Name:           "DeletionAccomplished",
+		KCondition:     reconciler.KubeDeletionAccomplished[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:     cmpSecurityGroupNotExists,
+		KAction:        r.kubeMarkDeleted,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+	})
+
+	// 11. HasDeniedChanges — surface immutable field violations before attempting update
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
+		Name:       "HasDeniedChanges",
+		KCondition: kubeSecurityGroupHasDeniedChanges,
+		ACondition: cmpSecurityGroupIsFinal,
+		KAction: func(ctx context.Context, kubeSG *v1alpha1.SecurityGroup, cmpSG *arubatypes.SecurityGroupResponse) error {
+			return fmt.Errorf("security group update rejected: %w", checkSecurityGroupDeniedChanges(kubeSG, cmpSG))
+		},
+		Requeue:        reconciler.NoRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		RequeueOnError: reconciler.LongRequeueAndIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+	})
+
+	// 12. SpecAlreadyInSyncWithCMP — generation changed but spec identical to CMP; just re-stamp ObservedGeneration
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
+		Name:           "SpecAlreadyInSyncWithCMP",
+		KCondition:     kubeSecurityGroupSpecInSyncWithCMP,
+		ACondition:     cmpSecurityGroupIsActive,
+		KAction:        r.kubeSetActiveAndSetID,
+		Requeue:        reconciler.NoRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+	})
+
+	// 13. ShouldBeUpdated — spec changed and CMP is ready
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
+		Name:           "ShouldBeUpdated",
+		KCondition:     kubeSecurityGroupShouldUpdate,
+		ACondition:     cmpSecurityGroupIsFinal,
+		KAction:        r.kubeMarkToUpdate,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+	})
+
+	// 14. ShouldBeUpdatedOnCMP — send update to CMP
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
+		Name:              "ShouldBeUpdatedOnCMP",
+		KCondition:        reconciler.KubeShouldBeUpdatedOnCMP[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:        cmpSecurityGroupIsFinal,
+		AAction:           r.cmpUpdate,
+		KActionOnASuccess: r.kubeMarkUpdating,
+		KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse](r.Client),
+		Requeue:           reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+	})
+
+	// 15. WaitingUpdateOnCMP — CMP is still processing the update
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
+		Name:           "WaitingUpdateOnCMP",
+		KCondition:     reconciler.KubeWaitingUpdateOnCMP[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:     cmpSecurityGroupIsTransitory,
+		Requeue:        reconciler.LongRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+	})
+
+	// 16. UpdateConfirmedOnCMP — CMP has settled; advance to Synchronized
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
+		Name:           "UpdateConfirmedOnCMP",
+		KCondition:     reconciler.KubeWaitingUpdateOnCMP[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:     cmpSecurityGroupIsFinal,
+		KAction:        r.kubeMarkUpdatingDone,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+	})
+
+	// 17. UpdateAccomplished — transition back to Active and stamp generation
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
+		Name:           "UpdateAccomplished",
+		KCondition:     reconciler.KubeUpdateAccomplished[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:     cmpSecurityGroupIsActive,
+		KAction:        r.kubeSetActiveAndSetID,
+		Requeue:        reconciler.NoRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+	})
+
+	// 18. ShouldBeCreated
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
+		Name:           "ShouldBeCreated",
+		KCondition:     reconciler.KubeIsFirstReconciliation[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:     cmpSecurityGroupNotExists,
+		KAction:        r.kubeMarkToCreate,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+	})
+
+	// 19. ShouldBeCreatedInCMP
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
+		Name:              "ShouldBeCreatedInCMP",
+		KCondition:        reconciler.KubeShouldBeCreatedOnCMP[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:        cmpSecurityGroupNotExists,
+		AAction:           r.cmpCreate,
+		KActionOnASuccess: r.kubeMarkCreating,
+		KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse](r.Client),
+		Requeue:           reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+	})
+
+	// 20. WaitingCreationInCMP
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
+		Name:           "WaitingCreationInCMP",
+		KCondition:     reconciler.KubeWaitingCreationInCMP[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:     cmpSecurityGroupNotExistsOrTransitory,
+		Requeue:        reconciler.LongRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+	})
+
+	// 21. CreationConfirmedOnCMP
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
+		Name:           "CreationConfirmedOnCMP",
+		KCondition:     reconciler.KubeWaitingCreationInCMP[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:     cmpSecurityGroupIsActive,
+		KAction:        r.kubeMarkCreatingDone,
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+	})
+
+	// 22. CreationAccomplished
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
+		Name:           "CreationAccomplished",
+		KCondition:     reconciler.KubeIsCreatedOnCMP[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:     cmpSecurityGroupIsActive,
+		KAction:        r.kubeSetActiveAndSetID,
+		Requeue:        reconciler.NoRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+	})
+
+	// 23. IsInError
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse]{
+		Name:           "IsInError",
+		KCondition:     reconciler.AlwaysTrue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		ACondition:     cmpSecurityGroupIsFailed,
+		KAction:        r.kubeSetFailed,
+		Requeue:        reconciler.NoRequeue[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.SecurityGroup, *arubatypes.SecurityGroupResponse],
+	})
+
+	return ts
+}
+
+// ---------------------------------------------------------------------------
+// Owned-children helpers
+// ---------------------------------------------------------------------------
+
+// kubeSecurityGroupHasOwnedChildren returns true when any Kubernetes resource directly owned
+// by the SecurityGroup still exists. Used by the WaitingChildrenDeletion transition.
+func (r *SecurityGroupReconciler) kubeSecurityGroupHasOwnedChildren(k *v1alpha1.SecurityGroup, _ *arubatypes.SecurityGroupResponse) bool {
+	labelKey, _ := ownerLabelKey(r.Scheme, k)
+	has, err := hasOwnedChildren(context.Background(), r.Client, k, labelKey,
+		&v1alpha1.SecurityRuleList{},
+	)
+	if err != nil {
+		ctrl.Log.Error(err, "checking owned children for security group", "securityGroup", k.GetName())
+		return true // conservative: assume children exist on error
+	}
+	return has
+}
+
+// kubeSecurityGroupDeleteOwnedChildren deletes all K8s children of the SecurityGroup that
+// have not yet received a deletionTimestamp. Called by the WaitingChildrenDeletion action.
+func (r *SecurityGroupReconciler) kubeSecurityGroupDeleteOwnedChildren(ctx context.Context, k *v1alpha1.SecurityGroup, _ *arubatypes.SecurityGroupResponse) error {
+	labelKey, _ := ownerLabelKey(r.Scheme, k)
+	return deleteOwnedChildren(ctx, r.Client, k, labelKey,
+		&v1alpha1.SecurityRuleList{},
+	)
+}
+
+// ---------------------------------------------------------------------------
+// Kube conditions
+// ---------------------------------------------------------------------------
+
+func kubeSecurityGroupHasDeniedChanges(kubeSG *v1alpha1.SecurityGroup, cmpSG *arubatypes.SecurityGroupResponse) bool {
+	if !kubeSG.DeletionTimestamp.IsZero() {
+		return false
+	}
+	if cmpSG == nil {
+		return false
+	}
+	return checkSecurityGroupDeniedChanges(kubeSG, cmpSG) != nil
+}
+
+func kubeSecurityGroupSpecInSyncWithCMP(kubeSG *v1alpha1.SecurityGroup, cmpSG *arubatypes.SecurityGroupResponse) bool {
+	return reconciler.KubeActiveAndGenerationChanged(kubeSG, cmpSG) &&
+		checkSecurityGroupDeniedChanges(kubeSG, cmpSG) == nil &&
+		!kubeSecurityGroupNeedsUpdate(kubeSG, cmpSG)
+}
+
+func kubeSecurityGroupShouldUpdate(kubeSG *v1alpha1.SecurityGroup, cmpSG *arubatypes.SecurityGroupResponse) bool {
+	return reconciler.KubeActiveAndGenerationChanged(kubeSG, cmpSG) &&
+		checkSecurityGroupDeniedChanges(kubeSG, cmpSG) == nil &&
+		kubeSecurityGroupNeedsUpdate(kubeSG, cmpSG)
+}
+
+// ---------------------------------------------------------------------------
+// CMP conditions
+// ---------------------------------------------------------------------------
+
+func cmpSecurityGroupNotExists(_ *v1alpha1.SecurityGroup, cmpSG *arubatypes.SecurityGroupResponse) bool {
+	return cmpSG == nil
+}
+
+func cmpSecurityGroupIsFinal(_ *v1alpha1.SecurityGroup, cmpSG *arubatypes.SecurityGroupResponse) bool {
+	if cmpSG == nil || cmpSG.Status.State == nil {
+		return false
+	}
+	return reconciler.AssessCSPResourceStateNature(&cmpSG.Status) == reconciler.CSPResourceStateNatureFinal
+}
+
+func cmpSecurityGroupIsTransitory(_ *v1alpha1.SecurityGroup, cmpSG *arubatypes.SecurityGroupResponse) bool {
+	if cmpSG == nil || cmpSG.Status.State == nil {
+		return false
+	}
+	return reconciler.AssessCSPResourceStateNature(&cmpSG.Status) == reconciler.CSPResourceStateNatureTransitory
+}
+
+func cmpSecurityGroupNotExistsOrTransitory(_ *v1alpha1.SecurityGroup, cmpSG *arubatypes.SecurityGroupResponse) bool {
+	if cmpSG == nil {
+		return true
+	}
+	if cmpSG.Status.State == nil {
+		return false
+	}
+	return reconciler.AssessCSPResourceStateNature(&cmpSG.Status) == reconciler.CSPResourceStateNatureTransitory
+}
+
+func cmpSecurityGroupIsActive(_ *v1alpha1.SecurityGroup, cmpSG *arubatypes.SecurityGroupResponse) bool {
+	return cmpSG != nil && cmpSG.Status.State != nil &&
+		*cmpSG.Status.State == reconciler.CSPResourceStateActive
+}
+
+func cmpSecurityGroupIsFailed(_ *v1alpha1.SecurityGroup, cmpSG *arubatypes.SecurityGroupResponse) bool {
+	return cmpSG != nil && cmpSG.Status.State != nil && *cmpSG.Status.State == reconciler.CSPResourceStateFailed
+}
+
+// ---------------------------------------------------------------------------
+// Kube actions
+// ---------------------------------------------------------------------------
+
+func (r *SecurityGroupReconciler) kubeSetPhaseAndCondition(ctx context.Context, kubeSG *v1alpha1.SecurityGroup, phase v1alpha1.ResourcePhase, reason string, _ error) error {
+	prePatches := []func(*v1alpha1.SecurityGroup){
+		func(sg *v1alpha1.SecurityGroup) {
+			if prjID, ok := ctx.Value(projectIDKey).(string); ok && sg.Status.ProjectID == "" {
+				sg.Status.ProjectID = prjID
+			}
+			if vID, ok := ctx.Value(vpcIDKey).(string); ok && sg.Status.VPCID == "" {
+				sg.Status.VPCID = vID
+			}
+		},
+	}
+	return reconciler.SetPhaseAndCondition(r.Client, ctx, kubeSG, phase, reason, nil, prePatches...)
+}
+
+func (r *SecurityGroupReconciler) kubeMarkToDelete(ctx context.Context, kubeSG *v1alpha1.SecurityGroup, _ *arubatypes.SecurityGroupResponse) error {
+	return r.kubeSetPhaseAndCondition(ctx, kubeSG, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize, nil)
+}
+
+func (r *SecurityGroupReconciler) kubeMarkDeleting(ctx context.Context, kubeSG *v1alpha1.SecurityGroup, _ *arubatypes.SecurityGroupResponse) error {
+	return r.kubeSetPhaseAndCondition(ctx, kubeSG, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronizing, nil)
+}
+
+func (r *SecurityGroupReconciler) kubeMarkDeletingDone(ctx context.Context, kubeSG *v1alpha1.SecurityGroup, _ *arubatypes.SecurityGroupResponse) error {
+	return r.kubeSetPhaseAndCondition(ctx, kubeSG, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronized, nil)
+}
+
+func (r *SecurityGroupReconciler) kubeMarkDeleted(ctx context.Context, kubeSG *v1alpha1.SecurityGroup, _ *arubatypes.SecurityGroupResponse) error {
+	return r.kubeSetPhaseAndCondition(ctx, kubeSG, v1alpha1.ResourcePhaseDeleted, v1alpha1.ConditionReasonSynchronized, nil)
+}
+
+func (r *SecurityGroupReconciler) kubeMarkToUpdate(ctx context.Context, kubeSG *v1alpha1.SecurityGroup, _ *arubatypes.SecurityGroupResponse) error {
+	return r.kubeSetPhaseAndCondition(ctx, kubeSG, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, nil)
+}
+
+func (r *SecurityGroupReconciler) kubeMarkUpdating(ctx context.Context, kubeSG *v1alpha1.SecurityGroup, _ *arubatypes.SecurityGroupResponse) error {
+	return r.kubeSetPhaseAndCondition(ctx, kubeSG, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonSynchronizing, nil)
+}
+
+func (r *SecurityGroupReconciler) kubeMarkUpdatingDone(ctx context.Context, kubeSG *v1alpha1.SecurityGroup, _ *arubatypes.SecurityGroupResponse) error {
+	return r.kubeSetPhaseAndCondition(ctx, kubeSG, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonSynchronized, nil)
+}
+
+func (r *SecurityGroupReconciler) kubeMarkToCreate(ctx context.Context, kubeSG *v1alpha1.SecurityGroup, _ *arubatypes.SecurityGroupResponse) error {
+	return r.kubeSetPhaseAndCondition(ctx, kubeSG, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, nil)
+}
+
+func (r *SecurityGroupReconciler) kubeMarkCreating(ctx context.Context, kubeSG *v1alpha1.SecurityGroup, _ *arubatypes.SecurityGroupResponse) error {
+	return r.kubeSetPhaseAndCondition(ctx, kubeSG, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, nil)
+}
+
+func (r *SecurityGroupReconciler) kubeMarkCreatingDone(ctx context.Context, kubeSG *v1alpha1.SecurityGroup, _ *arubatypes.SecurityGroupResponse) error {
+	return r.kubeSetPhaseAndCondition(ctx, kubeSG, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronized, nil)
+}
+
+func (r *SecurityGroupReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeSG *v1alpha1.SecurityGroup, cmpSG *arubatypes.SecurityGroupResponse) error {
+	cmpID := ""
+	if cmpSG != nil && cmpSG.Metadata.ID != nil {
+		cmpID = *cmpSG.Metadata.ID
+	}
+	return reconciler.SetActiveAndSetID(r.Client, ctx, kubeSG, cmpID, nil, func(sg *v1alpha1.SecurityGroup) {
+		if prjID, ok := ctx.Value(projectIDKey).(string); ok && sg.Status.ProjectID != "" {
+			sg.Status.ProjectID = prjID
+		}
+		if vID, ok := ctx.Value(vpcIDKey).(string); ok && sg.Status.VPCID != "" {
+			sg.Status.VPCID = vID
+		}
+	})
+}
+
+func (r *SecurityGroupReconciler) kubeSetFailedOnTimeout(ctx context.Context, kubeSG *v1alpha1.SecurityGroup, _ *arubatypes.SecurityGroupResponse) error {
+	return reconciler.SetFailedOnTimeout(r.Client, ctx, kubeSG, func(sg *v1alpha1.SecurityGroup) {
+		if prjID, ok := ctx.Value(projectIDKey).(string); ok && sg.Status.ProjectID == "" {
+			sg.Status.ProjectID = prjID
+		}
+		if vID, ok := ctx.Value(vpcIDKey).(string); ok && sg.Status.VPCID == "" {
+			sg.Status.VPCID = vID
+		}
+	})
+}
+
+func (r *SecurityGroupReconciler) kubeSetFailed(ctx context.Context, kubeSG *v1alpha1.SecurityGroup, _ *arubatypes.SecurityGroupResponse) error {
+	return r.kubeSetPhaseAndCondition(ctx, kubeSG, v1alpha1.ResourcePhaseFailed, v1alpha1.ConditionReasonSynchronized, nil)
+}
+
+// ---------------------------------------------------------------------------
+// CMP actions
+// ---------------------------------------------------------------------------
+
+func (r *SecurityGroupReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.SecurityGroup, cmpSG *arubatypes.SecurityGroupResponse) error {
+	prjID := ctx.Value(projectIDKey).(string)
+	vID := ctx.Value(vpcIDKey).(string)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+
+	cmpResp, err := arubaClient.FromNetwork().SecurityGroups().Delete(ctx, prjID, vID, *cmpSG.Metadata.ID, nil)
+	if err != nil {
+		return reconciler.CMPTransportError("delete", *cmpSG.Metadata.Name, err)
+	}
+	return reconciler.CMPCheckResponse("delete", *cmpSG.Metadata.Name, cmpResp,
+		http.StatusOK, http.StatusAccepted, http.StatusNoContent, http.StatusNotFound)
+}
+
+func (r *SecurityGroupReconciler) cmpUpdate(ctx context.Context, kubeSG *v1alpha1.SecurityGroup, cmpSG *arubatypes.SecurityGroupResponse) error {
+	prjID := ctx.Value(projectIDKey).(string)
+	vID := ctx.Value(vpcIDKey).(string)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+
+	// Guard: should have been caught by HasDeniedChanges, but double-check.
+	if err := checkSecurityGroupDeniedChanges(kubeSG, cmpSG); err != nil {
+		return err
+	}
+
+	request := buildSecurityGroupUpdateRequest(kubeSG, cmpSG)
+
+	cmpResp, err := arubaClient.FromNetwork().SecurityGroups().Update(ctx, prjID, vID, *cmpSG.Metadata.ID, *request, nil)
+	if err != nil {
+		return reconciler.CMPTransportError("update", kubeSG.Name, err)
+	}
+	return reconciler.CMPCheckResponse("update", kubeSG.Name, cmpResp,
+		http.StatusOK, http.StatusAccepted, http.StatusNoContent)
+}
+
+func (r *SecurityGroupReconciler) cmpCreate(ctx context.Context, kubeSG *v1alpha1.SecurityGroup, _ *arubatypes.SecurityGroupResponse) error {
+	prjID := ctx.Value(projectIDKey).(string)
+	vID := ctx.Value(vpcIDKey).(string)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+
+	cmpResp, err := arubaClient.FromNetwork().SecurityGroups().Create(ctx, prjID, vID, *cmpSecurityGroupRequestFromKube(kubeSG), nil)
+	if err != nil {
+		return reconciler.CMPTransportError("create", kubeSG.Name, err)
+	}
+	return reconciler.CMPCheckResponse("create", kubeSG.Name, cmpResp,
+		http.StatusOK, http.StatusCreated, http.StatusAccepted)
+}
+
+// ---------------------------------------------------------------------------
+// Other helpers
+// ---------------------------------------------------------------------------
+
+func checkSecurityGroupDeniedChanges(kubeSG *v1alpha1.SecurityGroup, cmpSG *arubatypes.SecurityGroupResponse) error {
+	if cmpSG == nil {
+		return nil
+	}
+
+	if cmpSG.Metadata.LocationResponse != nil &&
+		cmpSG.Metadata.LocationResponse.Value != "" &&
+		kubeSG.Spec.Region != cmpSG.Metadata.LocationResponse.Value {
+		return fmt.Errorf("%w: %w", reconciler.ErrNotAllowedChanges, errors.New("change the 'location' is not allowed"))
+	}
+
+	return nil
+}
+
+func kubeSecurityGroupNeedsUpdate(kubeSG *v1alpha1.SecurityGroup, cmpSG *arubatypes.SecurityGroupResponse) bool {
+	if cmpSG == nil {
+		return false
+	}
+	if !reconciler.TagsAreEqual(kubeSG.Spec.Tags, cmpSG.Metadata.Tags) {
+		return true
+	}
+	return false
+}
+
+func cmpSecurityGroupRequestFromKube(kubeSG *v1alpha1.SecurityGroup) *arubatypes.SecurityGroupRequest {
+	tags := make([]string, len(kubeSG.Spec.Tags))
+	copy(tags, kubeSG.Spec.Tags)
+	defaultVal := false
+	return &arubatypes.SecurityGroupRequest{
+		Metadata: arubatypes.ResourceMetadataRequest{
+			Name: kubeSG.Name,
+			Tags: tags,
+		},
+		Properties: arubatypes.SecurityGroupPropertiesRequest{
+			Default: &defaultVal,
+		},
+	}
+}
+
+func cmpSecurityGroupRequestFromCMP(cmpSG *arubatypes.SecurityGroupResponse) *arubatypes.SecurityGroupRequest {
+	if cmpSG == nil {
+		return nil
+	}
+	name := ""
+	if cmpSG.Metadata.Name != nil {
+		name = *cmpSG.Metadata.Name
+	}
+	tags := make([]string, len(cmpSG.Metadata.Tags))
+	copy(tags, cmpSG.Metadata.Tags)
+	defaultVal := cmpSG.Properties.Default
+	return &arubatypes.SecurityGroupRequest{
+		Metadata: arubatypes.ResourceMetadataRequest{
+			Name: name,
+			Tags: tags,
+		},
+		Properties: arubatypes.SecurityGroupPropertiesRequest{
+			Default: &defaultVal,
+		},
+	}
+}
+
+func buildSecurityGroupUpdateRequest(kubeSG *v1alpha1.SecurityGroup, cmpSG *arubatypes.SecurityGroupResponse) *arubatypes.SecurityGroupRequest {
+	request := cmpSecurityGroupRequestFromCMP(cmpSG)
+	if request == nil {
+		return nil
+	}
+	tags := make([]string, len(kubeSG.Spec.Tags))
+	copy(tags, kubeSG.Spec.Tags)
+	request.Metadata.Tags = tags
+	defaultVal := false
+	request.Properties.Default = &defaultVal
+	return request
+}
+
+// ---------------------------------------------------------------------------
+// Setup
+// ---------------------------------------------------------------------------
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *SecurityGroupReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	specOrStatusChanged := predicate.Funcs{
-		UpdateFunc: func(e event.UpdateEvent) bool {
-			oldObj := e.ObjectOld.(*v1alpha1.SecurityGroup)
-			newObj := e.ObjectNew.(*v1alpha1.SecurityGroup)
-			log.Println("Update event received for SecurityGroup", "name", newObj.Name, "namespace", newObj.Namespace)
-			// spec is updated in updating phase, so we need to trigger reconciliation if it changed
-			if !cmp.Equal(oldObj.Spec, newObj.Spec) {
-				return true
-			}
-			// status is updated in provisioning phase, so we need to trigger reconciliation if it changed
-			if !cmp.Equal(oldObj.Status, newObj.Status) {
-				return true
-			}
-
-			return false
-		},
-		CreateFunc: func(e event.CreateEvent) bool {
-			return true
-		},
-		DeleteFunc: func(e event.DeleteEvent) bool {
-			return true
-		},
-	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.SecurityGroup{}).
-		WithEventFilter(specOrStatusChanged).
+		Watches(&v1alpha1.SecurityRule{}, handler.EnqueueRequestsFromMapFunc(
+			childToParentMapFunc(func(o client.Object) *v1alpha1.ResourceReference {
+				if v, ok := o.(*v1alpha1.SecurityRule); ok {
+					return &v.Spec.SecurityGroupReference
+				}
+				return nil
+			}))).
 		Named("securitygroup").
 		Complete(r)
-}
-
-const (
-	securityGroupFinalizerName = "securitygroup.arubacloud.com/finalizer"
-)
-
-func (r *SecurityGroupReconciler) Init(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
-	return r.InitializeResource(ctx, obj, status, securityGroupFinalizerName)
-}
-
-func (r *SecurityGroupReconciler) Creating(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
-	securityGroup := obj.(*v1alpha1.SecurityGroup)
-	return r.HandleCreating(ctx, obj, status, func(ctx context.Context) (string, string, error) {
-		projectID, err := r.GetProjectID(
-			ctx,
-			securityGroup.Spec.ProjectReference.Name,
-			securityGroup.Spec.ProjectReference.Namespace,
-		)
-		if err != nil {
-			return "", "", err
-		}
-
-		vpcID, err := r.GetVpcID(ctx, securityGroup.Spec.VpcReference.Name, securityGroup.Spec.VpcReference.Namespace)
-		if err != nil {
-			return "", "", err
-		}
-
-		securityGroupReq := arubaClient.SecurityGroupRequest{
-			Metadata: arubaClient.SecurityGroupMetadata{
-				Name: securityGroup.Name,
-				Tags: securityGroup.Spec.Tags,
-				Location: arubaClient.SecurityGroupLocation{
-					Value: securityGroup.Spec.Location.Value,
-				},
-			},
-			Properties: arubaClient.SecurityGroupProperties{
-				Default: securityGroup.Spec.Default,
-			},
-		}
-
-		securityGroupResp, err := r.CreateSecurityGroup(ctx, projectID, vpcID, securityGroupReq)
-		if err != nil {
-			return "", "", err
-		}
-
-		securityGroup.Status.ProjectID = projectID
-		securityGroup.Status.VpcID = vpcID
-
-		state := ""
-		if securityGroupResp.Status != nil {
-			state = securityGroupResp.Status.State
-		}
-
-		return securityGroupResp.Metadata.ID, state, nil
-	})
-}
-
-func (r *SecurityGroupReconciler) Provisioning(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
-	securityGroup := obj.(*v1alpha1.SecurityGroup)
-	return r.HandleProvisioning(ctx, obj, status, func(ctx context.Context) (string, error) {
-		securityGroupResp, err := r.GetSecurityGroup(ctx, securityGroup.Status.ProjectID, securityGroup.Status.VpcID, status.ResourceID)
-		if err != nil {
-			return "", err
-		}
-
-		if securityGroupResp.Status != nil {
-			return securityGroupResp.Status.State, nil
-		}
-		return "", nil
-	})
-}
-
-func (r *SecurityGroupReconciler) Updating(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
-	securityGroup := obj.(*v1alpha1.SecurityGroup)
-	return r.HandleUpdating(ctx, obj, status, func(ctx context.Context) error {
-		securityGroupReq := arubaClient.SecurityGroupRequest{
-			Metadata: arubaClient.SecurityGroupMetadata{
-				Name: securityGroup.Name,
-				Tags: securityGroup.Spec.Tags,
-				Location: arubaClient.SecurityGroupLocation{
-					Value: securityGroup.Spec.Location.Value,
-				},
-			},
-			Properties: arubaClient.SecurityGroupProperties{
-				Default: securityGroup.Spec.Default,
-			},
-		}
-
-		_, err := r.UpdateSecurityGroup(ctx, securityGroup.Status.ProjectID, securityGroup.Status.VpcID, status.ResourceID, securityGroupReq)
-		return err
-	})
-}
-
-func (r *SecurityGroupReconciler) Created(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
-	return r.CheckForUpdates(ctx, obj, status)
-}
-
-func (r *SecurityGroupReconciler) Deleting(ctx context.Context, obj reconciler.ResourceObject, status *v1alpha1.ResourceStatus) (ctrl.Result, error) {
-	securityGroup := obj.(*v1alpha1.SecurityGroup)
-	return r.HandleDeletion(ctx, obj, status, securityGroupFinalizerName, func(ctx context.Context) error {
-		return r.DeleteSecurityGroup(ctx, securityGroup.Status.ProjectID, securityGroup.Status.VpcID, status.ResourceID)
-	})
 }

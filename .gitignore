@@ -8,7 +8,7 @@
 *.so
 *.dylib
 /bin/
-main
+/main
 
 # Test binary, built with `go test -c`
 *.test
@@ -19,7 +19,7 @@ coverage.*
 *.coverprofile
 profile.cov
 
-# Dependency directories (remove the comment below to include it)
+# Dependency directories
 # vendor/
 
 # Go workspace file
@@ -32,7 +32,18 @@ go.work.sum
 # Build artifacts
 bin/
 dist/
+cmd/__debug_bin*
 
 # Editor/IDE
-# .idea/
-# .vscode/
+.idea/
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Node / Docusaurus (docs website)
+node_modules/
+docs/website/node_modules/
+docs/website/build/
+docs/website/.docusaurus/

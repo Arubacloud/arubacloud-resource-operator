@@ -29,24 +29,28 @@ type BlockStorageSpec struct {
 	// +kubebuilder:validation:Optional
 	Tags []string `json:"tags,omitempty"`
 
-	// Location specifies the location for the block storage
+	// Region specifies the region for the block storage
 	// +kubebuilder:validation:Required
-	Location Location `json:"location"`
+	// +kubebuilder:default="ITBG-Bergamo"
+	Region string `json:"region"`
 
-	// SizeGb specifies the size of the block storage in GB
+	// SizeGB is the size of the block storage in gigabytes
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=16384
-	SizeGb int32 `json:"sizeGb"`
+	// +kubebuilder:default=20
+	SizeGB int32 `json:"sizeGB"`
 
 	// BillingPeriod defines the billing period (Hour, Month, etc.)
+	// +kubebuilder:default="Hour"
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Enum=Hour;Month
 	BillingPeriod string `json:"billingPeriod"`
 
-	// DataCenter specifies the data center for the block storage
+	// Zone specifies the data center zone
 	// +kubebuilder:validation:Required
-	DataCenter string `json:"dataCenter"`
+	// +kubebuilder:default="ITBG-1"
+	Zone string `json:"zone"`
 
 	// Type specifies the type of the block storage
 	// +kubebuilder:validation:Optional
@@ -77,7 +81,7 @@ type BlockStorageStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:scope=Namespaced,shortName=bs
+// +kubebuilder:resource:scope=Namespaced,shortName=bs;arubs
 // +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase"
 // +kubebuilder:printcolumn:name="Resource ID",type="string",JSONPath=".status.resourceID"
 // +kubebuilder:printcolumn:name="Message",type="string",JSONPath=".status.message"

@@ -16,18 +16,27 @@ limitations under the License.
 
 package v1alpha1
 
-import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+)
 
 // Common phases for all resources
 type ResourcePhase string
 
 const (
+	// ResourcePhasePending indicates the resource has been registered in Kubernetes
+	// but no CMP interaction has started yet. It is the initial phase set alongside
+	// the finalizer, before the first HandleReconcile cycle.
+	ResourcePhasePending ResourcePhase = "Pending"
 	// ResourcePhaseCreating indicates the resource is being created
 	ResourcePhaseCreating ResourcePhase = "Creating"
 	// ResourcePhaseProvisioning indicates the resource is being provisioned remotely
 	ResourcePhaseProvisioning ResourcePhase = "Provisioning"
-	// ResourcePhaseCreated indicates the resource has been created successfully
-	ResourcePhaseCreated ResourcePhase = "Created"
+	// ResourcePhaseWaitingCondition indicates the resource is waiting for some particular condition
+	ResourcePhaseWaitingCondition ResourcePhase = "WaitingCondition"
+	// ResourcePhaseActive indicates the resource has been created successfully
+	ResourcePhaseActive ResourcePhase = "Active"
 	// ResourcePhaseUpdating indicates the resource is being updated
 	ResourcePhaseUpdating ResourcePhase = "Updating"
 	// ResourcePhaseDeleting indicates the resource is being deleted
@@ -38,17 +47,59 @@ const (
 	ResourcePhaseFailed ResourcePhase = "Failed"
 )
 
-// Condition types for resources
+// Condition reasons for resources
 const (
-	// ConditionTypeSynchronized indicates whether the resource is synchronized with the remote system
-	ConditionTypeSynchronized = "Synchronized"
+	// ConditionReasonShallSynchronize indicates whether the resource needs to
+	// be synchronized with the CMP but the process is not started yet
+	ConditionReasonShallSynchronize = "ShallSynchronize"
+	// ConditionTypeShallSynchronize indicates whether the resource needs to
+	// be synchronized with the CMP and that the process is already started
+	ConditionReasonSynchronizing = "Synchronizing"
+	// ConditionReasonSynchronized indicates whether the resource is
+	// synchronized with the CMP
+	ConditionReasonSynchronized = "Synchronized"
+	// ConditionReasonFailed indicates that the resource has exceeded the maximum
+	// allowed time in a transitory phase and has been moved to Failed.
+	ConditionReasonFailed = "Failed"
+	// ConditionReasonValidationFailed indicates that the CMP API rejected the request
+	// with field-level validation errors (4xx with non-empty Errors array). Terminal
+	// until the user corrects the spec and a new reconcile cycle is triggered.
+	ConditionReasonValidationFailed = "ValidationFailed"
+	// ConditionReasonIntentionValidationFailed indicates that the resource has a
+	// cross-resource consistency violation detected by the K8s-only intention validator
+	// (ivs), e.g. region, zone, or tenant mismatch with a linked resource. Terminal
+	// until the inconsistency is resolved and a new reconcile cycle is triggered.
+	ConditionReasonIntentionValidationFailed = "IntentionValidationFailed"
+	// ConditionReasonPostValidationFailed indicates that the resource has a
+	// cross-resource consistency violation detected by the CMP-aware post-validator
+	// (vs), e.g. a mismatch between the K8s spec and the actual CMP resource state.
+	// Terminal until the inconsistency is resolved and a new reconcile cycle is triggered.
+	ConditionReasonPostValidationFailed = "PostValidationFailed"
 )
 
-// Location specifies the location for resources
-type Location struct {
-	// Value is the location identifier (e.g., "ITBG-Bergamo")
-	// +kubebuilder:validation:Required
-	Value string `json:"value"`
+// ArubaOwnerReference contains the information needed to identify an owning object
+// across namespaces. It mirrors metav1.OwnerReference but adds a Namespace field,
+// enabling cross-namespace ownership relationships that standard Kubernetes
+// OwnerReferences do not support.
+type ArubaOwnerReference struct {
+	// APIVersion is the API version of the referent.
+	APIVersion string `json:"apiVersion"`
+	// Kind is the kind of the referent.
+	Kind string `json:"kind"`
+	// Namespace is the namespace of the referent.
+	Namespace string `json:"namespace"`
+	// Name is the name of the referent.
+	Name string `json:"name"`
+	// UID is the UID of the referent.
+	UID types.UID `json:"uid"`
+	// Controller indicates that this reference designates the managing controller.
+	// +optional
+	Controller *bool `json:"controller,omitempty"`
+	// BlockOwnerDeletion indicates that, if set to true and if the owner has the
+	// "foregroundDeletion" finalizer, the owner cannot be deleted until this reference
+	// is removed.
+	// +optional
+	BlockOwnerDeletion *bool `json:"blockOwnerDeletion,omitempty"`
 }
 
 // ResourceReference represents a reference to another resource
@@ -92,10 +143,34 @@ type ResourceStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
 }
 
-// Object is the common Schema for the API.
-type Object struct {
-	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata,omitempty"`
+type ResourcePhaseNature int
 
-	Status ResourceStatus `json:"status,omitempty"`
+const (
+	PhaseNatureInvalid ResourcePhaseNature = iota
+	PhaseNatureTransitory
+	PhaseNatureFinal
+	PhaseNatureUndetermined
+)
+
+func (s *ResourceStatus) AssessPhaseNature() ResourcePhaseNature {
+	if s == nil {
+		return PhaseNatureUndetermined
+	}
+
+	switch s.Phase {
+	case ResourcePhaseCreating,
+		ResourcePhaseProvisioning,
+		ResourcePhaseWaitingCondition,
+		ResourcePhaseUpdating,
+		ResourcePhaseDeleting:
+		return PhaseNatureTransitory
+
+	case ResourcePhasePending,
+		ResourcePhaseActive,
+		ResourcePhaseDeleted,
+		ResourcePhaseFailed:
+		return PhaseNatureFinal
+	}
+
+	return PhaseNatureInvalid
 }

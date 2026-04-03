@@ -1,5 +1,5 @@
 apiVersion: arubacloud.com/v1alpha1
-kind: Vpc
+kind: VPC
 metadata:
   name: __NAME__
   namespace: __NAMESPACE__
@@ -8,8 +8,7 @@ spec:
   tags:
     - tag-4
     - tag-3
-  location:
-    value: ITBG-Bergamo
+  region: ITBG-Bergamo
   projectReference:
     name: __NAME__
     namespace: __NAMESPACE__

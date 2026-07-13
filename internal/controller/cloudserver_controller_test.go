@@ -37,30 +37,30 @@ import (
 
 // --- Builder helpers ---
 
-func buildCSResponse(id, name, state string) *arubatypes.CloudServerResponse {
-	flavorName := "gp1.small"
+func buildCSResponse(id, name string, state arubatypes.State) *arubatypes.CloudServerResponse {
+	flavorName := arubatypes.CloudServerFlavor("gp1.small")
 	return &arubatypes.CloudServerResponse{
 		Metadata: arubatypes.ResourceMetadataResponse{
 			ID:   &id,
 			Name: &name,
 		},
-		Properties: arubatypes.CloudServerPropertiesResult{
+		Properties: arubatypes.CloudServerPropertiesResponse{
 			Zone:   "ITBG",
 			Flavor: arubatypes.CloudServerFlavorResponse{Name: flavorName},
 		},
-		Status: arubatypes.ResourceStatus{
+		Status: arubatypes.ResourceStatusResponse{
 			State: &state,
 		},
 	}
 }
 
-func buildCSList(responses ...*arubatypes.CloudServerResponse) *arubatypes.Response[arubatypes.CloudServerList] {
-	list := &arubatypes.CloudServerList{}
+func buildCSList(responses ...*arubatypes.CloudServerResponse) *arubatypes.Response[arubatypes.CloudServerListResponse] {
+	list := &arubatypes.CloudServerListResponse{}
 	for _, r := range responses {
 		list.Values = append(list.Values, *r)
 		list.Total++
 	}
-	return &arubatypes.Response[arubatypes.CloudServerList]{
+	return &arubatypes.Response[arubatypes.CloudServerListResponse]{
 		Data:       list,
 		StatusCode: http.StatusOK,
 	}
@@ -72,7 +72,7 @@ func buildCSCRUDResponse(statusCode int) *arubatypes.Response[arubatypes.CloudSe
 	}
 }
 
-func buildProjectListForCS(projectID, projectName string) *arubatypes.Response[arubatypes.ProjectList] {
+func buildProjectListForCS(projectID, projectName string) *arubatypes.Response[arubatypes.ProjectListResponse] {
 	id := projectID
 	name := projectName
 	proj := arubatypes.ProjectResponse{
@@ -81,16 +81,16 @@ func buildProjectListForCS(projectID, projectName string) *arubatypes.Response[a
 			Name: &name,
 		},
 	}
-	list := &arubatypes.ProjectList{}
+	list := &arubatypes.ProjectListResponse{}
 	list.Values = append(list.Values, proj)
 	list.Total = 1
-	return &arubatypes.Response[arubatypes.ProjectList]{
+	return &arubatypes.Response[arubatypes.ProjectListResponse]{
 		Data:       list,
 		StatusCode: http.StatusOK,
 	}
 }
 
-func buildVpcListForCS(vpcID, vpcName string) *arubatypes.Response[arubatypes.VPCList] {
+func buildVpcListForCS(vpcID, vpcName string) *arubatypes.Response[arubatypes.VPCListResponse] {
 	id := vpcID
 	name := vpcName
 	v := arubatypes.VPCResponse{
@@ -99,22 +99,22 @@ func buildVpcListForCS(vpcID, vpcName string) *arubatypes.Response[arubatypes.VP
 			Name: &name,
 		},
 	}
-	list := &arubatypes.VPCList{}
+	list := &arubatypes.VPCListResponse{}
 	list.Values = append(list.Values, v)
 	list.Total = 1
-	return &arubatypes.Response[arubatypes.VPCList]{
+	return &arubatypes.Response[arubatypes.VPCListResponse]{
 		Data:       list,
 		StatusCode: http.StatusOK,
 	}
 }
 
-func buildBootVolumeListForCS(volID, volName string) *arubatypes.Response[arubatypes.BlockStorageList] {
-	return buildBootVolumeListForCSWithState(volID, volName, reconciler.CSPResourceStateActive)
+func buildBootVolumeListForCS(volID, volName string) *arubatypes.Response[arubatypes.BlockStorageListResponse] {
+	return buildBootVolumeListForCSWithState(volID, volName, arubatypes.StateActive)
 }
 
 // WORKAROUND: used to test the dependency readiness check.
 // TODO: remove once the CMP Infra Team fixes the root cause.
-func buildBootVolumeListForCSWithState(volID, volName, state string) *arubatypes.Response[arubatypes.BlockStorageList] {
+func buildBootVolumeListForCSWithState(volID, volName string, state arubatypes.State) *arubatypes.Response[arubatypes.BlockStorageListResponse] {
 	id := volID
 	name := volName
 	vol := arubatypes.BlockStorageResponse{
@@ -122,26 +122,26 @@ func buildBootVolumeListForCSWithState(volID, volName, state string) *arubatypes
 			ID:   &id,
 			Name: &name,
 		},
-		Status: arubatypes.ResourceStatus{
+		Status: arubatypes.ResourceStatusResponse{
 			State: &state,
 		},
 	}
-	list := &arubatypes.BlockStorageList{}
+	list := &arubatypes.BlockStorageListResponse{}
 	list.Values = append(list.Values, vol)
 	list.Total = 1
-	return &arubatypes.Response[arubatypes.BlockStorageList]{
+	return &arubatypes.Response[arubatypes.BlockStorageListResponse]{
 		Data:       list,
 		StatusCode: http.StatusOK,
 	}
 }
 
-func buildSubnetListForCS(subnetID, subnetName string) *arubatypes.Response[arubatypes.SubnetList] {
-	return buildSubnetListForCSWithState(subnetID, subnetName, reconciler.CSPResourceStateActive)
+func buildSubnetListForCS(subnetID, subnetName string) *arubatypes.Response[arubatypes.SubnetListResponse] {
+	return buildSubnetListForCSWithState(subnetID, subnetName, arubatypes.StateActive)
 }
 
 // WORKAROUND: used to test the dependency readiness check.
 // TODO: remove once the CMP Infra Team fixes the root cause.
-func buildSubnetListForCSWithState(subnetID, subnetName, state string) *arubatypes.Response[arubatypes.SubnetList] {
+func buildSubnetListForCSWithState(subnetID, subnetName string, state arubatypes.State) *arubatypes.Response[arubatypes.SubnetListResponse] {
 	id := subnetID
 	name := subnetName
 	subnet := arubatypes.SubnetResponse{
@@ -149,20 +149,20 @@ func buildSubnetListForCSWithState(subnetID, subnetName, state string) *arubatyp
 			ID:   &id,
 			Name: &name,
 		},
-		Status: arubatypes.ResourceStatus{
+		Status: arubatypes.ResourceStatusResponse{
 			State: &state,
 		},
 	}
-	list := &arubatypes.SubnetList{}
+	list := &arubatypes.SubnetListResponse{}
 	list.Values = append(list.Values, subnet)
 	list.Total = 1
-	return &arubatypes.Response[arubatypes.SubnetList]{
+	return &arubatypes.Response[arubatypes.SubnetListResponse]{
 		Data:       list,
 		StatusCode: http.StatusOK,
 	}
 }
 
-func buildSGListForCS(sgID, sgName string) *arubatypes.Response[arubatypes.SecurityGroupList] {
+func buildSGListForCS(sgID, sgName string) *arubatypes.Response[arubatypes.SecurityGroupListResponse] {
 	id := sgID
 	name := sgName
 	sg := arubatypes.SecurityGroupResponse{
@@ -171,10 +171,10 @@ func buildSGListForCS(sgID, sgName string) *arubatypes.Response[arubatypes.Secur
 			Name: &name,
 		},
 	}
-	list := &arubatypes.SecurityGroupList{}
+	list := &arubatypes.SecurityGroupListResponse{}
 	list.Values = append(list.Values, sg)
 	list.Total = 1
-	return &arubatypes.Response[arubatypes.SecurityGroupList]{
+	return &arubatypes.Response[arubatypes.SecurityGroupListResponse]{
 		Data:       list,
 		StatusCode: http.StatusOK,
 	}
@@ -526,7 +526,7 @@ var _ = Describe("CloudServerReconciler", func() {
 			setCSStatus(ctx, cs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing,
 				"", "", "", "", "", nil, nil, 0, time.Now())
 
-			cmpCS := buildCSResponse("cs-id-1", "test-cs-wait-create-transitory", reconciler.CSPResourceStateCreating)
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-wait-create-transitory", arubatypes.StateCreating)
 			m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, "test-cs-wait-create-transitory", cmpCS)
 
 			result, err := m.r.HandleReconcile(ctx, cs)
@@ -542,7 +542,7 @@ var _ = Describe("CloudServerReconciler", func() {
 			setCSStatus(ctx, cs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing,
 				"", "", "", "", "", nil, nil, 0, time.Now())
 
-			cmpCS := buildCSResponse("cs-id-1", "test-cs-creation-confirmed", reconciler.CSPResourceStateActive)
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-creation-confirmed", arubatypes.StateActive)
 			m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, "test-cs-creation-confirmed", cmpCS)
 
 			_, err := m.r.HandleReconcile(ctx, cs)
@@ -564,7 +564,7 @@ var _ = Describe("CloudServerReconciler", func() {
 			setCSStatus(ctx, cs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronized,
 				"", "", "", "", "", nil, nil, 0, time.Now())
 
-			cmpCS := buildCSResponse("cs-id-1", "test-cs-creation-accomplished", reconciler.CSPResourceStateActive)
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-creation-accomplished", arubatypes.StateActive)
 			m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, "test-cs-creation-accomplished", cmpCS)
 
 			_, err := m.r.HandleReconcile(ctx, cs)
@@ -598,7 +598,7 @@ var _ = Describe("CloudServerReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
 
 			// CMP still has original flavor name "gp1.small"
-			cmpCS := buildCSResponse("cs-id-1", "test-cs-denied-changes", reconciler.CSPResourceStateActive)
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-denied-changes", arubatypes.StateActive)
 			m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, "test-cs-denied-changes", cmpCS)
 
 			result, err := m.r.HandleReconcile(ctx, cs)
@@ -623,7 +623,7 @@ var _ = Describe("CloudServerReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
 
 			// CMP matches: same tags, same flavor
-			cmpCS := buildCSResponse("cs-id-1", "test-cs-spec-in-sync", reconciler.CSPResourceStateActive)
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-spec-in-sync", arubatypes.StateActive)
 			cmpCS.Metadata.Tags = []string{"tag1"}
 			m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, "test-cs-spec-in-sync", cmpCS)
 
@@ -653,7 +653,7 @@ var _ = Describe("CloudServerReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
 
 			// CMP has old tags
-			cmpCS := buildCSResponse("cs-id-1", "test-cs-should-update", reconciler.CSPResourceStateActive)
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-should-update", arubatypes.StateActive)
 			cmpCS.Metadata.Tags = []string{"tag1"}
 			m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, "test-cs-should-update", cmpCS)
 
@@ -677,7 +677,7 @@ var _ = Describe("CloudServerReconciler", func() {
 				"cs-id-1", csProjectID, csVpcID, csBootVolID, csKPID,
 				[]string{csSubnetID}, []string{csSGID}, 1, time.Now())
 
-			cmpCS := buildCSResponse("cs-id-1", "test-cs-update-cmp", reconciler.CSPResourceStateActive)
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-update-cmp", arubatypes.StateActive)
 			m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, "test-cs-update-cmp", cmpCS)
 			m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
 			m.mockCompute.EXPECT().CloudServers().Return(m.mockCSs)
@@ -710,7 +710,7 @@ var _ = Describe("CloudServerReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
 
 			// During deletion, cached IDs are used — only CS list is called
-			cmpCS := buildCSResponse("cs-id-1", "test-cs-should-delete", reconciler.CSPResourceStateActive)
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-should-delete", arubatypes.StateActive)
 			m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
 			m.mockCompute.EXPECT().CloudServers().Return(m.mockCSs)
 			m.mockCSs.EXPECT().List(mock.Anything, csProjectID, mock.Anything).Return(buildCSList(cmpCS), nil)
@@ -741,7 +741,7 @@ var _ = Describe("CloudServerReconciler", func() {
 			Expect(k8sClient.Delete(ctx, cs)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
 
-			cmpCS := buildCSResponse("cs-id-1", "test-cs-delete-cmp", reconciler.CSPResourceStateActive)
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-delete-cmp", arubatypes.StateActive)
 			m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
 			m.mockCompute.EXPECT().CloudServers().Return(m.mockCSs)
 			m.mockCSs.EXPECT().List(mock.Anything, csProjectID, mock.Anything).Return(buildCSList(cmpCS), nil)
@@ -827,7 +827,7 @@ var _ = Describe("CloudServerReconciler", func() {
 				"", csProjectID, csVpcID, csBootVolID, "", nil, nil,
 				0, time.Now().Add(-(reconciler.MaxPhaseTimeout + time.Minute)))
 
-			cmpCS := buildCSResponse("cs-id-1", "test-cs-timeout", reconciler.CSPResourceStateActive)
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-timeout", arubatypes.StateActive)
 			m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, "test-cs-timeout", cmpCS)
 
 			_, err := m.r.HandleReconcile(ctx, cs)
@@ -847,7 +847,7 @@ var _ = Describe("CloudServerReconciler", func() {
 				"cs-id-1", csProjectID, csVpcID, csBootVolID, csKPID,
 				[]string{csSubnetID}, []string{csSGID}, 1, time.Now())
 
-			cmpCS := buildCSResponse("cs-id-1", "test-cs-in-error", reconciler.CSPResourceStateFailed)
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-in-error", arubatypes.StateFailed)
 			m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, "test-cs-in-error", cmpCS)
 
 			_, err := m.r.HandleReconcile(ctx, cs)
@@ -884,8 +884,8 @@ var _ = Describe("CloudServerReconciler", func() {
 			m.expectProjectList(csProjectID, csProjectName)
 			m.expectVpcList(csProjectID, csVpcID, csVpcName)
 
-			emptyVolList := &arubatypes.Response[arubatypes.BlockStorageList]{
-				Data:       &arubatypes.BlockStorageList{},
+			emptyVolList := &arubatypes.Response[arubatypes.BlockStorageListResponse]{
+				Data:       &arubatypes.BlockStorageListResponse{},
 				StatusCode: http.StatusOK,
 			}
 			m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
@@ -910,7 +910,7 @@ var _ = Describe("CloudServerReconciler", func() {
 			m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
 			m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
 			m.mockVolumes.EXPECT().List(mock.Anything, csProjectID, mock.Anything).
-				Return(buildBootVolumeListForCSWithState(csBootVolID, csBootVolName, reconciler.CSPResourceStateInCreation), nil)
+				Return(buildBootVolumeListForCSWithState(csBootVolID, csBootVolName, arubatypes.StateInCreation), nil)
 
 			result, err := m.r.HandleReconcile(ctx, cs)
 			Expect(err).To(Succeed())
@@ -927,7 +927,7 @@ var _ = Describe("CloudServerReconciler", func() {
 			m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
 			m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
 			m.mockVolumes.EXPECT().List(mock.Anything, csProjectID, mock.Anything).
-				Return(buildBootVolumeListForCSWithState(csBootVolID, csBootVolName, reconciler.CSPResourceStateFailed), nil)
+				Return(buildBootVolumeListForCSWithState(csBootVolID, csBootVolName, arubatypes.StateFailed), nil)
 			m.expectSubnetList(csProjectID, csVpcID, csSubnetID, csSubnetName)
 			m.expectSGList(csProjectID, csVpcID, csSGID, csSGName)
 			m.expectKeyPairList(csProjectID, csKPID, csKPName)
@@ -948,13 +948,13 @@ var _ = Describe("CloudServerReconciler", func() {
 				"cs-id-1", csProjectID, csVpcID, csBootVolID, csKPID,
 				[]string{csSubnetID}, []string{csSGID}, 1, time.Now())
 
-			cmpCS := buildCSResponse("cs-id-1", "test-cs-bootvol-update-no-block", reconciler.CSPResourceStateActive)
+			cmpCS := buildCSResponse("cs-id-1", "test-cs-bootvol-update-no-block", arubatypes.StateActive)
 			m.expectProjectList(csProjectID, csProjectName)
 			m.expectVpcList(csProjectID, csVpcID, csVpcName)
 			m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
 			m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
 			m.mockVolumes.EXPECT().List(mock.Anything, csProjectID, mock.Anything).
-				Return(buildBootVolumeListForCSWithState(csBootVolID, csBootVolName, reconciler.CSPResourceStateInCreation), nil)
+				Return(buildBootVolumeListForCSWithState(csBootVolID, csBootVolName, arubatypes.StateInCreation), nil)
 			m.expectSubnetList(csProjectID, csVpcID, csSubnetID, csSubnetName)
 			m.expectSGList(csProjectID, csVpcID, csSGID, csSGName)
 			m.expectKeyPairList(csProjectID, csKPID, csKPName)
@@ -982,7 +982,7 @@ var _ = Describe("CloudServerReconciler", func() {
 			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
 			m.mockNetwork.EXPECT().Subnets().Return(m.mockSubnets)
 			m.mockSubnets.EXPECT().List(mock.Anything, csProjectID, csVpcID, mock.Anything).
-				Return(buildSubnetListForCSWithState(csSubnetID, csSubnetName, reconciler.CSPResourceStateCreating), nil)
+				Return(buildSubnetListForCSWithState(csSubnetID, csSubnetName, arubatypes.StateCreating), nil)
 
 			result, err := m.r.HandleReconcile(ctx, cs)
 			Expect(err).To(Succeed())
@@ -1048,7 +1048,7 @@ var _ = Describe("CloudServerReconciler", func() {
 					"cs-id-1", csProjectID, csVpcID, csBootVolID, csKPID,
 					[]string{csSubnetID}, []string{csSGID}, 1, time.Now())
 
-				cmpCS := buildCSResponse("cs-id-1", name, reconciler.CSPResourceStateActive)
+				cmpCS := buildCSResponse("cs-id-1", name, arubatypes.StateActive)
 				m.expectFullDependencies(csProjectID, csVpcID, csBootVolID, csSubnetID, csSGID, name, cmpCS)
 				m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
 				m.mockCompute.EXPECT().CloudServers().Return(m.mockCSs)
@@ -1084,7 +1084,7 @@ var _ = Describe("CloudServerReconciler", func() {
 				Expect(k8sClient.Delete(ctx, cs)).To(Succeed())
 				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), cs)).To(Succeed())
 
-				cmpCS := buildCSResponse("cs-id-1", name, reconciler.CSPResourceStateActive)
+				cmpCS := buildCSResponse("cs-id-1", name, arubatypes.StateActive)
 				m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
 				m.mockCompute.EXPECT().CloudServers().Return(m.mockCSs)
 				m.mockCSs.EXPECT().List(mock.Anything, csProjectID, mock.Anything).Return(buildCSList(cmpCS), nil)

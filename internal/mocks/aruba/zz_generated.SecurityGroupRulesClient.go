@@ -148,87 +148,24 @@ func (_c *MockSecurityGroupRulesClient_Delete_Call) RunAndReturn(run func(contex
 	return _c
 }
 
-// Get provides a mock function with given fields: ctx, projectID, vpcID, securityGroupID, securityGroupRuleID, params
-func (_m *MockSecurityGroupRulesClient) Get(ctx context.Context, projectID string, vpcID string, securityGroupID string, securityGroupRuleID string, params *types.RequestParameters) (*types.Response[types.SecurityRuleResponse], error) {
-	ret := _m.Called(ctx, projectID, vpcID, securityGroupID, securityGroupRuleID, params)
-
-	if len(ret) == 0 {
-		panic("no return value specified for Get")
-	}
-
-	var r0 *types.Response[types.SecurityRuleResponse]
-	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, string, string, string, *types.RequestParameters) (*types.Response[types.SecurityRuleResponse], error)); ok {
-		return rf(ctx, projectID, vpcID, securityGroupID, securityGroupRuleID, params)
-	}
-	if rf, ok := ret.Get(0).(func(context.Context, string, string, string, string, *types.RequestParameters) *types.Response[types.SecurityRuleResponse]); ok {
-		r0 = rf(ctx, projectID, vpcID, securityGroupID, securityGroupRuleID, params)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*types.Response[types.SecurityRuleResponse])
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func(context.Context, string, string, string, string, *types.RequestParameters) error); ok {
-		r1 = rf(ctx, projectID, vpcID, securityGroupID, securityGroupRuleID, params)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
-// MockSecurityGroupRulesClient_Get_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Get'
-type MockSecurityGroupRulesClient_Get_Call struct {
-	*mock.Call
-}
-
-// Get is a helper method to define mock.On call
-//   - ctx context.Context
-//   - projectID string
-//   - vpcID string
-//   - securityGroupID string
-//   - securityGroupRuleID string
-//   - params *types.RequestParameters
-func (_e *MockSecurityGroupRulesClient_Expecter) Get(ctx interface{}, projectID interface{}, vpcID interface{}, securityGroupID interface{}, securityGroupRuleID interface{}, params interface{}) *MockSecurityGroupRulesClient_Get_Call {
-	return &MockSecurityGroupRulesClient_Get_Call{Call: _e.mock.On("Get", ctx, projectID, vpcID, securityGroupID, securityGroupRuleID, params)}
-}
-
-func (_c *MockSecurityGroupRulesClient_Get_Call) Run(run func(ctx context.Context, projectID string, vpcID string, securityGroupID string, securityGroupRuleID string, params *types.RequestParameters)) *MockSecurityGroupRulesClient_Get_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string), args[2].(string), args[3].(string), args[4].(string), args[5].(*types.RequestParameters))
-	})
-	return _c
-}
-
-func (_c *MockSecurityGroupRulesClient_Get_Call) Return(_a0 *types.Response[types.SecurityRuleResponse], _a1 error) *MockSecurityGroupRulesClient_Get_Call {
-	_c.Call.Return(_a0, _a1)
-	return _c
-}
-
-func (_c *MockSecurityGroupRulesClient_Get_Call) RunAndReturn(run func(context.Context, string, string, string, string, *types.RequestParameters) (*types.Response[types.SecurityRuleResponse], error)) *MockSecurityGroupRulesClient_Get_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
 // List provides a mock function with given fields: ctx, projectID, vpcID, securityGroupID, params
-func (_m *MockSecurityGroupRulesClient) List(ctx context.Context, projectID string, vpcID string, securityGroupID string, params *types.RequestParameters) (*types.Response[types.SecurityRuleList], error) {
+func (_m *MockSecurityGroupRulesClient) List(ctx context.Context, projectID string, vpcID string, securityGroupID string, params *types.RequestParameters) (*types.Response[types.SecurityRuleListResponse], error) {
 	ret := _m.Called(ctx, projectID, vpcID, securityGroupID, params)
 
 	if len(ret) == 0 {
 		panic("no return value specified for List")
 	}
 
-	var r0 *types.Response[types.SecurityRuleList]
+	var r0 *types.Response[types.SecurityRuleListResponse]
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, string, string, *types.RequestParameters) (*types.Response[types.SecurityRuleList], error)); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, string, *types.RequestParameters) (*types.Response[types.SecurityRuleListResponse], error)); ok {
 		return rf(ctx, projectID, vpcID, securityGroupID, params)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, string, string, string, *types.RequestParameters) *types.Response[types.SecurityRuleList]); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, string, *types.RequestParameters) *types.Response[types.SecurityRuleListResponse]); ok {
 		r0 = rf(ctx, projectID, vpcID, securityGroupID, params)
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*types.Response[types.SecurityRuleList])
+			r0 = ret.Get(0).(*types.Response[types.SecurityRuleListResponse])
 		}
 	}
 
@@ -263,76 +200,12 @@ func (_c *MockSecurityGroupRulesClient_List_Call) Run(run func(ctx context.Conte
 	return _c
 }
 
-func (_c *MockSecurityGroupRulesClient_List_Call) Return(_a0 *types.Response[types.SecurityRuleList], _a1 error) *MockSecurityGroupRulesClient_List_Call {
+func (_c *MockSecurityGroupRulesClient_List_Call) Return(_a0 *types.Response[types.SecurityRuleListResponse], _a1 error) *MockSecurityGroupRulesClient_List_Call {
 	_c.Call.Return(_a0, _a1)
 	return _c
 }
 
-func (_c *MockSecurityGroupRulesClient_List_Call) RunAndReturn(run func(context.Context, string, string, string, *types.RequestParameters) (*types.Response[types.SecurityRuleList], error)) *MockSecurityGroupRulesClient_List_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// Update provides a mock function with given fields: ctx, projectID, vpcID, securityGroupID, securityGroupRuleID, body, params
-func (_m *MockSecurityGroupRulesClient) Update(ctx context.Context, projectID string, vpcID string, securityGroupID string, securityGroupRuleID string, body types.SecurityRuleRequest, params *types.RequestParameters) (*types.Response[types.SecurityRuleResponse], error) {
-	ret := _m.Called(ctx, projectID, vpcID, securityGroupID, securityGroupRuleID, body, params)
-
-	if len(ret) == 0 {
-		panic("no return value specified for Update")
-	}
-
-	var r0 *types.Response[types.SecurityRuleResponse]
-	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, string, string, string, types.SecurityRuleRequest, *types.RequestParameters) (*types.Response[types.SecurityRuleResponse], error)); ok {
-		return rf(ctx, projectID, vpcID, securityGroupID, securityGroupRuleID, body, params)
-	}
-	if rf, ok := ret.Get(0).(func(context.Context, string, string, string, string, types.SecurityRuleRequest, *types.RequestParameters) *types.Response[types.SecurityRuleResponse]); ok {
-		r0 = rf(ctx, projectID, vpcID, securityGroupID, securityGroupRuleID, body, params)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*types.Response[types.SecurityRuleResponse])
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func(context.Context, string, string, string, string, types.SecurityRuleRequest, *types.RequestParameters) error); ok {
-		r1 = rf(ctx, projectID, vpcID, securityGroupID, securityGroupRuleID, body, params)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
-// MockSecurityGroupRulesClient_Update_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Update'
-type MockSecurityGroupRulesClient_Update_Call struct {
-	*mock.Call
-}
-
-// Update is a helper method to define mock.On call
-//   - ctx context.Context
-//   - projectID string
-//   - vpcID string
-//   - securityGroupID string
-//   - securityGroupRuleID string
-//   - body types.SecurityRuleRequest
-//   - params *types.RequestParameters
-func (_e *MockSecurityGroupRulesClient_Expecter) Update(ctx interface{}, projectID interface{}, vpcID interface{}, securityGroupID interface{}, securityGroupRuleID interface{}, body interface{}, params interface{}) *MockSecurityGroupRulesClient_Update_Call {
-	return &MockSecurityGroupRulesClient_Update_Call{Call: _e.mock.On("Update", ctx, projectID, vpcID, securityGroupID, securityGroupRuleID, body, params)}
-}
-
-func (_c *MockSecurityGroupRulesClient_Update_Call) Run(run func(ctx context.Context, projectID string, vpcID string, securityGroupID string, securityGroupRuleID string, body types.SecurityRuleRequest, params *types.RequestParameters)) *MockSecurityGroupRulesClient_Update_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string), args[2].(string), args[3].(string), args[4].(string), args[5].(types.SecurityRuleRequest), args[6].(*types.RequestParameters))
-	})
-	return _c
-}
-
-func (_c *MockSecurityGroupRulesClient_Update_Call) Return(_a0 *types.Response[types.SecurityRuleResponse], _a1 error) *MockSecurityGroupRulesClient_Update_Call {
-	_c.Call.Return(_a0, _a1)
-	return _c
-}
-
-func (_c *MockSecurityGroupRulesClient_Update_Call) RunAndReturn(run func(context.Context, string, string, string, string, types.SecurityRuleRequest, *types.RequestParameters) (*types.Response[types.SecurityRuleResponse], error)) *MockSecurityGroupRulesClient_Update_Call {
+func (_c *MockSecurityGroupRulesClient_List_Call) RunAndReturn(run func(context.Context, string, string, string, *types.RequestParameters) (*types.Response[types.SecurityRuleListResponse], error)) *MockSecurityGroupRulesClient_List_Call {
 	_c.Call.Return(run)
 	return _c
 }

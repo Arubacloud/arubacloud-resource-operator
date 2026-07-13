@@ -19,8 +19,9 @@ import (
 
 // --- Builder helpers ---
 
-func buildBlockStorageResponse(id, name, state string) *arubatypes.BlockStorageResponse {
+func buildBlockStorageResponse(id, name string, state arubatypes.State) *arubatypes.BlockStorageResponse {
 	location := &arubatypes.LocationResponse{Value: "ITBG-Bergamo"}
+	billingPeriod := arubatypes.BillingPeriodHour
 	return &arubatypes.BlockStorageResponse{
 		Metadata: arubatypes.ResourceMetadataResponse{
 			ID:               &id,
@@ -29,23 +30,23 @@ func buildBlockStorageResponse(id, name, state string) *arubatypes.BlockStorageR
 		},
 		Properties: arubatypes.BlockStoragePropertiesResponse{
 			SizeGB:        10,
-			BillingPeriod: "Hour",
+			BillingPeriod: &billingPeriod,
 			Zone:          "zone1",
 			Type:          arubatypes.BlockStorageTypeStandard,
 		},
-		Status: arubatypes.ResourceStatus{
+		Status: arubatypes.ResourceStatusResponse{
 			State: &state,
 		},
 	}
 }
 
-func buildBlockStorageList(responses ...*arubatypes.BlockStorageResponse) *arubatypes.Response[arubatypes.BlockStorageList] {
-	list := &arubatypes.BlockStorageList{}
+func buildBlockStorageList(responses ...*arubatypes.BlockStorageResponse) *arubatypes.Response[arubatypes.BlockStorageListResponse] {
+	list := &arubatypes.BlockStorageListResponse{}
 	for _, r := range responses {
 		list.Values = append(list.Values, *r)
 		list.Total++
 	}
-	return &arubatypes.Response[arubatypes.BlockStorageList]{
+	return &arubatypes.Response[arubatypes.BlockStorageListResponse]{
 		Data:       list,
 		StatusCode: http.StatusOK,
 	}
@@ -57,7 +58,7 @@ func buildBSCRUDResponse(statusCode int) *arubatypes.Response[arubatypes.BlockSt
 	}
 }
 
-func buildProjectListForBS(projectID, projectName string) *arubatypes.Response[arubatypes.ProjectList] {
+func buildProjectListForBS(projectID, projectName string) *arubatypes.Response[arubatypes.ProjectListResponse] {
 	id := projectID
 	name := projectName
 	proj := arubatypes.ProjectResponse{
@@ -66,10 +67,10 @@ func buildProjectListForBS(projectID, projectName string) *arubatypes.Response[a
 			Name: &name,
 		},
 	}
-	list := &arubatypes.ProjectList{}
+	list := &arubatypes.ProjectListResponse{}
 	list.Values = append(list.Values, proj)
 	list.Total = 1
-	return &arubatypes.Response[arubatypes.ProjectList]{
+	return &arubatypes.Response[arubatypes.ProjectListResponse]{
 		Data:       list,
 		StatusCode: http.StatusOK,
 	}
@@ -293,7 +294,7 @@ var _ = Describe("BlockStorageReconciler", func() {
 			bs = createTestBlockStorage(ctx, "test-bs-wait-create-transitory", defaultBSSpec(bsProjectName))
 			setBSStatus(ctx, bs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "", "", 0, time.Now())
 
-			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-wait-create-transitory", reconciler.CSPResourceStateCreating)
+			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-wait-create-transitory", arubatypes.StateCreating)
 			m.expectProjectList(bsProjectID, bsProjectName)
 			m.expectBSList(bsProjectID, cmpBS)
 
@@ -309,7 +310,7 @@ var _ = Describe("BlockStorageReconciler", func() {
 			bs = createTestBlockStorage(ctx, "test-bs-creation-confirmed", defaultBSSpec(bsProjectName))
 			setBSStatus(ctx, bs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "", "", 0, time.Now())
 
-			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-creation-confirmed", reconciler.CSPResourceStateActive)
+			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-creation-confirmed", arubatypes.StateActive)
 			m.expectProjectList(bsProjectID, bsProjectName)
 			m.expectBSList(bsProjectID, cmpBS)
 
@@ -330,7 +331,7 @@ var _ = Describe("BlockStorageReconciler", func() {
 			bs = createTestBlockStorage(ctx, "test-bs-creation-accomplished", defaultBSSpec(bsProjectName))
 			setBSStatus(ctx, bs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronized, "", "", 0, time.Now())
 
-			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-creation-accomplished", reconciler.CSPResourceStateActive)
+			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-creation-accomplished", arubatypes.StateActive)
 			m.expectProjectList(bsProjectID, bsProjectName)
 			m.expectBSList(bsProjectID, cmpBS)
 
@@ -358,7 +359,7 @@ var _ = Describe("BlockStorageReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bs)).To(Succeed())
 
 			// CMP has size 10 (larger than new spec 1)
-			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-denied-changes", reconciler.CSPResourceStateActive)
+			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-denied-changes", arubatypes.StateActive)
 			m.expectProjectList(bsProjectID, bsProjectName)
 			m.expectBSList(bsProjectID, cmpBS)
 
@@ -374,7 +375,7 @@ var _ = Describe("BlockStorageReconciler", func() {
 			bs = createTestBlockStorage(ctx, "test-bs-in-error", defaultBSSpec(bsProjectName))
 			setBSStatus(ctx, bs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "bs-id-1", bsProjectID, 1, time.Now())
 
-			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-in-error", reconciler.CSPResourceStateFailed)
+			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-in-error", arubatypes.StateFailed)
 			m.expectProjectList(bsProjectID, bsProjectName)
 			m.expectBSList(bsProjectID, cmpBS)
 
@@ -402,7 +403,7 @@ var _ = Describe("BlockStorageReconciler", func() {
 			Expect(k8sClient.Delete(ctx, bs)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bs)).To(Succeed())
 
-			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-deleting-transitory", reconciler.CSPResourceStateDeleting)
+			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-deleting-transitory", arubatypes.StateDeleting)
 			m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
 			m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
 			m.mockVolumes.EXPECT().List(mock.Anything, bsProjectID, mock.Anything).Return(buildBlockStorageList(cmpBS), nil)
@@ -457,7 +458,7 @@ var _ = Describe("BlockStorageReconciler", func() {
 			Expect(k8sClient.Delete(ctx, bs)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bs)).To(Succeed())
 
-			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-should-delete", reconciler.CSPResourceStateActive)
+			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-should-delete", arubatypes.StateActive)
 			m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
 			m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
 			m.mockVolumes.EXPECT().List(mock.Anything, bsProjectID, mock.Anything).Return(buildBlockStorageList(cmpBS), nil)
@@ -486,7 +487,7 @@ var _ = Describe("BlockStorageReconciler", func() {
 			Expect(k8sClient.Delete(ctx, bs)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bs)).To(Succeed())
 
-			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-delete-cmp", reconciler.CSPResourceStateActive)
+			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-delete-cmp", arubatypes.StateActive)
 			m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
 			m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
 			m.mockVolumes.EXPECT().List(mock.Anything, bsProjectID, mock.Anything).Return(buildBlockStorageList(cmpBS), nil)
@@ -537,7 +538,7 @@ var _ = Describe("BlockStorageReconciler", func() {
 			bs = createTestBlockStorage(ctx, "test-bs-update-cmp", defaultBSSpec(bsProjectName))
 			setBSStatus(ctx, bs, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, "bs-id-1", bsProjectID, 1, time.Now())
 
-			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-update-cmp", reconciler.CSPResourceStateActive)
+			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-update-cmp", arubatypes.StateActive)
 			m.expectProjectList(bsProjectID, bsProjectName)
 			m.expectBSList(bsProjectID, cmpBS)
 			m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
@@ -563,7 +564,7 @@ var _ = Describe("BlockStorageReconciler", func() {
 			setBSStatus(ctx, bs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, "", bsProjectID,
 				0, time.Now().Add(-(reconciler.MaxPhaseTimeout + time.Minute)))
 
-			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-timeout", reconciler.CSPResourceStateActive)
+			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-timeout", arubatypes.StateActive)
 			m.expectProjectList(bsProjectID, bsProjectName)
 			m.expectBSList(bsProjectID, cmpBS)
 
@@ -611,7 +612,7 @@ var _ = Describe("BlockStorageReconciler", func() {
 				bs = createTestBlockStorage(ctx, name, defaultBSSpec(bsProjectName))
 				setBSStatus(ctx, bs, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, "bs-id-1", bsProjectID, 1, time.Now())
 
-				cmpBS := buildBlockStorageResponse("bs-id-1", name, reconciler.CSPResourceStateActive)
+				cmpBS := buildBlockStorageResponse("bs-id-1", name, arubatypes.StateActive)
 				m.expectProjectList(bsProjectID, bsProjectName)
 				m.expectBSList(bsProjectID, cmpBS)
 				m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
@@ -646,7 +647,7 @@ var _ = Describe("BlockStorageReconciler", func() {
 				Expect(k8sClient.Delete(ctx, bs)).To(Succeed())
 				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bs)).To(Succeed())
 
-				cmpBS := buildBlockStorageResponse("bs-id-1", name, reconciler.CSPResourceStateActive)
+				cmpBS := buildBlockStorageResponse("bs-id-1", name, arubatypes.StateActive)
 				m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
 				m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
 				m.mockVolumes.EXPECT().List(mock.Anything, bsProjectID, mock.Anything).Return(buildBlockStorageList(cmpBS), nil)

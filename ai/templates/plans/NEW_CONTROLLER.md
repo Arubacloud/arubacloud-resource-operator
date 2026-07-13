@@ -266,12 +266,12 @@ Implement all resource-specific AConditions listed in §4.2.
 
 #### 5.3.4 AActions
 
-AActions receive `ctx` and must extract the `aruba.Client` from it:
+AActions receive `ctx` and must extract the `arubaclient.Client` (the operator's SDK port) from it:
 
 ```go
 func (r *<Resource>Reconciler) cmpCreate(ctx context.Context, kube *v1alpha1.<Resource>, _ *arubatypes.<CMPType>) error {
-    arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
-    // use arubaClient.From<…>()...
+    arubaClient := ctx.Value(reconciler.ArubaClientKey).(arubaclient.Client)
+    // use arubaClient.From<…>()... — same call shape as the raw SDK, returning wire *arubatypes.Response[T]
 }
 ```
 

@@ -30,7 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/Arubacloud/sdk-go/pkg/aruba"
+	arubaclient "github.com/Arubacloud/arubacloud-resource-operator/internal/client"
 	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
@@ -262,7 +262,7 @@ func (r *KeyPairReconciler) fetchKubeDependencies(
 func (r *KeyPairReconciler) fetchCMPDependencies(
 	ctx context.Context,
 	kubeKp *v1alpha1.KeyPair,
-	arubaClient aruba.Client,
+	arubaClient arubaclient.Client,
 	isDeleting bool,
 ) (string, *arubatypes.KeyPairResponse, ctrl.Result, error) {
 	kpName, projectName := kubeKp.Name, kubeKp.Spec.ProjectReference.Name
@@ -659,7 +659,7 @@ func (r *KeyPairReconciler) kubeRollbackSpecAndSetActive(ctx context.Context, ku
 		kpPatch := kpCopy.DeepCopy()
 		kpPatch.Spec.Tags = cmpKp.Metadata.Tags
 		if cmpKp.Metadata.LocationResponse != nil {
-			kpPatch.Spec.Region = cmpKp.Metadata.LocationResponse.Value
+			kpPatch.Spec.Region = string(cmpKp.Metadata.LocationResponse.Value)
 		}
 		kpPatch.Spec.Value = cmpKp.Properties.Value
 
@@ -702,7 +702,7 @@ func (r *KeyPairReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeKp *v
 
 func (r *KeyPairReconciler) cmpDelete(ctx context.Context, kubeKp *v1alpha1.KeyPair, cmpKp *arubatypes.KeyPairResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
-	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(arubaclient.Client)
 
 	cmpKpResp, err := arubaClient.FromCompute().KeyPairs().Delete(ctx, prjID, *cmpKp.Metadata.ID, nil)
 	if err != nil {
@@ -714,7 +714,7 @@ func (r *KeyPairReconciler) cmpDelete(ctx context.Context, kubeKp *v1alpha1.KeyP
 
 func (r *KeyPairReconciler) cmpCreate(ctx context.Context, kubeKp *v1alpha1.KeyPair, _ *arubatypes.KeyPairResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
-	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(arubaclient.Client)
 
 	cmpKpResp, err := arubaClient.FromCompute().KeyPairs().Create(ctx, prjID, cmpKeyPairRequestFromKube(kubeKp), nil)
 	if err != nil {
@@ -736,7 +736,7 @@ func cmpKeyPairRequestFromKube(kubeKp *v1alpha1.KeyPair) arubatypes.KeyPairReque
 				Tags: kubeKp.Spec.Tags,
 			},
 			Location: arubatypes.LocationRequest{
-				Value: kubeKp.Spec.Region,
+				Value: arubatypes.Region(kubeKp.Spec.Region),
 			},
 		},
 		Properties: arubatypes.KeyPairPropertiesRequest{

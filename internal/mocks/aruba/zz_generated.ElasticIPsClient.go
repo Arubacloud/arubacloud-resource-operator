@@ -144,85 +144,24 @@ func (_c *MockElasticIPsClient_Delete_Call) RunAndReturn(run func(context.Contex
 	return _c
 }
 
-// Get provides a mock function with given fields: ctx, projectID, elasticIPID, params
-func (_m *MockElasticIPsClient) Get(ctx context.Context, projectID string, elasticIPID string, params *types.RequestParameters) (*types.Response[types.ElasticIPResponse], error) {
-	ret := _m.Called(ctx, projectID, elasticIPID, params)
-
-	if len(ret) == 0 {
-		panic("no return value specified for Get")
-	}
-
-	var r0 *types.Response[types.ElasticIPResponse]
-	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, string, *types.RequestParameters) (*types.Response[types.ElasticIPResponse], error)); ok {
-		return rf(ctx, projectID, elasticIPID, params)
-	}
-	if rf, ok := ret.Get(0).(func(context.Context, string, string, *types.RequestParameters) *types.Response[types.ElasticIPResponse]); ok {
-		r0 = rf(ctx, projectID, elasticIPID, params)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*types.Response[types.ElasticIPResponse])
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func(context.Context, string, string, *types.RequestParameters) error); ok {
-		r1 = rf(ctx, projectID, elasticIPID, params)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
-// MockElasticIPsClient_Get_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Get'
-type MockElasticIPsClient_Get_Call struct {
-	*mock.Call
-}
-
-// Get is a helper method to define mock.On call
-//   - ctx context.Context
-//   - projectID string
-//   - elasticIPID string
-//   - params *types.RequestParameters
-func (_e *MockElasticIPsClient_Expecter) Get(ctx interface{}, projectID interface{}, elasticIPID interface{}, params interface{}) *MockElasticIPsClient_Get_Call {
-	return &MockElasticIPsClient_Get_Call{Call: _e.mock.On("Get", ctx, projectID, elasticIPID, params)}
-}
-
-func (_c *MockElasticIPsClient_Get_Call) Run(run func(ctx context.Context, projectID string, elasticIPID string, params *types.RequestParameters)) *MockElasticIPsClient_Get_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string), args[2].(string), args[3].(*types.RequestParameters))
-	})
-	return _c
-}
-
-func (_c *MockElasticIPsClient_Get_Call) Return(_a0 *types.Response[types.ElasticIPResponse], _a1 error) *MockElasticIPsClient_Get_Call {
-	_c.Call.Return(_a0, _a1)
-	return _c
-}
-
-func (_c *MockElasticIPsClient_Get_Call) RunAndReturn(run func(context.Context, string, string, *types.RequestParameters) (*types.Response[types.ElasticIPResponse], error)) *MockElasticIPsClient_Get_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
 // List provides a mock function with given fields: ctx, projectID, params
-func (_m *MockElasticIPsClient) List(ctx context.Context, projectID string, params *types.RequestParameters) (*types.Response[types.ElasticList], error) {
+func (_m *MockElasticIPsClient) List(ctx context.Context, projectID string, params *types.RequestParameters) (*types.Response[types.ElasticIPListResponse], error) {
 	ret := _m.Called(ctx, projectID, params)
 
 	if len(ret) == 0 {
 		panic("no return value specified for List")
 	}
 
-	var r0 *types.Response[types.ElasticList]
+	var r0 *types.Response[types.ElasticIPListResponse]
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, *types.RequestParameters) (*types.Response[types.ElasticList], error)); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, string, *types.RequestParameters) (*types.Response[types.ElasticIPListResponse], error)); ok {
 		return rf(ctx, projectID, params)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, string, *types.RequestParameters) *types.Response[types.ElasticList]); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, string, *types.RequestParameters) *types.Response[types.ElasticIPListResponse]); ok {
 		r0 = rf(ctx, projectID, params)
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*types.Response[types.ElasticList])
+			r0 = ret.Get(0).(*types.Response[types.ElasticIPListResponse])
 		}
 	}
 
@@ -255,12 +194,12 @@ func (_c *MockElasticIPsClient_List_Call) Run(run func(ctx context.Context, proj
 	return _c
 }
 
-func (_c *MockElasticIPsClient_List_Call) Return(_a0 *types.Response[types.ElasticList], _a1 error) *MockElasticIPsClient_List_Call {
+func (_c *MockElasticIPsClient_List_Call) Return(_a0 *types.Response[types.ElasticIPListResponse], _a1 error) *MockElasticIPsClient_List_Call {
 	_c.Call.Return(_a0, _a1)
 	return _c
 }
 
-func (_c *MockElasticIPsClient_List_Call) RunAndReturn(run func(context.Context, string, *types.RequestParameters) (*types.Response[types.ElasticList], error)) *MockElasticIPsClient_List_Call {
+func (_c *MockElasticIPsClient_List_Call) RunAndReturn(run func(context.Context, string, *types.RequestParameters) (*types.Response[types.ElasticIPListResponse], error)) *MockElasticIPsClient_List_Call {
 	_c.Call.Return(run)
 	return _c
 }

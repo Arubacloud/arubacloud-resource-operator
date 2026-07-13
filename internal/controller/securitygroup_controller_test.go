@@ -35,7 +35,7 @@ import (
 
 // --- Builder helpers ---
 
-func buildSecurityGroupResponse(id, name, state string) *arubatypes.SecurityGroupResponse {
+func buildSecurityGroupResponse(id, name string, state arubatypes.State) *arubatypes.SecurityGroupResponse {
 	defaultVal := false
 	return &arubatypes.SecurityGroupResponse{
 		Metadata: arubatypes.ResourceMetadataResponse{
@@ -45,19 +45,19 @@ func buildSecurityGroupResponse(id, name, state string) *arubatypes.SecurityGrou
 		Properties: arubatypes.SecurityGroupPropertiesResponse{
 			Default: defaultVal,
 		},
-		Status: arubatypes.ResourceStatus{
+		Status: arubatypes.ResourceStatusResponse{
 			State: &state,
 		},
 	}
 }
 
-func buildSecurityGroupList(responses ...*arubatypes.SecurityGroupResponse) *arubatypes.Response[arubatypes.SecurityGroupList] {
-	list := &arubatypes.SecurityGroupList{}
+func buildSecurityGroupList(responses ...*arubatypes.SecurityGroupResponse) *arubatypes.Response[arubatypes.SecurityGroupListResponse] {
+	list := &arubatypes.SecurityGroupListResponse{}
 	for _, r := range responses {
 		list.Values = append(list.Values, *r)
 		list.Total++
 	}
-	return &arubatypes.Response[arubatypes.SecurityGroupList]{
+	return &arubatypes.Response[arubatypes.SecurityGroupListResponse]{
 		Data:       list,
 		StatusCode: http.StatusOK,
 	}
@@ -69,7 +69,7 @@ func buildSGCRUDResponse(statusCode int) *arubatypes.Response[arubatypes.Securit
 	}
 }
 
-func buildVpcListForSG(vpcID, vpcName string) *arubatypes.Response[arubatypes.VPCList] {
+func buildVpcListForSG(vpcID, vpcName string) *arubatypes.Response[arubatypes.VPCListResponse] {
 	id := vpcID
 	name := vpcName
 	v := arubatypes.VPCResponse{
@@ -78,16 +78,16 @@ func buildVpcListForSG(vpcID, vpcName string) *arubatypes.Response[arubatypes.VP
 			Name: &name,
 		},
 	}
-	list := &arubatypes.VPCList{}
+	list := &arubatypes.VPCListResponse{}
 	list.Values = append(list.Values, v)
 	list.Total = 1
-	return &arubatypes.Response[arubatypes.VPCList]{
+	return &arubatypes.Response[arubatypes.VPCListResponse]{
 		Data:       list,
 		StatusCode: http.StatusOK,
 	}
 }
 
-func buildProjectListForSG(projectID, projectName string) *arubatypes.Response[arubatypes.ProjectList] {
+func buildProjectListForSG(projectID, projectName string) *arubatypes.Response[arubatypes.ProjectListResponse] {
 	id := projectID
 	name := projectName
 	proj := arubatypes.ProjectResponse{
@@ -96,10 +96,10 @@ func buildProjectListForSG(projectID, projectName string) *arubatypes.Response[a
 			Name: &name,
 		},
 	}
-	list := &arubatypes.ProjectList{}
+	list := &arubatypes.ProjectListResponse{}
 	list.Values = append(list.Values, proj)
 	list.Total = 1
-	return &arubatypes.Response[arubatypes.ProjectList]{
+	return &arubatypes.Response[arubatypes.ProjectListResponse]{
 		Data:       list,
 		StatusCode: http.StatusOK,
 	}
@@ -341,7 +341,7 @@ var _ = Describe("SecurityGroupReconciler", func() {
 			sg = createTestSecurityGroup(ctx, "test-sg-wait-create-transitory", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
 			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "", "", "", 0, time.Now())
 
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-wait-create-transitory", reconciler.CSPResourceStateCreating)
+			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-wait-create-transitory", arubatypes.StateCreating)
 			m.expectProjectList(sgProjectID, sgProjectName)
 			m.expectVpcList(sgProjectID, sgVpcID, sgVpcName)
 			m.expectSGList(sgProjectID, sgVpcID, cmpSG)
@@ -358,7 +358,7 @@ var _ = Describe("SecurityGroupReconciler", func() {
 			sg = createTestSecurityGroup(ctx, "test-sg-creation-confirmed", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
 			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "", "", "", 0, time.Now())
 
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-creation-confirmed", reconciler.CSPResourceStateActive)
+			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-creation-confirmed", arubatypes.StateActive)
 			m.expectProjectList(sgProjectID, sgProjectName)
 			m.expectVpcList(sgProjectID, sgVpcID, sgVpcName)
 			m.expectSGList(sgProjectID, sgVpcID, cmpSG)
@@ -380,7 +380,7 @@ var _ = Describe("SecurityGroupReconciler", func() {
 			sg = createTestSecurityGroup(ctx, "test-sg-creation-accomplished", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
 			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronized, "", "", "", 0, time.Now())
 
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-creation-accomplished", reconciler.CSPResourceStateActive)
+			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-creation-accomplished", arubatypes.StateActive)
 			m.expectProjectList(sgProjectID, sgProjectName)
 			m.expectVpcList(sgProjectID, sgVpcID, sgVpcName)
 			m.expectSGList(sgProjectID, sgVpcID, cmpSG)
@@ -409,7 +409,7 @@ var _ = Describe("SecurityGroupReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
 
 			// CMP still has original location
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-denied-changes", reconciler.CSPResourceStateActive)
+			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-denied-changes", arubatypes.StateActive)
 			cmpSG.Metadata.LocationResponse = &arubatypes.LocationResponse{Value: "ITBG-Bergamo"}
 			m.expectProjectList(sgProjectID, sgProjectName)
 			m.expectVpcList(sgProjectID, sgVpcID, sgVpcName)
@@ -435,7 +435,7 @@ var _ = Describe("SecurityGroupReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
 
 			// CMP matches: same tags, same Default
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-spec-in-sync", reconciler.CSPResourceStateActive)
+			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-spec-in-sync", arubatypes.StateActive)
 			cmpSG.Metadata.Tags = []string{"tag1"}
 			m.expectProjectList(sgProjectID, sgProjectName)
 			m.expectVpcList(sgProjectID, sgVpcID, sgVpcName)
@@ -465,7 +465,7 @@ var _ = Describe("SecurityGroupReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
 
 			// CMP has old tags
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-should-update", reconciler.CSPResourceStateActive)
+			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-should-update", arubatypes.StateActive)
 			cmpSG.Metadata.Tags = []string{"tag1"}
 			m.expectProjectList(sgProjectID, sgProjectName)
 			m.expectVpcList(sgProjectID, sgVpcID, sgVpcName)
@@ -489,7 +489,7 @@ var _ = Describe("SecurityGroupReconciler", func() {
 			sg = createTestSecurityGroup(ctx, "test-sg-update-cmp", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
 			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, "sg-id-1", sgProjectID, sgVpcID, 1, time.Now())
 
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-update-cmp", reconciler.CSPResourceStateActive)
+			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-update-cmp", arubatypes.StateActive)
 			m.mockAruba.EXPECT().FromProject().Return(m.mockProject)
 			m.mockProject.EXPECT().List(mock.Anything, mock.Anything).Return(buildProjectListForSG(sgProjectID, sgProjectName), nil)
 			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
@@ -526,7 +526,7 @@ var _ = Describe("SecurityGroupReconciler", func() {
 			Expect(k8sClient.Delete(ctx, sg)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
 
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-should-delete", reconciler.CSPResourceStateActive)
+			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-should-delete", arubatypes.StateActive)
 			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
 			m.mockNetwork.EXPECT().SecurityGroups().Return(m.mockSecGroups)
 			m.mockSecGroups.EXPECT().List(mock.Anything, sgProjectID, sgVpcID, mock.Anything).Return(buildSecurityGroupList(cmpSG), nil)
@@ -555,7 +555,7 @@ var _ = Describe("SecurityGroupReconciler", func() {
 			Expect(k8sClient.Delete(ctx, sg)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
 
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-delete-cmp", reconciler.CSPResourceStateActive)
+			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-delete-cmp", arubatypes.StateActive)
 			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
 			m.mockNetwork.EXPECT().SecurityGroups().Return(m.mockSecGroups)
 			m.mockSecGroups.EXPECT().List(mock.Anything, sgProjectID, sgVpcID, mock.Anything).Return(buildSecurityGroupList(cmpSG), nil)
@@ -615,7 +615,7 @@ var _ = Describe("SecurityGroupReconciler", func() {
 			Expect(k8sClient.Delete(ctx, sg)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
 
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-deleting-transitory", reconciler.CSPResourceStateDeleting)
+			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-deleting-transitory", arubatypes.StateDeleting)
 			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
 			m.mockNetwork.EXPECT().SecurityGroups().Return(m.mockSecGroups)
 			m.mockSecGroups.EXPECT().List(mock.Anything, sgProjectID, sgVpcID, mock.Anything).Return(buildSecurityGroupList(cmpSG), nil)
@@ -657,7 +657,7 @@ var _ = Describe("SecurityGroupReconciler", func() {
 			sg = createTestSecurityGroup(ctx, "test-sg-in-error", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
 			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "sg-id-1", sgProjectID, sgVpcID, 1, time.Now())
 
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-in-error", reconciler.CSPResourceStateFailed)
+			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-in-error", arubatypes.StateFailed)
 			m.expectProjectList(sgProjectID, sgProjectName)
 			m.expectVpcList(sgProjectID, sgVpcID, sgVpcName)
 			m.expectSGList(sgProjectID, sgVpcID, cmpSG)
@@ -681,7 +681,7 @@ var _ = Describe("SecurityGroupReconciler", func() {
 			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, "", sgProjectID, sgVpcID,
 				0, time.Now().Add(-(reconciler.MaxPhaseTimeout + time.Minute)))
 
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-timeout", reconciler.CSPResourceStateActive)
+			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-timeout", arubatypes.StateActive)
 			m.expectProjectList(sgProjectID, sgProjectName)
 			m.expectVpcList(sgProjectID, sgVpcID, sgVpcName)
 			m.expectSGList(sgProjectID, sgVpcID, cmpSG)
@@ -716,8 +716,8 @@ var _ = Describe("SecurityGroupReconciler", func() {
 
 			m.expectProjectList(sgProjectID, sgProjectName)
 
-			emptyVpcList := &arubatypes.Response[arubatypes.VPCList]{
-				Data:       &arubatypes.VPCList{},
+			emptyVpcList := &arubatypes.Response[arubatypes.VPCListResponse]{
+				Data:       &arubatypes.VPCListResponse{},
 				StatusCode: http.StatusOK,
 			}
 			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)

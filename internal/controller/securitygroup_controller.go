@@ -28,7 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/Arubacloud/sdk-go/pkg/aruba"
+	arubaclient "github.com/Arubacloud/arubacloud-resource-operator/internal/client"
 	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
@@ -283,7 +283,7 @@ func (r *SecurityGroupReconciler) fetchKubeDependencies(
 func (r *SecurityGroupReconciler) fetchCMPDependencies(
 	ctx context.Context,
 	kubeSG *v1alpha1.SecurityGroup,
-	arubaClient aruba.Client,
+	arubaClient arubaclient.Client,
 	isDeleting bool,
 ) (*arubatypes.SecurityGroupResponse, *arubatypes.VPCResponse, string, string, ctrl.Result, error) {
 	logger := log.FromContext(ctx)
@@ -834,11 +834,11 @@ func cmpSecurityGroupNotExistsOrTransitory(_ *v1alpha1.SecurityGroup, cmpSG *aru
 
 func cmpSecurityGroupIsActive(_ *v1alpha1.SecurityGroup, cmpSG *arubatypes.SecurityGroupResponse) bool {
 	return cmpSG != nil && cmpSG.Status.State != nil &&
-		*cmpSG.Status.State == reconciler.CSPResourceStateActive
+		*cmpSG.Status.State == arubatypes.StateActive
 }
 
 func cmpSecurityGroupIsFailed(_ *v1alpha1.SecurityGroup, cmpSG *arubatypes.SecurityGroupResponse) bool {
-	return cmpSG != nil && cmpSG.Status.State != nil && *cmpSG.Status.State == reconciler.CSPResourceStateFailed
+	return cmpSG != nil && cmpSG.Status.State != nil && *cmpSG.Status.State == arubatypes.StateFailed
 }
 
 // ---------------------------------------------------------------------------
@@ -936,7 +936,7 @@ func (r *SecurityGroupReconciler) kubeSetFailed(ctx context.Context, kubeSG *v1a
 func (r *SecurityGroupReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.SecurityGroup, cmpSG *arubatypes.SecurityGroupResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
 	vID := ctx.Value(vpcIDKey).(string)
-	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(arubaclient.Client)
 
 	cmpResp, err := arubaClient.FromNetwork().SecurityGroups().Delete(ctx, prjID, vID, *cmpSG.Metadata.ID, nil)
 	if err != nil {
@@ -949,7 +949,7 @@ func (r *SecurityGroupReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.Sec
 func (r *SecurityGroupReconciler) cmpUpdate(ctx context.Context, kubeSG *v1alpha1.SecurityGroup, cmpSG *arubatypes.SecurityGroupResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
 	vID := ctx.Value(vpcIDKey).(string)
-	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(arubaclient.Client)
 
 	// Guard: should have been caught by HasDeniedChanges, but double-check.
 	if err := checkSecurityGroupDeniedChanges(kubeSG, cmpSG); err != nil {
@@ -969,7 +969,7 @@ func (r *SecurityGroupReconciler) cmpUpdate(ctx context.Context, kubeSG *v1alpha
 func (r *SecurityGroupReconciler) cmpCreate(ctx context.Context, kubeSG *v1alpha1.SecurityGroup, _ *arubatypes.SecurityGroupResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
 	vID := ctx.Value(vpcIDKey).(string)
-	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(arubaclient.Client)
 
 	cmpResp, err := arubaClient.FromNetwork().SecurityGroups().Create(ctx, prjID, vID, *cmpSecurityGroupRequestFromKube(kubeSG), nil)
 	if err != nil {
@@ -990,7 +990,7 @@ func checkSecurityGroupDeniedChanges(kubeSG *v1alpha1.SecurityGroup, cmpSG *arub
 
 	if cmpSG.Metadata.LocationResponse != nil &&
 		cmpSG.Metadata.LocationResponse.Value != "" &&
-		kubeSG.Spec.Region != cmpSG.Metadata.LocationResponse.Value {
+		kubeSG.Spec.Region != string(cmpSG.Metadata.LocationResponse.Value) {
 		return fmt.Errorf("%w: %w", reconciler.ErrNotAllowedChanges, errors.New("change the 'location' is not allowed"))
 	}
 

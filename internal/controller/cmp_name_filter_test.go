@@ -8,8 +8,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
-
-	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
 )
 
 var _ = Describe("filterByName", func() {
@@ -64,21 +62,21 @@ var _ = Describe("applyNameFilterToVPCList", func() {
 	})
 
 	It("does nothing when Data is nil", func() {
-		resp := &arubatypes.Response[arubatypes.VPCList]{StatusCode: http.StatusOK}
+		resp := &arubatypes.Response[arubatypes.VPCListResponse]{StatusCode: http.StatusOK}
 		Expect(func() { applyNameFilterToVPCList(resp, "x", logger) }).NotTo(Panic())
 	})
 
 	It("is a no-op when the list already contains only the matching item", func() {
-		resp := buildVPCList(buildVPCResponse("id1", "target", reconciler.CSPResourceStateActive))
+		resp := buildVPCList(buildVPCResponse("id1", "target", arubatypes.StateActive))
 		applyNameFilterToVPCList(resp, "target", logger)
 		Expect(resp.Data.Total).To(Equal(int64(1)))
 		Expect(resp.Data.Values).To(HaveLen(1))
 	})
 
 	It("filters out non-matching items and updates Total", func() {
-		resp := &arubatypes.Response[arubatypes.VPCList]{
+		resp := &arubatypes.Response[arubatypes.VPCListResponse]{
 			StatusCode: http.StatusOK,
-			Data: &arubatypes.VPCList{
+			Data: &arubatypes.VPCListResponse{
 				ListResponse: arubatypes.ListResponse{Total: 3},
 				Values:       []arubatypes.VPCResponse{buildVpc("other"), buildVpc("target"), buildVpc("another")},
 			},
@@ -90,9 +88,9 @@ var _ = Describe("applyNameFilterToVPCList", func() {
 	})
 
 	It("sets Total to 0 when no item matches", func() {
-		resp := &arubatypes.Response[arubatypes.VPCList]{
+		resp := &arubatypes.Response[arubatypes.VPCListResponse]{
 			StatusCode: http.StatusOK,
-			Data: &arubatypes.VPCList{
+			Data: &arubatypes.VPCListResponse{
 				ListResponse: arubatypes.ListResponse{Total: 2},
 				Values:       []arubatypes.VPCResponse{buildVpc("a"), buildVpc("b")},
 			},
@@ -112,14 +110,14 @@ var _ = Describe("applyNameFilterToSubnetList", func() {
 
 	It("does nothing when resp or Data is nil", func() {
 		Expect(func() { applyNameFilterToSubnetList(nil, "x", logger) }).NotTo(Panic())
-		resp := &arubatypes.Response[arubatypes.SubnetList]{StatusCode: http.StatusOK}
+		resp := &arubatypes.Response[arubatypes.SubnetListResponse]{StatusCode: http.StatusOK}
 		Expect(func() { applyNameFilterToSubnetList(resp, "x", logger) }).NotTo(Panic())
 	})
 
 	It("filters correctly and updates Total", func() {
-		resp := &arubatypes.Response[arubatypes.SubnetList]{
+		resp := &arubatypes.Response[arubatypes.SubnetListResponse]{
 			StatusCode: http.StatusOK,
-			Data: &arubatypes.SubnetList{
+			Data: &arubatypes.SubnetListResponse{
 				ListResponse: arubatypes.ListResponse{Total: 2},
 				Values:       []arubatypes.SubnetResponse{buildSubnet("other"), buildSubnet("target")},
 			},
@@ -139,14 +137,14 @@ var _ = Describe("applyNameFilterToSecurityGroupList", func() {
 
 	It("does nothing when resp or Data is nil", func() {
 		Expect(func() { applyNameFilterToSecurityGroupList(nil, "x", logger) }).NotTo(Panic())
-		resp := &arubatypes.Response[arubatypes.SecurityGroupList]{StatusCode: http.StatusOK}
+		resp := &arubatypes.Response[arubatypes.SecurityGroupListResponse]{StatusCode: http.StatusOK}
 		Expect(func() { applyNameFilterToSecurityGroupList(resp, "x", logger) }).NotTo(Panic())
 	})
 
 	It("filters correctly and updates Total", func() {
-		resp := &arubatypes.Response[arubatypes.SecurityGroupList]{
+		resp := &arubatypes.Response[arubatypes.SecurityGroupListResponse]{
 			StatusCode: http.StatusOK,
-			Data: &arubatypes.SecurityGroupList{
+			Data: &arubatypes.SecurityGroupListResponse{
 				ListResponse: arubatypes.ListResponse{Total: 3},
 				Values:       []arubatypes.SecurityGroupResponse{buildSG("a"), buildSG("target"), buildSG("b")},
 			},
@@ -166,14 +164,14 @@ var _ = Describe("applyNameFilterToSecurityRuleList", func() {
 
 	It("does nothing when resp or Data is nil", func() {
 		Expect(func() { applyNameFilterToSecurityRuleList(nil, "x", logger) }).NotTo(Panic())
-		resp := &arubatypes.Response[arubatypes.SecurityRuleList]{StatusCode: http.StatusOK}
+		resp := &arubatypes.Response[arubatypes.SecurityRuleListResponse]{StatusCode: http.StatusOK}
 		Expect(func() { applyNameFilterToSecurityRuleList(resp, "x", logger) }).NotTo(Panic())
 	})
 
 	It("filters correctly and updates Total", func() {
-		resp := &arubatypes.Response[arubatypes.SecurityRuleList]{
+		resp := &arubatypes.Response[arubatypes.SecurityRuleListResponse]{
 			StatusCode: http.StatusOK,
-			Data: &arubatypes.SecurityRuleList{
+			Data: &arubatypes.SecurityRuleListResponse{
 				ListResponse: arubatypes.ListResponse{Total: 2},
 				Values:       []arubatypes.SecurityRuleResponse{buildSR("other"), buildSR("target")},
 			},
@@ -193,14 +191,14 @@ var _ = Describe("applyNameFilterToElasticIPList", func() {
 
 	It("does nothing when resp or Data is nil", func() {
 		Expect(func() { applyNameFilterToElasticIPList(nil, "x", logger) }).NotTo(Panic())
-		resp := &arubatypes.Response[arubatypes.ElasticList]{StatusCode: http.StatusOK}
+		resp := &arubatypes.Response[arubatypes.ElasticIPListResponse]{StatusCode: http.StatusOK}
 		Expect(func() { applyNameFilterToElasticIPList(resp, "x", logger) }).NotTo(Panic())
 	})
 
 	It("filters correctly and updates Total", func() {
-		resp := &arubatypes.Response[arubatypes.ElasticList]{
+		resp := &arubatypes.Response[arubatypes.ElasticIPListResponse]{
 			StatusCode: http.StatusOK,
-			Data: &arubatypes.ElasticList{
+			Data: &arubatypes.ElasticIPListResponse{
 				ListResponse: arubatypes.ListResponse{Total: 2},
 				Values:       []arubatypes.ElasticIPResponse{buildEIP("other"), buildEIP("target")},
 			},

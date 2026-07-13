@@ -44,7 +44,7 @@ func buildKeyPairResponse(id, name string) *arubatypes.KeyPairResponse {
 			LocationResponse: location,
 			Tags:             []string{"tag1"},
 		},
-		Properties: arubatypes.KeyPairPropertiesResult{
+		Properties: arubatypes.KeyPairPropertiesResponse{
 			Value: "ssh-rsa AAAAB3NzaC1 test-key",
 		},
 	}
@@ -68,7 +68,7 @@ func buildKeyPairCRUDResponse(statusCode int) *arubatypes.Response[arubatypes.Ke
 	}
 }
 
-func buildProjectListForKeyPair(projectID, projectName string) *arubatypes.Response[arubatypes.ProjectList] {
+func buildProjectListForKeyPair(projectID, projectName string) *arubatypes.Response[arubatypes.ProjectListResponse] {
 	id := projectID
 	name := projectName
 	proj := arubatypes.ProjectResponse{
@@ -77,10 +77,10 @@ func buildProjectListForKeyPair(projectID, projectName string) *arubatypes.Respo
 			Name: &name,
 		},
 	}
-	list := &arubatypes.ProjectList{}
+	list := &arubatypes.ProjectListResponse{}
 	list.Values = append(list.Values, proj)
 	list.Total = 1
-	return &arubatypes.Response[arubatypes.ProjectList]{
+	return &arubatypes.Response[arubatypes.ProjectListResponse]{
 		Data:       list,
 		StatusCode: http.StatusOK,
 	}
@@ -424,7 +424,7 @@ var _ = Describe("KeyPairReconciler", func() {
 			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseActive))
 			// Spec should be rolled back to CMP values
 			Expect(updated.Spec.Tags).To(Equal(cmpKp.Metadata.Tags))
-			Expect(updated.Spec.Region).To(Equal(cmpKp.Metadata.LocationResponse.Value))
+			Expect(updated.Spec.Region).To(Equal(string(cmpKp.Metadata.LocationResponse.Value)))
 			Expect(updated.Spec.Value).To(Equal(cmpKp.Properties.Value))
 		})
 	})

@@ -27,7 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/Arubacloud/sdk-go/pkg/aruba"
+	arubaclient "github.com/Arubacloud/arubacloud-resource-operator/internal/client"
 	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
@@ -566,7 +566,7 @@ func (r *ProjectReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeProj 
 // ---------------------------------------------------------------------------
 
 func (r *ProjectReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) error {
-	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(arubaclient.Client)
 
 	cmpProjList, err := arubaClient.FromProject().Delete(ctx, *cmpProj.Metadata.ID, nil)
 	if err != nil {
@@ -583,7 +583,7 @@ func (r *ProjectReconciler) cmpUpdate(ctx context.Context, kubeProj *v1alpha1.Pr
 	request.Metadata.Tags = kubeProj.Spec.Tags
 	request.Properties.Description = &kubeProj.Spec.Description
 	request.Properties.Default = false
-	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(arubaclient.Client)
 
 	cmpProjResp, err := arubaClient.FromProject().Update(ctx, kubeProj.Status.ResourceID, *request, nil)
 	if err != nil {
@@ -594,7 +594,7 @@ func (r *ProjectReconciler) cmpUpdate(ctx context.Context, kubeProj *v1alpha1.Pr
 }
 
 func (r *ProjectReconciler) cmpCreate(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
-	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(arubaclient.Client)
 	cmpProjResp, err := arubaClient.FromProject().Create(ctx, *cmpProjectRequestFromKube(kubeProj), nil)
 	if err != nil {
 		return reconciler.CMPTransportError("create", kubeProj.Name, err)

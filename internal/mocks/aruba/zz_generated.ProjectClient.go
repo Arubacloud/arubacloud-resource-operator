@@ -142,84 +142,24 @@ func (_c *MockProjectClient_Delete_Call) RunAndReturn(run func(context.Context, 
 	return _c
 }
 
-// Get provides a mock function with given fields: ctx, projectID, params
-func (_m *MockProjectClient) Get(ctx context.Context, projectID string, params *types.RequestParameters) (*types.Response[types.ProjectResponse], error) {
-	ret := _m.Called(ctx, projectID, params)
-
-	if len(ret) == 0 {
-		panic("no return value specified for Get")
-	}
-
-	var r0 *types.Response[types.ProjectResponse]
-	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, *types.RequestParameters) (*types.Response[types.ProjectResponse], error)); ok {
-		return rf(ctx, projectID, params)
-	}
-	if rf, ok := ret.Get(0).(func(context.Context, string, *types.RequestParameters) *types.Response[types.ProjectResponse]); ok {
-		r0 = rf(ctx, projectID, params)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*types.Response[types.ProjectResponse])
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func(context.Context, string, *types.RequestParameters) error); ok {
-		r1 = rf(ctx, projectID, params)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
-// MockProjectClient_Get_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Get'
-type MockProjectClient_Get_Call struct {
-	*mock.Call
-}
-
-// Get is a helper method to define mock.On call
-//   - ctx context.Context
-//   - projectID string
-//   - params *types.RequestParameters
-func (_e *MockProjectClient_Expecter) Get(ctx interface{}, projectID interface{}, params interface{}) *MockProjectClient_Get_Call {
-	return &MockProjectClient_Get_Call{Call: _e.mock.On("Get", ctx, projectID, params)}
-}
-
-func (_c *MockProjectClient_Get_Call) Run(run func(ctx context.Context, projectID string, params *types.RequestParameters)) *MockProjectClient_Get_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string), args[2].(*types.RequestParameters))
-	})
-	return _c
-}
-
-func (_c *MockProjectClient_Get_Call) Return(_a0 *types.Response[types.ProjectResponse], _a1 error) *MockProjectClient_Get_Call {
-	_c.Call.Return(_a0, _a1)
-	return _c
-}
-
-func (_c *MockProjectClient_Get_Call) RunAndReturn(run func(context.Context, string, *types.RequestParameters) (*types.Response[types.ProjectResponse], error)) *MockProjectClient_Get_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
 // List provides a mock function with given fields: ctx, params
-func (_m *MockProjectClient) List(ctx context.Context, params *types.RequestParameters) (*types.Response[types.ProjectList], error) {
+func (_m *MockProjectClient) List(ctx context.Context, params *types.RequestParameters) (*types.Response[types.ProjectListResponse], error) {
 	ret := _m.Called(ctx, params)
 
 	if len(ret) == 0 {
 		panic("no return value specified for List")
 	}
 
-	var r0 *types.Response[types.ProjectList]
+	var r0 *types.Response[types.ProjectListResponse]
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, *types.RequestParameters) (*types.Response[types.ProjectList], error)); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, *types.RequestParameters) (*types.Response[types.ProjectListResponse], error)); ok {
 		return rf(ctx, params)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, *types.RequestParameters) *types.Response[types.ProjectList]); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, *types.RequestParameters) *types.Response[types.ProjectListResponse]); ok {
 		r0 = rf(ctx, params)
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*types.Response[types.ProjectList])
+			r0 = ret.Get(0).(*types.Response[types.ProjectListResponse])
 		}
 	}
 
@@ -251,12 +191,12 @@ func (_c *MockProjectClient_List_Call) Run(run func(ctx context.Context, params 
 	return _c
 }
 
-func (_c *MockProjectClient_List_Call) Return(_a0 *types.Response[types.ProjectList], _a1 error) *MockProjectClient_List_Call {
+func (_c *MockProjectClient_List_Call) Return(_a0 *types.Response[types.ProjectListResponse], _a1 error) *MockProjectClient_List_Call {
 	_c.Call.Return(_a0, _a1)
 	return _c
 }
 
-func (_c *MockProjectClient_List_Call) RunAndReturn(run func(context.Context, *types.RequestParameters) (*types.Response[types.ProjectList], error)) *MockProjectClient_List_Call {
+func (_c *MockProjectClient_List_Call) RunAndReturn(run func(context.Context, *types.RequestParameters) (*types.Response[types.ProjectListResponse], error)) *MockProjectClient_List_Call {
 	_c.Call.Return(run)
 	return _c
 }

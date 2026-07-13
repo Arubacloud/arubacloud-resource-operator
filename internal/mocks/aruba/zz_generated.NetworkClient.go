@@ -3,7 +3,7 @@
 package arubamocks
 
 import (
-	aruba "github.com/Arubacloud/sdk-go/pkg/aruba"
+	client "github.com/Arubacloud/arubacloud-resource-operator/internal/client"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -21,19 +21,19 @@ func (_m *MockNetworkClient) EXPECT() *MockNetworkClient_Expecter {
 }
 
 // ElasticIPs provides a mock function with no fields
-func (_m *MockNetworkClient) ElasticIPs() aruba.ElasticIPsClient {
+func (_m *MockNetworkClient) ElasticIPs() client.ElasticIPsClient {
 	ret := _m.Called()
 
 	if len(ret) == 0 {
 		panic("no return value specified for ElasticIPs")
 	}
 
-	var r0 aruba.ElasticIPsClient
-	if rf, ok := ret.Get(0).(func() aruba.ElasticIPsClient); ok {
+	var r0 client.ElasticIPsClient
+	if rf, ok := ret.Get(0).(func() client.ElasticIPsClient); ok {
 		r0 = rf()
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(aruba.ElasticIPsClient)
+			r0 = ret.Get(0).(client.ElasticIPsClient)
 		}
 	}
 
@@ -57,77 +57,30 @@ func (_c *MockNetworkClient_ElasticIPs_Call) Run(run func()) *MockNetworkClient_
 	return _c
 }
 
-func (_c *MockNetworkClient_ElasticIPs_Call) Return(_a0 aruba.ElasticIPsClient) *MockNetworkClient_ElasticIPs_Call {
+func (_c *MockNetworkClient_ElasticIPs_Call) Return(_a0 client.ElasticIPsClient) *MockNetworkClient_ElasticIPs_Call {
 	_c.Call.Return(_a0)
 	return _c
 }
 
-func (_c *MockNetworkClient_ElasticIPs_Call) RunAndReturn(run func() aruba.ElasticIPsClient) *MockNetworkClient_ElasticIPs_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// LoadBalancers provides a mock function with no fields
-func (_m *MockNetworkClient) LoadBalancers() aruba.LoadBalancersClient {
-	ret := _m.Called()
-
-	if len(ret) == 0 {
-		panic("no return value specified for LoadBalancers")
-	}
-
-	var r0 aruba.LoadBalancersClient
-	if rf, ok := ret.Get(0).(func() aruba.LoadBalancersClient); ok {
-		r0 = rf()
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(aruba.LoadBalancersClient)
-		}
-	}
-
-	return r0
-}
-
-// MockNetworkClient_LoadBalancers_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'LoadBalancers'
-type MockNetworkClient_LoadBalancers_Call struct {
-	*mock.Call
-}
-
-// LoadBalancers is a helper method to define mock.On call
-func (_e *MockNetworkClient_Expecter) LoadBalancers() *MockNetworkClient_LoadBalancers_Call {
-	return &MockNetworkClient_LoadBalancers_Call{Call: _e.mock.On("LoadBalancers")}
-}
-
-func (_c *MockNetworkClient_LoadBalancers_Call) Run(run func()) *MockNetworkClient_LoadBalancers_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run()
-	})
-	return _c
-}
-
-func (_c *MockNetworkClient_LoadBalancers_Call) Return(_a0 aruba.LoadBalancersClient) *MockNetworkClient_LoadBalancers_Call {
-	_c.Call.Return(_a0)
-	return _c
-}
-
-func (_c *MockNetworkClient_LoadBalancers_Call) RunAndReturn(run func() aruba.LoadBalancersClient) *MockNetworkClient_LoadBalancers_Call {
+func (_c *MockNetworkClient_ElasticIPs_Call) RunAndReturn(run func() client.ElasticIPsClient) *MockNetworkClient_ElasticIPs_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // SecurityGroupRules provides a mock function with no fields
-func (_m *MockNetworkClient) SecurityGroupRules() aruba.SecurityGroupRulesClient {
+func (_m *MockNetworkClient) SecurityGroupRules() client.SecurityGroupRulesClient {
 	ret := _m.Called()
 
 	if len(ret) == 0 {
 		panic("no return value specified for SecurityGroupRules")
 	}
 
-	var r0 aruba.SecurityGroupRulesClient
-	if rf, ok := ret.Get(0).(func() aruba.SecurityGroupRulesClient); ok {
+	var r0 client.SecurityGroupRulesClient
+	if rf, ok := ret.Get(0).(func() client.SecurityGroupRulesClient); ok {
 		r0 = rf()
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(aruba.SecurityGroupRulesClient)
+			r0 = ret.Get(0).(client.SecurityGroupRulesClient)
 		}
 	}
 
@@ -151,30 +104,30 @@ func (_c *MockNetworkClient_SecurityGroupRules_Call) Run(run func()) *MockNetwor
 	return _c
 }
 
-func (_c *MockNetworkClient_SecurityGroupRules_Call) Return(_a0 aruba.SecurityGroupRulesClient) *MockNetworkClient_SecurityGroupRules_Call {
+func (_c *MockNetworkClient_SecurityGroupRules_Call) Return(_a0 client.SecurityGroupRulesClient) *MockNetworkClient_SecurityGroupRules_Call {
 	_c.Call.Return(_a0)
 	return _c
 }
 
-func (_c *MockNetworkClient_SecurityGroupRules_Call) RunAndReturn(run func() aruba.SecurityGroupRulesClient) *MockNetworkClient_SecurityGroupRules_Call {
+func (_c *MockNetworkClient_SecurityGroupRules_Call) RunAndReturn(run func() client.SecurityGroupRulesClient) *MockNetworkClient_SecurityGroupRules_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // SecurityGroups provides a mock function with no fields
-func (_m *MockNetworkClient) SecurityGroups() aruba.SecurityGroupsClient {
+func (_m *MockNetworkClient) SecurityGroups() client.SecurityGroupsClient {
 	ret := _m.Called()
 
 	if len(ret) == 0 {
 		panic("no return value specified for SecurityGroups")
 	}
 
-	var r0 aruba.SecurityGroupsClient
-	if rf, ok := ret.Get(0).(func() aruba.SecurityGroupsClient); ok {
+	var r0 client.SecurityGroupsClient
+	if rf, ok := ret.Get(0).(func() client.SecurityGroupsClient); ok {
 		r0 = rf()
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(aruba.SecurityGroupsClient)
+			r0 = ret.Get(0).(client.SecurityGroupsClient)
 		}
 	}
 
@@ -198,30 +151,30 @@ func (_c *MockNetworkClient_SecurityGroups_Call) Run(run func()) *MockNetworkCli
 	return _c
 }
 
-func (_c *MockNetworkClient_SecurityGroups_Call) Return(_a0 aruba.SecurityGroupsClient) *MockNetworkClient_SecurityGroups_Call {
+func (_c *MockNetworkClient_SecurityGroups_Call) Return(_a0 client.SecurityGroupsClient) *MockNetworkClient_SecurityGroups_Call {
 	_c.Call.Return(_a0)
 	return _c
 }
 
-func (_c *MockNetworkClient_SecurityGroups_Call) RunAndReturn(run func() aruba.SecurityGroupsClient) *MockNetworkClient_SecurityGroups_Call {
+func (_c *MockNetworkClient_SecurityGroups_Call) RunAndReturn(run func() client.SecurityGroupsClient) *MockNetworkClient_SecurityGroups_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // Subnets provides a mock function with no fields
-func (_m *MockNetworkClient) Subnets() aruba.SubnetsClient {
+func (_m *MockNetworkClient) Subnets() client.SubnetsClient {
 	ret := _m.Called()
 
 	if len(ret) == 0 {
 		panic("no return value specified for Subnets")
 	}
 
-	var r0 aruba.SubnetsClient
-	if rf, ok := ret.Get(0).(func() aruba.SubnetsClient); ok {
+	var r0 client.SubnetsClient
+	if rf, ok := ret.Get(0).(func() client.SubnetsClient); ok {
 		r0 = rf()
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(aruba.SubnetsClient)
+			r0 = ret.Get(0).(client.SubnetsClient)
 		}
 	}
 
@@ -245,124 +198,30 @@ func (_c *MockNetworkClient_Subnets_Call) Run(run func()) *MockNetworkClient_Sub
 	return _c
 }
 
-func (_c *MockNetworkClient_Subnets_Call) Return(_a0 aruba.SubnetsClient) *MockNetworkClient_Subnets_Call {
+func (_c *MockNetworkClient_Subnets_Call) Return(_a0 client.SubnetsClient) *MockNetworkClient_Subnets_Call {
 	_c.Call.Return(_a0)
 	return _c
 }
 
-func (_c *MockNetworkClient_Subnets_Call) RunAndReturn(run func() aruba.SubnetsClient) *MockNetworkClient_Subnets_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// VPCPeeringRoutes provides a mock function with no fields
-func (_m *MockNetworkClient) VPCPeeringRoutes() aruba.VPCPeeringRoutesClient {
-	ret := _m.Called()
-
-	if len(ret) == 0 {
-		panic("no return value specified for VPCPeeringRoutes")
-	}
-
-	var r0 aruba.VPCPeeringRoutesClient
-	if rf, ok := ret.Get(0).(func() aruba.VPCPeeringRoutesClient); ok {
-		r0 = rf()
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(aruba.VPCPeeringRoutesClient)
-		}
-	}
-
-	return r0
-}
-
-// MockNetworkClient_VPCPeeringRoutes_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'VPCPeeringRoutes'
-type MockNetworkClient_VPCPeeringRoutes_Call struct {
-	*mock.Call
-}
-
-// VPCPeeringRoutes is a helper method to define mock.On call
-func (_e *MockNetworkClient_Expecter) VPCPeeringRoutes() *MockNetworkClient_VPCPeeringRoutes_Call {
-	return &MockNetworkClient_VPCPeeringRoutes_Call{Call: _e.mock.On("VPCPeeringRoutes")}
-}
-
-func (_c *MockNetworkClient_VPCPeeringRoutes_Call) Run(run func()) *MockNetworkClient_VPCPeeringRoutes_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run()
-	})
-	return _c
-}
-
-func (_c *MockNetworkClient_VPCPeeringRoutes_Call) Return(_a0 aruba.VPCPeeringRoutesClient) *MockNetworkClient_VPCPeeringRoutes_Call {
-	_c.Call.Return(_a0)
-	return _c
-}
-
-func (_c *MockNetworkClient_VPCPeeringRoutes_Call) RunAndReturn(run func() aruba.VPCPeeringRoutesClient) *MockNetworkClient_VPCPeeringRoutes_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// VPCPeerings provides a mock function with no fields
-func (_m *MockNetworkClient) VPCPeerings() aruba.VPCPeeringsClient {
-	ret := _m.Called()
-
-	if len(ret) == 0 {
-		panic("no return value specified for VPCPeerings")
-	}
-
-	var r0 aruba.VPCPeeringsClient
-	if rf, ok := ret.Get(0).(func() aruba.VPCPeeringsClient); ok {
-		r0 = rf()
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(aruba.VPCPeeringsClient)
-		}
-	}
-
-	return r0
-}
-
-// MockNetworkClient_VPCPeerings_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'VPCPeerings'
-type MockNetworkClient_VPCPeerings_Call struct {
-	*mock.Call
-}
-
-// VPCPeerings is a helper method to define mock.On call
-func (_e *MockNetworkClient_Expecter) VPCPeerings() *MockNetworkClient_VPCPeerings_Call {
-	return &MockNetworkClient_VPCPeerings_Call{Call: _e.mock.On("VPCPeerings")}
-}
-
-func (_c *MockNetworkClient_VPCPeerings_Call) Run(run func()) *MockNetworkClient_VPCPeerings_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run()
-	})
-	return _c
-}
-
-func (_c *MockNetworkClient_VPCPeerings_Call) Return(_a0 aruba.VPCPeeringsClient) *MockNetworkClient_VPCPeerings_Call {
-	_c.Call.Return(_a0)
-	return _c
-}
-
-func (_c *MockNetworkClient_VPCPeerings_Call) RunAndReturn(run func() aruba.VPCPeeringsClient) *MockNetworkClient_VPCPeerings_Call {
+func (_c *MockNetworkClient_Subnets_Call) RunAndReturn(run func() client.SubnetsClient) *MockNetworkClient_Subnets_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // VPCs provides a mock function with no fields
-func (_m *MockNetworkClient) VPCs() aruba.VPCsClient {
+func (_m *MockNetworkClient) VPCs() client.VPCsClient {
 	ret := _m.Called()
 
 	if len(ret) == 0 {
 		panic("no return value specified for VPCs")
 	}
 
-	var r0 aruba.VPCsClient
-	if rf, ok := ret.Get(0).(func() aruba.VPCsClient); ok {
+	var r0 client.VPCsClient
+	if rf, ok := ret.Get(0).(func() client.VPCsClient); ok {
 		r0 = rf()
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(aruba.VPCsClient)
+			r0 = ret.Get(0).(client.VPCsClient)
 		}
 	}
 
@@ -386,106 +245,12 @@ func (_c *MockNetworkClient_VPCs_Call) Run(run func()) *MockNetworkClient_VPCs_C
 	return _c
 }
 
-func (_c *MockNetworkClient_VPCs_Call) Return(_a0 aruba.VPCsClient) *MockNetworkClient_VPCs_Call {
+func (_c *MockNetworkClient_VPCs_Call) Return(_a0 client.VPCsClient) *MockNetworkClient_VPCs_Call {
 	_c.Call.Return(_a0)
 	return _c
 }
 
-func (_c *MockNetworkClient_VPCs_Call) RunAndReturn(run func() aruba.VPCsClient) *MockNetworkClient_VPCs_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// VPNRoutes provides a mock function with no fields
-func (_m *MockNetworkClient) VPNRoutes() aruba.VPNRoutesClient {
-	ret := _m.Called()
-
-	if len(ret) == 0 {
-		panic("no return value specified for VPNRoutes")
-	}
-
-	var r0 aruba.VPNRoutesClient
-	if rf, ok := ret.Get(0).(func() aruba.VPNRoutesClient); ok {
-		r0 = rf()
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(aruba.VPNRoutesClient)
-		}
-	}
-
-	return r0
-}
-
-// MockNetworkClient_VPNRoutes_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'VPNRoutes'
-type MockNetworkClient_VPNRoutes_Call struct {
-	*mock.Call
-}
-
-// VPNRoutes is a helper method to define mock.On call
-func (_e *MockNetworkClient_Expecter) VPNRoutes() *MockNetworkClient_VPNRoutes_Call {
-	return &MockNetworkClient_VPNRoutes_Call{Call: _e.mock.On("VPNRoutes")}
-}
-
-func (_c *MockNetworkClient_VPNRoutes_Call) Run(run func()) *MockNetworkClient_VPNRoutes_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run()
-	})
-	return _c
-}
-
-func (_c *MockNetworkClient_VPNRoutes_Call) Return(_a0 aruba.VPNRoutesClient) *MockNetworkClient_VPNRoutes_Call {
-	_c.Call.Return(_a0)
-	return _c
-}
-
-func (_c *MockNetworkClient_VPNRoutes_Call) RunAndReturn(run func() aruba.VPNRoutesClient) *MockNetworkClient_VPNRoutes_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// VPNTunnels provides a mock function with no fields
-func (_m *MockNetworkClient) VPNTunnels() aruba.VPNTunnelsClient {
-	ret := _m.Called()
-
-	if len(ret) == 0 {
-		panic("no return value specified for VPNTunnels")
-	}
-
-	var r0 aruba.VPNTunnelsClient
-	if rf, ok := ret.Get(0).(func() aruba.VPNTunnelsClient); ok {
-		r0 = rf()
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(aruba.VPNTunnelsClient)
-		}
-	}
-
-	return r0
-}
-
-// MockNetworkClient_VPNTunnels_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'VPNTunnels'
-type MockNetworkClient_VPNTunnels_Call struct {
-	*mock.Call
-}
-
-// VPNTunnels is a helper method to define mock.On call
-func (_e *MockNetworkClient_Expecter) VPNTunnels() *MockNetworkClient_VPNTunnels_Call {
-	return &MockNetworkClient_VPNTunnels_Call{Call: _e.mock.On("VPNTunnels")}
-}
-
-func (_c *MockNetworkClient_VPNTunnels_Call) Run(run func()) *MockNetworkClient_VPNTunnels_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run()
-	})
-	return _c
-}
-
-func (_c *MockNetworkClient_VPNTunnels_Call) Return(_a0 aruba.VPNTunnelsClient) *MockNetworkClient_VPNTunnels_Call {
-	_c.Call.Return(_a0)
-	return _c
-}
-
-func (_c *MockNetworkClient_VPNTunnels_Call) RunAndReturn(run func() aruba.VPNTunnelsClient) *MockNetworkClient_VPNTunnels_Call {
+func (_c *MockNetworkClient_VPCs_Call) RunAndReturn(run func() client.VPCsClient) *MockNetworkClient_VPCs_Call {
 	_c.Call.Return(run)
 	return _c
 }

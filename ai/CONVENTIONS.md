@@ -17,9 +17,12 @@ import (
     arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
 
     "github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
+    arubaclient "github.com/Arubacloud/arubacloud-resource-operator/internal/client"
     "github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
 )
 ```
+
+The operator accesses the Aruba SDK only through the `internal/client` port (aliased `arubaclient`); the raw SDK (`github.com/Arubacloud/sdk-go/pkg/aruba`) is imported solely by `internal/client` and `internal/reconciler`. Controllers still import `arubatypes` for the wire request/response types the port takes and returns.
 
 ## Error handling
 
@@ -264,16 +267,19 @@ func init() {
 
 Group mocks in a struct with an `expect*` method per API call scenario.
 
-The reconciler is constructed using `newTestReconciler` (defined in `common_test.go`), which creates a real `arubamt.Multitenant` cache pre-seeded with the mock client for `"test-tenant"`:
+The reconciler is constructed using `newTestReconciler` (defined in `common_test.go`), which pre-seeds the per-tenant port-client cache with the mock client for `"test-tenant"`:
 
 ```go
 // common_test.go
-func newTestReconciler(t GinkgoTInterface, mockArubaClient aruba.Client) *reconciler.Reconciler {
-    mt := arubamt.New()
-    mt.Add("test-tenant", mockArubaClient)
-    return reconciler.NewReconcilerForTest(k8sClient, k8sClient.Scheme(), mt)
+func newTestReconciler(_ GinkgoTInterface, mockArubaClient arubaclient.Client) *reconciler.Reconciler {
+    return reconciler.NewReconcilerForTest(
+        k8sClient, k8sClient.Scheme(),
+        map[string]arubaclient.Client{"test-tenant": mockArubaClient},
+    )
 }
 ```
+
+The mock (`*arubamocks.MockClient`) satisfies `arubaclient.Client` — the operator's SDK port, not the raw SDK client. Its per-domain/per-resource sub-clients (`MockProjectClient`, `MockVPCsClient`, …) mock the port interfaces in `internal/client`, so the `EXPECT().FromProject().List(...)` call shape is unchanged from the pre-port tests.
 
 ```go
 type bsMocks struct {

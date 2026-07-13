@@ -3,7 +3,7 @@
 package arubamocks
 
 import (
-	aruba "github.com/Arubacloud/sdk-go/pkg/aruba"
+	client "github.com/Arubacloud/arubacloud-resource-operator/internal/client"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -21,19 +21,19 @@ func (_m *MockComputeClient) EXPECT() *MockComputeClient_Expecter {
 }
 
 // CloudServers provides a mock function with no fields
-func (_m *MockComputeClient) CloudServers() aruba.CloudServersClient {
+func (_m *MockComputeClient) CloudServers() client.CloudServersClient {
 	ret := _m.Called()
 
 	if len(ret) == 0 {
 		panic("no return value specified for CloudServers")
 	}
 
-	var r0 aruba.CloudServersClient
-	if rf, ok := ret.Get(0).(func() aruba.CloudServersClient); ok {
+	var r0 client.CloudServersClient
+	if rf, ok := ret.Get(0).(func() client.CloudServersClient); ok {
 		r0 = rf()
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(aruba.CloudServersClient)
+			r0 = ret.Get(0).(client.CloudServersClient)
 		}
 	}
 
@@ -57,30 +57,30 @@ func (_c *MockComputeClient_CloudServers_Call) Run(run func()) *MockComputeClien
 	return _c
 }
 
-func (_c *MockComputeClient_CloudServers_Call) Return(_a0 aruba.CloudServersClient) *MockComputeClient_CloudServers_Call {
+func (_c *MockComputeClient_CloudServers_Call) Return(_a0 client.CloudServersClient) *MockComputeClient_CloudServers_Call {
 	_c.Call.Return(_a0)
 	return _c
 }
 
-func (_c *MockComputeClient_CloudServers_Call) RunAndReturn(run func() aruba.CloudServersClient) *MockComputeClient_CloudServers_Call {
+func (_c *MockComputeClient_CloudServers_Call) RunAndReturn(run func() client.CloudServersClient) *MockComputeClient_CloudServers_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // KeyPairs provides a mock function with no fields
-func (_m *MockComputeClient) KeyPairs() aruba.KeyPairsClient {
+func (_m *MockComputeClient) KeyPairs() client.KeyPairsClient {
 	ret := _m.Called()
 
 	if len(ret) == 0 {
 		panic("no return value specified for KeyPairs")
 	}
 
-	var r0 aruba.KeyPairsClient
-	if rf, ok := ret.Get(0).(func() aruba.KeyPairsClient); ok {
+	var r0 client.KeyPairsClient
+	if rf, ok := ret.Get(0).(func() client.KeyPairsClient); ok {
 		r0 = rf()
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(aruba.KeyPairsClient)
+			r0 = ret.Get(0).(client.KeyPairsClient)
 		}
 	}
 
@@ -104,12 +104,12 @@ func (_c *MockComputeClient_KeyPairs_Call) Run(run func()) *MockComputeClient_Ke
 	return _c
 }
 
-func (_c *MockComputeClient_KeyPairs_Call) Return(_a0 aruba.KeyPairsClient) *MockComputeClient_KeyPairs_Call {
+func (_c *MockComputeClient_KeyPairs_Call) Return(_a0 client.KeyPairsClient) *MockComputeClient_KeyPairs_Call {
 	_c.Call.Return(_a0)
 	return _c
 }
 
-func (_c *MockComputeClient_KeyPairs_Call) RunAndReturn(run func() aruba.KeyPairsClient) *MockComputeClient_KeyPairs_Call {
+func (_c *MockComputeClient_KeyPairs_Call) RunAndReturn(run func() client.KeyPairsClient) *MockComputeClient_KeyPairs_Call {
 	_c.Call.Return(run)
 	return _c
 }

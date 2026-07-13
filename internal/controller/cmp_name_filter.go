@@ -25,7 +25,7 @@ func filterByName[T any](values []T, target string, nameExtractor func(T) *strin
 
 // applyNameFilterToVPCList filters the VPC list response client-side by name.
 // TODO: Remove once CMP API name:eq() filter is fixed (issue https://jira.aruba.it/browse/DEV-66643).
-func applyNameFilterToVPCList(resp *arubatypes.Response[arubatypes.VPCList], name string, logger logr.Logger) {
+func applyNameFilterToVPCList(resp *arubatypes.Response[arubatypes.VPCListResponse], name string, logger logr.Logger) {
 	if resp == nil || resp.Data == nil {
 		return
 	}
@@ -46,7 +46,7 @@ func applyNameFilterToVPCList(resp *arubatypes.Response[arubatypes.VPCList], nam
 
 // applyNameFilterToSubnetList filters the Subnet list response client-side by name.
 // TODO: Remove once CMP API name:eq() filter is fixed (issue https://jira.aruba.it/browse/DEV-66643).
-func applyNameFilterToSubnetList(resp *arubatypes.Response[arubatypes.SubnetList], name string, logger logr.Logger) {
+func applyNameFilterToSubnetList(resp *arubatypes.Response[arubatypes.SubnetListResponse], name string, logger logr.Logger) {
 	if resp == nil || resp.Data == nil {
 		return
 	}
@@ -67,7 +67,7 @@ func applyNameFilterToSubnetList(resp *arubatypes.Response[arubatypes.SubnetList
 
 // applyNameFilterToSecurityGroupList filters the SecurityGroup list response client-side by name.
 // TODO: Remove once CMP API name:eq() filter is fixed (issue https://jira.aruba.it/browse/DEV-66643).
-func applyNameFilterToSecurityGroupList(resp *arubatypes.Response[arubatypes.SecurityGroupList], name string, logger logr.Logger) {
+func applyNameFilterToSecurityGroupList(resp *arubatypes.Response[arubatypes.SecurityGroupListResponse], name string, logger logr.Logger) {
 	if resp == nil || resp.Data == nil {
 		return
 	}
@@ -88,7 +88,7 @@ func applyNameFilterToSecurityGroupList(resp *arubatypes.Response[arubatypes.Sec
 
 // applyNameFilterToSecurityRuleList filters the SecurityRule list response client-side by name.
 // TODO: Remove once CMP API name:eq() filter is fixed (issue https://jira.aruba.it/browse/DEV-66643).
-func applyNameFilterToSecurityRuleList(resp *arubatypes.Response[arubatypes.SecurityRuleList], name string, logger logr.Logger) {
+func applyNameFilterToSecurityRuleList(resp *arubatypes.Response[arubatypes.SecurityRuleListResponse], name string, logger logr.Logger) {
 	if resp == nil || resp.Data == nil {
 		return
 	}
@@ -109,7 +109,7 @@ func applyNameFilterToSecurityRuleList(resp *arubatypes.Response[arubatypes.Secu
 
 // applyNameFilterToElasticIPList filters the ElasticIP list response client-side by name.
 // TODO: Remove once CMP API name:eq() filter is fixed (issue https://jira.aruba.it/browse/DEV-66643).
-func applyNameFilterToElasticIPList(resp *arubatypes.Response[arubatypes.ElasticList], name string, logger logr.Logger) {
+func applyNameFilterToElasticIPList(resp *arubatypes.Response[arubatypes.ElasticIPListResponse], name string, logger logr.Logger) {
 	if resp == nil || resp.Data == nil {
 		return
 	}

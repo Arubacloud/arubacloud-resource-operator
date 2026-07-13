@@ -146,86 +146,24 @@ func (_c *MockSecurityGroupsClient_Delete_Call) RunAndReturn(run func(context.Co
 	return _c
 }
 
-// Get provides a mock function with given fields: ctx, projectID, vpcID, securityGroupID, params
-func (_m *MockSecurityGroupsClient) Get(ctx context.Context, projectID string, vpcID string, securityGroupID string, params *types.RequestParameters) (*types.Response[types.SecurityGroupResponse], error) {
-	ret := _m.Called(ctx, projectID, vpcID, securityGroupID, params)
-
-	if len(ret) == 0 {
-		panic("no return value specified for Get")
-	}
-
-	var r0 *types.Response[types.SecurityGroupResponse]
-	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, string, string, *types.RequestParameters) (*types.Response[types.SecurityGroupResponse], error)); ok {
-		return rf(ctx, projectID, vpcID, securityGroupID, params)
-	}
-	if rf, ok := ret.Get(0).(func(context.Context, string, string, string, *types.RequestParameters) *types.Response[types.SecurityGroupResponse]); ok {
-		r0 = rf(ctx, projectID, vpcID, securityGroupID, params)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*types.Response[types.SecurityGroupResponse])
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func(context.Context, string, string, string, *types.RequestParameters) error); ok {
-		r1 = rf(ctx, projectID, vpcID, securityGroupID, params)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
-// MockSecurityGroupsClient_Get_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Get'
-type MockSecurityGroupsClient_Get_Call struct {
-	*mock.Call
-}
-
-// Get is a helper method to define mock.On call
-//   - ctx context.Context
-//   - projectID string
-//   - vpcID string
-//   - securityGroupID string
-//   - params *types.RequestParameters
-func (_e *MockSecurityGroupsClient_Expecter) Get(ctx interface{}, projectID interface{}, vpcID interface{}, securityGroupID interface{}, params interface{}) *MockSecurityGroupsClient_Get_Call {
-	return &MockSecurityGroupsClient_Get_Call{Call: _e.mock.On("Get", ctx, projectID, vpcID, securityGroupID, params)}
-}
-
-func (_c *MockSecurityGroupsClient_Get_Call) Run(run func(ctx context.Context, projectID string, vpcID string, securityGroupID string, params *types.RequestParameters)) *MockSecurityGroupsClient_Get_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string), args[2].(string), args[3].(string), args[4].(*types.RequestParameters))
-	})
-	return _c
-}
-
-func (_c *MockSecurityGroupsClient_Get_Call) Return(_a0 *types.Response[types.SecurityGroupResponse], _a1 error) *MockSecurityGroupsClient_Get_Call {
-	_c.Call.Return(_a0, _a1)
-	return _c
-}
-
-func (_c *MockSecurityGroupsClient_Get_Call) RunAndReturn(run func(context.Context, string, string, string, *types.RequestParameters) (*types.Response[types.SecurityGroupResponse], error)) *MockSecurityGroupsClient_Get_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
 // List provides a mock function with given fields: ctx, projectID, vpcID, params
-func (_m *MockSecurityGroupsClient) List(ctx context.Context, projectID string, vpcID string, params *types.RequestParameters) (*types.Response[types.SecurityGroupList], error) {
+func (_m *MockSecurityGroupsClient) List(ctx context.Context, projectID string, vpcID string, params *types.RequestParameters) (*types.Response[types.SecurityGroupListResponse], error) {
 	ret := _m.Called(ctx, projectID, vpcID, params)
 
 	if len(ret) == 0 {
 		panic("no return value specified for List")
 	}
 
-	var r0 *types.Response[types.SecurityGroupList]
+	var r0 *types.Response[types.SecurityGroupListResponse]
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, string, *types.RequestParameters) (*types.Response[types.SecurityGroupList], error)); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, *types.RequestParameters) (*types.Response[types.SecurityGroupListResponse], error)); ok {
 		return rf(ctx, projectID, vpcID, params)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, string, string, *types.RequestParameters) *types.Response[types.SecurityGroupList]); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, *types.RequestParameters) *types.Response[types.SecurityGroupListResponse]); ok {
 		r0 = rf(ctx, projectID, vpcID, params)
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*types.Response[types.SecurityGroupList])
+			r0 = ret.Get(0).(*types.Response[types.SecurityGroupListResponse])
 		}
 	}
 
@@ -259,12 +197,12 @@ func (_c *MockSecurityGroupsClient_List_Call) Run(run func(ctx context.Context, 
 	return _c
 }
 
-func (_c *MockSecurityGroupsClient_List_Call) Return(_a0 *types.Response[types.SecurityGroupList], _a1 error) *MockSecurityGroupsClient_List_Call {
+func (_c *MockSecurityGroupsClient_List_Call) Return(_a0 *types.Response[types.SecurityGroupListResponse], _a1 error) *MockSecurityGroupsClient_List_Call {
 	_c.Call.Return(_a0, _a1)
 	return _c
 }
 
-func (_c *MockSecurityGroupsClient_List_Call) RunAndReturn(run func(context.Context, string, string, *types.RequestParameters) (*types.Response[types.SecurityGroupList], error)) *MockSecurityGroupsClient_List_Call {
+func (_c *MockSecurityGroupsClient_List_Call) RunAndReturn(run func(context.Context, string, string, *types.RequestParameters) (*types.Response[types.SecurityGroupListResponse], error)) *MockSecurityGroupsClient_List_Call {
 	_c.Call.Return(run)
 	return _c
 }

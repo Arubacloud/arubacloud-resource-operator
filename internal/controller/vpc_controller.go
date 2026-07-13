@@ -28,7 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/Arubacloud/sdk-go/pkg/aruba"
+	arubaclient "github.com/Arubacloud/arubacloud-resource-operator/internal/client"
 	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
@@ -260,7 +260,7 @@ func (r *VPCReconciler) fetchKubeDependencies(
 func (r *VPCReconciler) fetchCMPDependencies(
 	ctx context.Context,
 	kubeVpc *v1alpha1.VPC,
-	arubaClient aruba.Client,
+	arubaClient arubaclient.Client,
 	isDeleting bool,
 ) (string, *arubatypes.VPCResponse, ctrl.Result, error) {
 	vpcName, projectName := kubeVpc.Name, kubeVpc.Spec.ProjectReference.Name
@@ -724,11 +724,11 @@ func cmpVPCNotExistsOrTransitory(_ *v1alpha1.VPC, cmpVpc *arubatypes.VPCResponse
 
 func cmpVpcIsActive(_ *v1alpha1.VPC, cmpVpc *arubatypes.VPCResponse) bool {
 	return cmpVpc != nil && cmpVpc.Status.State != nil &&
-		*cmpVpc.Status.State == reconciler.CSPResourceStateActive
+		*cmpVpc.Status.State == arubatypes.StateActive
 }
 
 func cmpVpcIsFailed(_ *v1alpha1.VPC, cmpVpc *arubatypes.VPCResponse) bool {
-	return cmpVpc != nil && cmpVpc.Status.State != nil && *cmpVpc.Status.State == reconciler.CSPResourceStateFailed
+	return cmpVpc != nil && cmpVpc.Status.State != nil && *cmpVpc.Status.State == arubatypes.StateFailed
 }
 
 // ---------------------------------------------------------------------------
@@ -816,7 +816,7 @@ func (r *VPCReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeVpc *v1al
 
 func (r *VPCReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.VPC, cmpVpc *arubatypes.VPCResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
-	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(arubaclient.Client)
 
 	cmpVpcResp, err := arubaClient.FromNetwork().VPCs().Delete(ctx, prjID, *cmpVpc.Metadata.ID, nil)
 	if err != nil {
@@ -828,7 +828,7 @@ func (r *VPCReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.VPC, cmpVpc *
 
 func (r *VPCReconciler) cmpUpdate(ctx context.Context, kubeVpc *v1alpha1.VPC, cmpVpc *arubatypes.VPCResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
-	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(arubaclient.Client)
 
 	// Guard: should have been caught by HasDeniedChanges, but double-check.
 	if err := checkVpcDeniedChanges(kubeVpc, cmpVpc); err != nil {
@@ -847,7 +847,7 @@ func (r *VPCReconciler) cmpUpdate(ctx context.Context, kubeVpc *v1alpha1.VPC, cm
 
 func (r *VPCReconciler) cmpCreate(ctx context.Context, kubeVpc *v1alpha1.VPC, _ *arubatypes.VPCResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
-	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(arubaclient.Client)
 
 	cmpVpcResp, err := arubaClient.FromNetwork().VPCs().Create(ctx, prjID, *cmpVpcRequestFromKube(kubeVpc), nil)
 	if err != nil {
@@ -868,7 +868,7 @@ func checkVpcDeniedChanges(kubeVpc *v1alpha1.VPC, cmpVpc *arubatypes.VPCResponse
 
 	locationValue := ""
 	if cmpVpc.Metadata.LocationResponse != nil {
-		locationValue = cmpVpc.Metadata.LocationResponse.Value
+		locationValue = string(cmpVpc.Metadata.LocationResponse.Value)
 	}
 	if kubeVpc.Spec.Region != locationValue {
 		return fmt.Errorf("%w: %w", reconciler.ErrNotAllowedChanges, errors.New("change the 'location' is not allowed"))
@@ -929,10 +929,10 @@ func cmpVpcRequestFromKube(kubeVpc *v1alpha1.VPC) *arubatypes.VPCRequest {
 				Name: kubeVpc.Name,
 				Tags: kubeVpc.Spec.Tags,
 			},
-			Location: arubatypes.LocationRequest{Value: kubeVpc.Spec.Region},
+			Location: arubatypes.LocationRequest{Value: arubatypes.Region(kubeVpc.Spec.Region)},
 		},
 		Properties: arubatypes.VPCPropertiesRequest{
-			Properties: &arubatypes.VPCProperties{
+			Properties: &arubatypes.VPCPropertiesInnerRequest{
 				Default: &falseVal,
 				Preset:  &falseVal,
 			},

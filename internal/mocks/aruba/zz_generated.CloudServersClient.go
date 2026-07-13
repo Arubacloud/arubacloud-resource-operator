@@ -144,85 +144,24 @@ func (_c *MockCloudServersClient_Delete_Call) RunAndReturn(run func(context.Cont
 	return _c
 }
 
-// Get provides a mock function with given fields: ctx, projectID, cloudServerID, params
-func (_m *MockCloudServersClient) Get(ctx context.Context, projectID string, cloudServerID string, params *types.RequestParameters) (*types.Response[types.CloudServerResponse], error) {
-	ret := _m.Called(ctx, projectID, cloudServerID, params)
-
-	if len(ret) == 0 {
-		panic("no return value specified for Get")
-	}
-
-	var r0 *types.Response[types.CloudServerResponse]
-	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, string, *types.RequestParameters) (*types.Response[types.CloudServerResponse], error)); ok {
-		return rf(ctx, projectID, cloudServerID, params)
-	}
-	if rf, ok := ret.Get(0).(func(context.Context, string, string, *types.RequestParameters) *types.Response[types.CloudServerResponse]); ok {
-		r0 = rf(ctx, projectID, cloudServerID, params)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*types.Response[types.CloudServerResponse])
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func(context.Context, string, string, *types.RequestParameters) error); ok {
-		r1 = rf(ctx, projectID, cloudServerID, params)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
-// MockCloudServersClient_Get_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Get'
-type MockCloudServersClient_Get_Call struct {
-	*mock.Call
-}
-
-// Get is a helper method to define mock.On call
-//   - ctx context.Context
-//   - projectID string
-//   - cloudServerID string
-//   - params *types.RequestParameters
-func (_e *MockCloudServersClient_Expecter) Get(ctx interface{}, projectID interface{}, cloudServerID interface{}, params interface{}) *MockCloudServersClient_Get_Call {
-	return &MockCloudServersClient_Get_Call{Call: _e.mock.On("Get", ctx, projectID, cloudServerID, params)}
-}
-
-func (_c *MockCloudServersClient_Get_Call) Run(run func(ctx context.Context, projectID string, cloudServerID string, params *types.RequestParameters)) *MockCloudServersClient_Get_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string), args[2].(string), args[3].(*types.RequestParameters))
-	})
-	return _c
-}
-
-func (_c *MockCloudServersClient_Get_Call) Return(_a0 *types.Response[types.CloudServerResponse], _a1 error) *MockCloudServersClient_Get_Call {
-	_c.Call.Return(_a0, _a1)
-	return _c
-}
-
-func (_c *MockCloudServersClient_Get_Call) RunAndReturn(run func(context.Context, string, string, *types.RequestParameters) (*types.Response[types.CloudServerResponse], error)) *MockCloudServersClient_Get_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
 // List provides a mock function with given fields: ctx, projectID, params
-func (_m *MockCloudServersClient) List(ctx context.Context, projectID string, params *types.RequestParameters) (*types.Response[types.CloudServerList], error) {
+func (_m *MockCloudServersClient) List(ctx context.Context, projectID string, params *types.RequestParameters) (*types.Response[types.CloudServerListResponse], error) {
 	ret := _m.Called(ctx, projectID, params)
 
 	if len(ret) == 0 {
 		panic("no return value specified for List")
 	}
 
-	var r0 *types.Response[types.CloudServerList]
+	var r0 *types.Response[types.CloudServerListResponse]
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, *types.RequestParameters) (*types.Response[types.CloudServerList], error)); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, string, *types.RequestParameters) (*types.Response[types.CloudServerListResponse], error)); ok {
 		return rf(ctx, projectID, params)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, string, *types.RequestParameters) *types.Response[types.CloudServerList]); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, string, *types.RequestParameters) *types.Response[types.CloudServerListResponse]); ok {
 		r0 = rf(ctx, projectID, params)
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*types.Response[types.CloudServerList])
+			r0 = ret.Get(0).(*types.Response[types.CloudServerListResponse])
 		}
 	}
 
@@ -255,196 +194,12 @@ func (_c *MockCloudServersClient_List_Call) Run(run func(ctx context.Context, pr
 	return _c
 }
 
-func (_c *MockCloudServersClient_List_Call) Return(_a0 *types.Response[types.CloudServerList], _a1 error) *MockCloudServersClient_List_Call {
+func (_c *MockCloudServersClient_List_Call) Return(_a0 *types.Response[types.CloudServerListResponse], _a1 error) *MockCloudServersClient_List_Call {
 	_c.Call.Return(_a0, _a1)
 	return _c
 }
 
-func (_c *MockCloudServersClient_List_Call) RunAndReturn(run func(context.Context, string, *types.RequestParameters) (*types.Response[types.CloudServerList], error)) *MockCloudServersClient_List_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// PowerOff provides a mock function with given fields: ctx, projectID, cloudServerID, params
-func (_m *MockCloudServersClient) PowerOff(ctx context.Context, projectID string, cloudServerID string, params *types.RequestParameters) (*types.Response[types.CloudServerResponse], error) {
-	ret := _m.Called(ctx, projectID, cloudServerID, params)
-
-	if len(ret) == 0 {
-		panic("no return value specified for PowerOff")
-	}
-
-	var r0 *types.Response[types.CloudServerResponse]
-	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, string, *types.RequestParameters) (*types.Response[types.CloudServerResponse], error)); ok {
-		return rf(ctx, projectID, cloudServerID, params)
-	}
-	if rf, ok := ret.Get(0).(func(context.Context, string, string, *types.RequestParameters) *types.Response[types.CloudServerResponse]); ok {
-		r0 = rf(ctx, projectID, cloudServerID, params)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*types.Response[types.CloudServerResponse])
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func(context.Context, string, string, *types.RequestParameters) error); ok {
-		r1 = rf(ctx, projectID, cloudServerID, params)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
-// MockCloudServersClient_PowerOff_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'PowerOff'
-type MockCloudServersClient_PowerOff_Call struct {
-	*mock.Call
-}
-
-// PowerOff is a helper method to define mock.On call
-//   - ctx context.Context
-//   - projectID string
-//   - cloudServerID string
-//   - params *types.RequestParameters
-func (_e *MockCloudServersClient_Expecter) PowerOff(ctx interface{}, projectID interface{}, cloudServerID interface{}, params interface{}) *MockCloudServersClient_PowerOff_Call {
-	return &MockCloudServersClient_PowerOff_Call{Call: _e.mock.On("PowerOff", ctx, projectID, cloudServerID, params)}
-}
-
-func (_c *MockCloudServersClient_PowerOff_Call) Run(run func(ctx context.Context, projectID string, cloudServerID string, params *types.RequestParameters)) *MockCloudServersClient_PowerOff_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string), args[2].(string), args[3].(*types.RequestParameters))
-	})
-	return _c
-}
-
-func (_c *MockCloudServersClient_PowerOff_Call) Return(_a0 *types.Response[types.CloudServerResponse], _a1 error) *MockCloudServersClient_PowerOff_Call {
-	_c.Call.Return(_a0, _a1)
-	return _c
-}
-
-func (_c *MockCloudServersClient_PowerOff_Call) RunAndReturn(run func(context.Context, string, string, *types.RequestParameters) (*types.Response[types.CloudServerResponse], error)) *MockCloudServersClient_PowerOff_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// PowerOn provides a mock function with given fields: ctx, projectID, cloudServerID, params
-func (_m *MockCloudServersClient) PowerOn(ctx context.Context, projectID string, cloudServerID string, params *types.RequestParameters) (*types.Response[types.CloudServerResponse], error) {
-	ret := _m.Called(ctx, projectID, cloudServerID, params)
-
-	if len(ret) == 0 {
-		panic("no return value specified for PowerOn")
-	}
-
-	var r0 *types.Response[types.CloudServerResponse]
-	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, string, *types.RequestParameters) (*types.Response[types.CloudServerResponse], error)); ok {
-		return rf(ctx, projectID, cloudServerID, params)
-	}
-	if rf, ok := ret.Get(0).(func(context.Context, string, string, *types.RequestParameters) *types.Response[types.CloudServerResponse]); ok {
-		r0 = rf(ctx, projectID, cloudServerID, params)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*types.Response[types.CloudServerResponse])
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func(context.Context, string, string, *types.RequestParameters) error); ok {
-		r1 = rf(ctx, projectID, cloudServerID, params)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
-// MockCloudServersClient_PowerOn_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'PowerOn'
-type MockCloudServersClient_PowerOn_Call struct {
-	*mock.Call
-}
-
-// PowerOn is a helper method to define mock.On call
-//   - ctx context.Context
-//   - projectID string
-//   - cloudServerID string
-//   - params *types.RequestParameters
-func (_e *MockCloudServersClient_Expecter) PowerOn(ctx interface{}, projectID interface{}, cloudServerID interface{}, params interface{}) *MockCloudServersClient_PowerOn_Call {
-	return &MockCloudServersClient_PowerOn_Call{Call: _e.mock.On("PowerOn", ctx, projectID, cloudServerID, params)}
-}
-
-func (_c *MockCloudServersClient_PowerOn_Call) Run(run func(ctx context.Context, projectID string, cloudServerID string, params *types.RequestParameters)) *MockCloudServersClient_PowerOn_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string), args[2].(string), args[3].(*types.RequestParameters))
-	})
-	return _c
-}
-
-func (_c *MockCloudServersClient_PowerOn_Call) Return(_a0 *types.Response[types.CloudServerResponse], _a1 error) *MockCloudServersClient_PowerOn_Call {
-	_c.Call.Return(_a0, _a1)
-	return _c
-}
-
-func (_c *MockCloudServersClient_PowerOn_Call) RunAndReturn(run func(context.Context, string, string, *types.RequestParameters) (*types.Response[types.CloudServerResponse], error)) *MockCloudServersClient_PowerOn_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// SetPassword provides a mock function with given fields: ctx, projectID, cloudServerID, body, params
-func (_m *MockCloudServersClient) SetPassword(ctx context.Context, projectID string, cloudServerID string, body types.CloudServerPasswordRequest, params *types.RequestParameters) (*types.Response[any], error) {
-	ret := _m.Called(ctx, projectID, cloudServerID, body, params)
-
-	if len(ret) == 0 {
-		panic("no return value specified for SetPassword")
-	}
-
-	var r0 *types.Response[any]
-	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, string, types.CloudServerPasswordRequest, *types.RequestParameters) (*types.Response[any], error)); ok {
-		return rf(ctx, projectID, cloudServerID, body, params)
-	}
-	if rf, ok := ret.Get(0).(func(context.Context, string, string, types.CloudServerPasswordRequest, *types.RequestParameters) *types.Response[any]); ok {
-		r0 = rf(ctx, projectID, cloudServerID, body, params)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*types.Response[any])
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func(context.Context, string, string, types.CloudServerPasswordRequest, *types.RequestParameters) error); ok {
-		r1 = rf(ctx, projectID, cloudServerID, body, params)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
-// MockCloudServersClient_SetPassword_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetPassword'
-type MockCloudServersClient_SetPassword_Call struct {
-	*mock.Call
-}
-
-// SetPassword is a helper method to define mock.On call
-//   - ctx context.Context
-//   - projectID string
-//   - cloudServerID string
-//   - body types.CloudServerPasswordRequest
-//   - params *types.RequestParameters
-func (_e *MockCloudServersClient_Expecter) SetPassword(ctx interface{}, projectID interface{}, cloudServerID interface{}, body interface{}, params interface{}) *MockCloudServersClient_SetPassword_Call {
-	return &MockCloudServersClient_SetPassword_Call{Call: _e.mock.On("SetPassword", ctx, projectID, cloudServerID, body, params)}
-}
-
-func (_c *MockCloudServersClient_SetPassword_Call) Run(run func(ctx context.Context, projectID string, cloudServerID string, body types.CloudServerPasswordRequest, params *types.RequestParameters)) *MockCloudServersClient_SetPassword_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string), args[2].(string), args[3].(types.CloudServerPasswordRequest), args[4].(*types.RequestParameters))
-	})
-	return _c
-}
-
-func (_c *MockCloudServersClient_SetPassword_Call) Return(_a0 *types.Response[any], _a1 error) *MockCloudServersClient_SetPassword_Call {
-	_c.Call.Return(_a0, _a1)
-	return _c
-}
-
-func (_c *MockCloudServersClient_SetPassword_Call) RunAndReturn(run func(context.Context, string, string, types.CloudServerPasswordRequest, *types.RequestParameters) (*types.Response[any], error)) *MockCloudServersClient_SetPassword_Call {
+func (_c *MockCloudServersClient_List_Call) RunAndReturn(run func(context.Context, string, *types.RequestParameters) (*types.Response[types.CloudServerListResponse], error)) *MockCloudServersClient_List_Call {
 	_c.Call.Return(run)
 	return _c
 }

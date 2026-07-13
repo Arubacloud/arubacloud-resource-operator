@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -17,9 +18,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/Arubacloud/sdk-go/pkg/aruba"
-	arubamt "github.com/Arubacloud/sdk-go/pkg/multitenant"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
+	arubaclient "github.com/Arubacloud/arubacloud-resource-operator/internal/client"
 )
 
 const (
@@ -63,11 +64,11 @@ type Reconciler struct {
 	client.Client
 	// Scheme is the runtime scheme used for object type registration.
 	*runtime.Scheme
-	// ArubaClient is the authenticated Aruba cloud API client.
-	config            ReconcilerConfig
-	multiTenantClient arubamt.Multitenant
-
-	// ArubaClient aruba.Client
+	// config holds all credential and endpoint configuration for deferred client creation.
+	config ReconcilerConfig
+	// clients caches one tenant-scoped port client per tenant, built lazily by ArubaClient.
+	clientsMu sync.Mutex
+	clients   map[string]arubaclient.Client
 }
 
 // ResourceObject is the constraint that every managed custom resource must satisfy.
@@ -115,13 +116,13 @@ type ReconcilerConfig struct {
 }
 
 // NewReconcilerForTest creates a Reconciler suitable for unit testing. It accepts a
-// pre-populated Multitenant client cache and a Kubernetes client+scheme directly,
+// pre-populated per-tenant port-client cache and a Kubernetes client+scheme directly,
 // bypassing the ctrl.Manager requirement and real credential configuration.
-func NewReconcilerForTest(k8sClient client.Client, scheme *runtime.Scheme, mtClient arubamt.Multitenant) *Reconciler {
+func NewReconcilerForTest(k8sClient client.Client, scheme *runtime.Scheme, clients map[string]arubaclient.Client) *Reconciler {
 	return &Reconciler{
-		Client:            k8sClient,
-		Scheme:            scheme,
-		multiTenantClient: mtClient,
+		Client:  k8sClient,
+		Scheme:  scheme,
+		clients: clients,
 	}
 }
 
@@ -131,17 +132,11 @@ func NewReconcilerForTest(k8sClient client.Client, scheme *runtime.Scheme, mtCli
 // cfg.VaultIsEnabled. The process is terminated with log.Fatalf if the Aruba client
 // cannot be created, since the operator cannot function without a valid API client.
 func NewReconciler(mgr ctrl.Manager, cfg ReconcilerConfig) *Reconciler {
-	// arubaClient, err := aruba.NewClient(options)
-	// if err != nil {
-	// 	log.Fatalf("failed to create Aruba Client: %v, options: `%v`", err, options)
-	// }
-
 	return &Reconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-		config: cfg,
-		// ArubaClient: arubaClient,
-		multiTenantClient: arubamt.New(),
+		Client:  mgr.GetClient(),
+		Scheme:  mgr.GetScheme(),
+		config:  cfg,
+		clients: make(map[string]arubaclient.Client),
 	}
 }
 
@@ -150,9 +145,11 @@ func NewReconciler(mgr ctrl.Manager, cfg ReconcilerConfig) *Reconciler {
 // the multi-tenant client cache, and if not, it creates a new client using the Reconciler's
 // configuration (either Vault-based or direct credentials) and adds it to the cache for
 // future use. Errors during client creation are returned to the caller for handling.
-func (r *Reconciler) ArubaClient(tenant string) (aruba.Client, error) {
-	c, ok := r.multiTenantClient.Get(tenant)
-	if ok {
+func (r *Reconciler) ArubaClient(tenant string) (arubaclient.Client, error) {
+	r.clientsMu.Lock()
+	defer r.clientsMu.Unlock()
+
+	if c, ok := r.clients[tenant]; ok {
 		return c, nil
 	}
 
@@ -167,14 +164,18 @@ func (r *Reconciler) ArubaClient(tenant string) (aruba.Client, error) {
 		options = options.WithClientCredentials(r.config.ClientID, r.config.ClientSecret)
 	}
 
-	arubaClient, err := aruba.NewClient(options)
+	sdkClient, err := aruba.NewClient(options)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Aruba Client: %w, options: `%v`", err, options)
 	}
 
-	r.multiTenantClient.Add(tenant, arubaClient)
+	c := arubaclient.New(sdkClient)
+	if r.clients == nil {
+		r.clients = make(map[string]arubaclient.Client)
+	}
+	r.clients[tenant] = c
 
-	return arubaClient, nil
+	return c, nil
 }
 
 // setupResource registers the finalizer and sets the initial Pending status for a new

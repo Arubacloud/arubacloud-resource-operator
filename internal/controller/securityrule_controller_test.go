@@ -35,7 +35,7 @@ import (
 
 // --- Builder helpers ---
 
-func buildSecurityRuleResponse(id, name, state string) *arubatypes.SecurityRuleResponse {
+func buildSecurityRuleResponse(id, name string, state arubatypes.State) *arubatypes.SecurityRuleResponse {
 	return &arubatypes.SecurityRuleResponse{
 		Metadata: arubatypes.ResourceMetadataResponse{
 			ID:   &id,
@@ -45,24 +45,24 @@ func buildSecurityRuleResponse(id, name, state string) *arubatypes.SecurityRuleR
 			Protocol:  "TCP",
 			Port:      "80",
 			Direction: arubatypes.RuleDirection("Ingress"),
-			Target: &arubatypes.RuleTarget{
+			Target: &arubatypes.RuleTargetCommon{
 				Kind:  arubatypes.EndpointTypeDto("Ip"),
 				Value: "0.0.0.0/0",
 			},
 		},
-		Status: arubatypes.ResourceStatus{
+		Status: arubatypes.ResourceStatusResponse{
 			State: &state,
 		},
 	}
 }
 
-func buildSecurityRuleList(responses ...*arubatypes.SecurityRuleResponse) *arubatypes.Response[arubatypes.SecurityRuleList] {
-	list := &arubatypes.SecurityRuleList{}
+func buildSecurityRuleList(responses ...*arubatypes.SecurityRuleResponse) *arubatypes.Response[arubatypes.SecurityRuleListResponse] {
+	list := &arubatypes.SecurityRuleListResponse{}
 	for _, r := range responses {
 		list.Values = append(list.Values, *r)
 		list.Total++
 	}
-	return &arubatypes.Response[arubatypes.SecurityRuleList]{
+	return &arubatypes.Response[arubatypes.SecurityRuleListResponse]{
 		Data:       list,
 		StatusCode: http.StatusOK,
 	}
@@ -74,9 +74,9 @@ func buildSRCRUDResponse(statusCode int) *arubatypes.Response[arubatypes.Securit
 	}
 }
 
-func buildSGListForSR(sgID, sgName string) *arubatypes.Response[arubatypes.SecurityGroupList] {
+func buildSGListForSR(sgID, sgName string) *arubatypes.Response[arubatypes.SecurityGroupListResponse] {
 	defaultVal := false
-	state := reconciler.CSPResourceStateActive
+	state := arubatypes.StateActive
 	sg := arubatypes.SecurityGroupResponse{
 		Metadata: arubatypes.ResourceMetadataResponse{
 			ID:   &sgID,
@@ -85,14 +85,14 @@ func buildSGListForSR(sgID, sgName string) *arubatypes.Response[arubatypes.Secur
 		Properties: arubatypes.SecurityGroupPropertiesResponse{
 			Default: defaultVal,
 		},
-		Status: arubatypes.ResourceStatus{
+		Status: arubatypes.ResourceStatusResponse{
 			State: &state,
 		},
 	}
-	list := &arubatypes.SecurityGroupList{}
+	list := &arubatypes.SecurityGroupListResponse{}
 	list.Values = append(list.Values, sg)
 	list.Total = 1
-	return &arubatypes.Response[arubatypes.SecurityGroupList]{
+	return &arubatypes.Response[arubatypes.SecurityGroupListResponse]{
 		Data:       list,
 		StatusCode: http.StatusOK,
 	}
@@ -361,7 +361,7 @@ var _ = Describe("SecurityRuleReconciler", func() {
 			sr = createTestSecurityRule(ctx, "test-sr-wait-create-transitory", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
 			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "", "", "", "", 0, time.Now())
 
-			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-wait-create-transitory", reconciler.CSPResourceStateCreating)
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-wait-create-transitory", arubatypes.StateCreating)
 			m.expectProjectList(srProjectID, srProjectName)
 			m.expectVpcList(srProjectID, srVpcID, srVpcName)
 			m.expectSGList(srProjectID, srVpcID, srSGID, srSGName)
@@ -379,7 +379,7 @@ var _ = Describe("SecurityRuleReconciler", func() {
 			sr = createTestSecurityRule(ctx, "test-sr-creation-confirmed", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
 			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "", "", "", "", 0, time.Now())
 
-			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-creation-confirmed", reconciler.CSPResourceStateActive)
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-creation-confirmed", arubatypes.StateActive)
 			m.expectProjectList(srProjectID, srProjectName)
 			m.expectVpcList(srProjectID, srVpcID, srVpcName)
 			m.expectSGList(srProjectID, srVpcID, srSGID, srSGName)
@@ -402,7 +402,7 @@ var _ = Describe("SecurityRuleReconciler", func() {
 			sr = createTestSecurityRule(ctx, "test-sr-creation-accomplished", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
 			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronized, "", "", "", "", 0, time.Now())
 
-			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-creation-accomplished", reconciler.CSPResourceStateActive)
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-creation-accomplished", arubatypes.StateActive)
 			m.expectProjectList(srProjectID, srProjectName)
 			m.expectVpcList(srProjectID, srVpcID, srVpcName)
 			m.expectSGList(srProjectID, srVpcID, srSGID, srSGName)
@@ -431,7 +431,7 @@ var _ = Describe("SecurityRuleReconciler", func() {
 			Expect(k8sClient.Update(ctx, srFetch)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), sr)).To(Succeed())
 
-			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-should-update", reconciler.CSPResourceStateActive)
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-should-update", arubatypes.StateActive)
 			m.expectProjectList(srProjectID, srProjectName)
 			m.expectVpcList(srProjectID, srVpcID, srVpcName)
 			m.expectSGList(srProjectID, srVpcID, srSGID, srSGName)
@@ -455,7 +455,7 @@ var _ = Describe("SecurityRuleReconciler", func() {
 			sr = createTestSecurityRule(ctx, "test-sr-update-not-supported", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
 			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, "sr-id-1", srProjectID, srVpcID, srSGID, 1, time.Now())
 
-			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-update-not-supported", reconciler.CSPResourceStateActive)
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-update-not-supported", arubatypes.StateActive)
 			m.expectProjectList(srProjectID, srProjectName)
 			m.expectVpcList(srProjectID, srVpcID, srVpcName)
 			m.expectSGList(srProjectID, srVpcID, srSGID, srSGName)
@@ -495,13 +495,13 @@ var _ = Describe("SecurityRuleReconciler", func() {
 			Expect(k8sClient.Status().Update(ctx, srFetch)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), sr)).To(Succeed())
 
-			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-update-rollback", reconciler.CSPResourceStateActive)
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-update-rollback", arubatypes.StateActive)
 			cmpSR.Metadata.Tags = []string{"cmp-tag1"}
 			cmpSR.Metadata.LocationResponse = &arubatypes.LocationResponse{Value: "ITBG-Bergamo"}
 			cmpSR.Properties.Protocol = "UDP"
 			cmpSR.Properties.Port = "53"
 			cmpSR.Properties.Direction = arubatypes.RuleDirection("Egress")
-			cmpSR.Properties.Target = &arubatypes.RuleTarget{
+			cmpSR.Properties.Target = &arubatypes.RuleTargetCommon{
 				Kind:  arubatypes.EndpointTypeDto("Ip"),
 				Value: "10.0.0.0/8",
 			}
@@ -518,8 +518,8 @@ var _ = Describe("SecurityRuleReconciler", func() {
 			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseActive))
 			// Spec should be rolled back to CMP values
 			Expect(updated.Spec.Tags).To(Equal(cmpSR.Metadata.Tags))
-			Expect(updated.Spec.Region).To(Equal(cmpSR.Metadata.LocationResponse.Value))
-			Expect(updated.Spec.Protocol).To(Equal(cmpSR.Properties.Protocol))
+			Expect(updated.Spec.Region).To(Equal(string(cmpSR.Metadata.LocationResponse.Value)))
+			Expect(updated.Spec.Protocol).To(Equal(string(cmpSR.Properties.Protocol)))
 			Expect(updated.Spec.Port).To(Equal(cmpSR.Properties.Port))
 			Expect(updated.Spec.Direction).To(Equal(string(cmpSR.Properties.Direction)))
 			Expect(updated.Spec.Target.Type).To(Equal(string(cmpSR.Properties.Target.Kind)))
@@ -540,7 +540,7 @@ var _ = Describe("SecurityRuleReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), sr)).To(Succeed())
 
 			// All 3 parent IDs cached → only SR list called
-			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-should-delete", reconciler.CSPResourceStateActive)
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-should-delete", arubatypes.StateActive)
 			m.expectSRList(srProjectID, srVpcID, srSGID, cmpSR)
 
 			_, err := m.r.HandleReconcile(ctx, sr)
@@ -568,7 +568,7 @@ var _ = Describe("SecurityRuleReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), sr)).To(Succeed())
 
 			// All 3 parent IDs cached → only SR list called, then delete
-			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-delete-cmp", reconciler.CSPResourceStateActive)
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-delete-cmp", arubatypes.StateActive)
 			m.expectSRList(srProjectID, srVpcID, srSGID, cmpSR)
 			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
 			m.mockNetwork.EXPECT().SecurityGroupRules().Return(m.mockSRules)
@@ -624,7 +624,7 @@ var _ = Describe("SecurityRuleReconciler", func() {
 			Expect(k8sClient.Delete(ctx, sr)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sr), sr)).To(Succeed())
 
-			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-deleting-transitory", reconciler.CSPResourceStateDeleting)
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-deleting-transitory", arubatypes.StateDeleting)
 			m.expectSRList(srProjectID, srVpcID, srSGID, cmpSR)
 
 			result, err := m.r.HandleReconcile(ctx, sr)
@@ -662,7 +662,7 @@ var _ = Describe("SecurityRuleReconciler", func() {
 			sr = createTestSecurityRule(ctx, "test-sr-in-error", defaultSecurityRuleSpec(srProjectName, srVpcName, srSGName))
 			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "sr-id-1", srProjectID, srVpcID, srSGID, 1, time.Now())
 
-			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-in-error", reconciler.CSPResourceStateFailed)
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-in-error", arubatypes.StateFailed)
 			m.expectProjectList(srProjectID, srProjectName)
 			m.expectVpcList(srProjectID, srVpcID, srVpcName)
 			m.expectSGList(srProjectID, srVpcID, srSGID, srSGName)
@@ -687,7 +687,7 @@ var _ = Describe("SecurityRuleReconciler", func() {
 			setSecurityRuleStatus(ctx, sr, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, "", srProjectID, srVpcID, srSGID,
 				0, time.Now().Add(-(reconciler.MaxPhaseTimeout + time.Minute)))
 
-			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-timeout", reconciler.CSPResourceStateActive)
+			cmpSR := buildSecurityRuleResponse("sr-id-1", "test-sr-timeout", arubatypes.StateActive)
 			m.expectProjectList(srProjectID, srProjectName)
 			m.expectVpcList(srProjectID, srVpcID, srVpcName)
 			m.expectSGList(srProjectID, srVpcID, srSGID, srSGName)
@@ -723,8 +723,8 @@ var _ = Describe("SecurityRuleReconciler", func() {
 
 			m.expectProjectList(srProjectID, srProjectName)
 
-			emptyVpcList := &arubatypes.Response[arubatypes.VPCList]{
-				Data:       &arubatypes.VPCList{},
+			emptyVpcList := &arubatypes.Response[arubatypes.VPCListResponse]{
+				Data:       &arubatypes.VPCListResponse{},
 				StatusCode: http.StatusOK,
 			}
 			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
@@ -745,8 +745,8 @@ var _ = Describe("SecurityRuleReconciler", func() {
 			m.expectProjectList(srProjectID, srProjectName)
 			m.expectVpcList(srProjectID, srVpcID, srVpcName)
 
-			emptySGList := &arubatypes.Response[arubatypes.SecurityGroupList]{
-				Data:       &arubatypes.SecurityGroupList{},
+			emptySGList := &arubatypes.Response[arubatypes.SecurityGroupListResponse]{
+				Data:       &arubatypes.SecurityGroupListResponse{},
 				StatusCode: http.StatusOK,
 			}
 			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)

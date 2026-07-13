@@ -3,7 +3,7 @@
 package arubamocks
 
 import (
-	aruba "github.com/Arubacloud/sdk-go/pkg/aruba"
+	client "github.com/Arubacloud/arubacloud-resource-operator/internal/client"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -20,67 +20,20 @@ func (_m *MockClient) EXPECT() *MockClient_Expecter {
 	return &MockClient_Expecter{mock: &_m.Mock}
 }
 
-// FromAudit provides a mock function with no fields
-func (_m *MockClient) FromAudit() aruba.AuditClient {
-	ret := _m.Called()
-
-	if len(ret) == 0 {
-		panic("no return value specified for FromAudit")
-	}
-
-	var r0 aruba.AuditClient
-	if rf, ok := ret.Get(0).(func() aruba.AuditClient); ok {
-		r0 = rf()
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(aruba.AuditClient)
-		}
-	}
-
-	return r0
-}
-
-// MockClient_FromAudit_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'FromAudit'
-type MockClient_FromAudit_Call struct {
-	*mock.Call
-}
-
-// FromAudit is a helper method to define mock.On call
-func (_e *MockClient_Expecter) FromAudit() *MockClient_FromAudit_Call {
-	return &MockClient_FromAudit_Call{Call: _e.mock.On("FromAudit")}
-}
-
-func (_c *MockClient_FromAudit_Call) Run(run func()) *MockClient_FromAudit_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run()
-	})
-	return _c
-}
-
-func (_c *MockClient_FromAudit_Call) Return(_a0 aruba.AuditClient) *MockClient_FromAudit_Call {
-	_c.Call.Return(_a0)
-	return _c
-}
-
-func (_c *MockClient_FromAudit_Call) RunAndReturn(run func() aruba.AuditClient) *MockClient_FromAudit_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
 // FromCompute provides a mock function with no fields
-func (_m *MockClient) FromCompute() aruba.ComputeClient {
+func (_m *MockClient) FromCompute() client.ComputeClient {
 	ret := _m.Called()
 
 	if len(ret) == 0 {
 		panic("no return value specified for FromCompute")
 	}
 
-	var r0 aruba.ComputeClient
-	if rf, ok := ret.Get(0).(func() aruba.ComputeClient); ok {
+	var r0 client.ComputeClient
+	if rf, ok := ret.Get(0).(func() client.ComputeClient); ok {
 		r0 = rf()
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(aruba.ComputeClient)
+			r0 = ret.Get(0).(client.ComputeClient)
 		}
 	}
 
@@ -104,171 +57,30 @@ func (_c *MockClient_FromCompute_Call) Run(run func()) *MockClient_FromCompute_C
 	return _c
 }
 
-func (_c *MockClient_FromCompute_Call) Return(_a0 aruba.ComputeClient) *MockClient_FromCompute_Call {
+func (_c *MockClient_FromCompute_Call) Return(_a0 client.ComputeClient) *MockClient_FromCompute_Call {
 	_c.Call.Return(_a0)
 	return _c
 }
 
-func (_c *MockClient_FromCompute_Call) RunAndReturn(run func() aruba.ComputeClient) *MockClient_FromCompute_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// FromContainer provides a mock function with no fields
-func (_m *MockClient) FromContainer() aruba.ContainerClient {
-	ret := _m.Called()
-
-	if len(ret) == 0 {
-		panic("no return value specified for FromContainer")
-	}
-
-	var r0 aruba.ContainerClient
-	if rf, ok := ret.Get(0).(func() aruba.ContainerClient); ok {
-		r0 = rf()
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(aruba.ContainerClient)
-		}
-	}
-
-	return r0
-}
-
-// MockClient_FromContainer_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'FromContainer'
-type MockClient_FromContainer_Call struct {
-	*mock.Call
-}
-
-// FromContainer is a helper method to define mock.On call
-func (_e *MockClient_Expecter) FromContainer() *MockClient_FromContainer_Call {
-	return &MockClient_FromContainer_Call{Call: _e.mock.On("FromContainer")}
-}
-
-func (_c *MockClient_FromContainer_Call) Run(run func()) *MockClient_FromContainer_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run()
-	})
-	return _c
-}
-
-func (_c *MockClient_FromContainer_Call) Return(_a0 aruba.ContainerClient) *MockClient_FromContainer_Call {
-	_c.Call.Return(_a0)
-	return _c
-}
-
-func (_c *MockClient_FromContainer_Call) RunAndReturn(run func() aruba.ContainerClient) *MockClient_FromContainer_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// FromDatabase provides a mock function with no fields
-func (_m *MockClient) FromDatabase() aruba.DatabaseClient {
-	ret := _m.Called()
-
-	if len(ret) == 0 {
-		panic("no return value specified for FromDatabase")
-	}
-
-	var r0 aruba.DatabaseClient
-	if rf, ok := ret.Get(0).(func() aruba.DatabaseClient); ok {
-		r0 = rf()
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(aruba.DatabaseClient)
-		}
-	}
-
-	return r0
-}
-
-// MockClient_FromDatabase_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'FromDatabase'
-type MockClient_FromDatabase_Call struct {
-	*mock.Call
-}
-
-// FromDatabase is a helper method to define mock.On call
-func (_e *MockClient_Expecter) FromDatabase() *MockClient_FromDatabase_Call {
-	return &MockClient_FromDatabase_Call{Call: _e.mock.On("FromDatabase")}
-}
-
-func (_c *MockClient_FromDatabase_Call) Run(run func()) *MockClient_FromDatabase_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run()
-	})
-	return _c
-}
-
-func (_c *MockClient_FromDatabase_Call) Return(_a0 aruba.DatabaseClient) *MockClient_FromDatabase_Call {
-	_c.Call.Return(_a0)
-	return _c
-}
-
-func (_c *MockClient_FromDatabase_Call) RunAndReturn(run func() aruba.DatabaseClient) *MockClient_FromDatabase_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// FromMetric provides a mock function with no fields
-func (_m *MockClient) FromMetric() aruba.MetricClient {
-	ret := _m.Called()
-
-	if len(ret) == 0 {
-		panic("no return value specified for FromMetric")
-	}
-
-	var r0 aruba.MetricClient
-	if rf, ok := ret.Get(0).(func() aruba.MetricClient); ok {
-		r0 = rf()
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(aruba.MetricClient)
-		}
-	}
-
-	return r0
-}
-
-// MockClient_FromMetric_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'FromMetric'
-type MockClient_FromMetric_Call struct {
-	*mock.Call
-}
-
-// FromMetric is a helper method to define mock.On call
-func (_e *MockClient_Expecter) FromMetric() *MockClient_FromMetric_Call {
-	return &MockClient_FromMetric_Call{Call: _e.mock.On("FromMetric")}
-}
-
-func (_c *MockClient_FromMetric_Call) Run(run func()) *MockClient_FromMetric_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run()
-	})
-	return _c
-}
-
-func (_c *MockClient_FromMetric_Call) Return(_a0 aruba.MetricClient) *MockClient_FromMetric_Call {
-	_c.Call.Return(_a0)
-	return _c
-}
-
-func (_c *MockClient_FromMetric_Call) RunAndReturn(run func() aruba.MetricClient) *MockClient_FromMetric_Call {
+func (_c *MockClient_FromCompute_Call) RunAndReturn(run func() client.ComputeClient) *MockClient_FromCompute_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // FromNetwork provides a mock function with no fields
-func (_m *MockClient) FromNetwork() aruba.NetworkClient {
+func (_m *MockClient) FromNetwork() client.NetworkClient {
 	ret := _m.Called()
 
 	if len(ret) == 0 {
 		panic("no return value specified for FromNetwork")
 	}
 
-	var r0 aruba.NetworkClient
-	if rf, ok := ret.Get(0).(func() aruba.NetworkClient); ok {
+	var r0 client.NetworkClient
+	if rf, ok := ret.Get(0).(func() client.NetworkClient); ok {
 		r0 = rf()
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(aruba.NetworkClient)
+			r0 = ret.Get(0).(client.NetworkClient)
 		}
 	}
 
@@ -292,30 +104,30 @@ func (_c *MockClient_FromNetwork_Call) Run(run func()) *MockClient_FromNetwork_C
 	return _c
 }
 
-func (_c *MockClient_FromNetwork_Call) Return(_a0 aruba.NetworkClient) *MockClient_FromNetwork_Call {
+func (_c *MockClient_FromNetwork_Call) Return(_a0 client.NetworkClient) *MockClient_FromNetwork_Call {
 	_c.Call.Return(_a0)
 	return _c
 }
 
-func (_c *MockClient_FromNetwork_Call) RunAndReturn(run func() aruba.NetworkClient) *MockClient_FromNetwork_Call {
+func (_c *MockClient_FromNetwork_Call) RunAndReturn(run func() client.NetworkClient) *MockClient_FromNetwork_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // FromProject provides a mock function with no fields
-func (_m *MockClient) FromProject() aruba.ProjectClient {
+func (_m *MockClient) FromProject() client.ProjectClient {
 	ret := _m.Called()
 
 	if len(ret) == 0 {
 		panic("no return value specified for FromProject")
 	}
 
-	var r0 aruba.ProjectClient
-	if rf, ok := ret.Get(0).(func() aruba.ProjectClient); ok {
+	var r0 client.ProjectClient
+	if rf, ok := ret.Get(0).(func() client.ProjectClient); ok {
 		r0 = rf()
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(aruba.ProjectClient)
+			r0 = ret.Get(0).(client.ProjectClient)
 		}
 	}
 
@@ -339,124 +151,30 @@ func (_c *MockClient_FromProject_Call) Run(run func()) *MockClient_FromProject_C
 	return _c
 }
 
-func (_c *MockClient_FromProject_Call) Return(_a0 aruba.ProjectClient) *MockClient_FromProject_Call {
+func (_c *MockClient_FromProject_Call) Return(_a0 client.ProjectClient) *MockClient_FromProject_Call {
 	_c.Call.Return(_a0)
 	return _c
 }
 
-func (_c *MockClient_FromProject_Call) RunAndReturn(run func() aruba.ProjectClient) *MockClient_FromProject_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// FromSchedule provides a mock function with no fields
-func (_m *MockClient) FromSchedule() aruba.ScheduleClient {
-	ret := _m.Called()
-
-	if len(ret) == 0 {
-		panic("no return value specified for FromSchedule")
-	}
-
-	var r0 aruba.ScheduleClient
-	if rf, ok := ret.Get(0).(func() aruba.ScheduleClient); ok {
-		r0 = rf()
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(aruba.ScheduleClient)
-		}
-	}
-
-	return r0
-}
-
-// MockClient_FromSchedule_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'FromSchedule'
-type MockClient_FromSchedule_Call struct {
-	*mock.Call
-}
-
-// FromSchedule is a helper method to define mock.On call
-func (_e *MockClient_Expecter) FromSchedule() *MockClient_FromSchedule_Call {
-	return &MockClient_FromSchedule_Call{Call: _e.mock.On("FromSchedule")}
-}
-
-func (_c *MockClient_FromSchedule_Call) Run(run func()) *MockClient_FromSchedule_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run()
-	})
-	return _c
-}
-
-func (_c *MockClient_FromSchedule_Call) Return(_a0 aruba.ScheduleClient) *MockClient_FromSchedule_Call {
-	_c.Call.Return(_a0)
-	return _c
-}
-
-func (_c *MockClient_FromSchedule_Call) RunAndReturn(run func() aruba.ScheduleClient) *MockClient_FromSchedule_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// FromSecurity provides a mock function with no fields
-func (_m *MockClient) FromSecurity() aruba.SecurityClient {
-	ret := _m.Called()
-
-	if len(ret) == 0 {
-		panic("no return value specified for FromSecurity")
-	}
-
-	var r0 aruba.SecurityClient
-	if rf, ok := ret.Get(0).(func() aruba.SecurityClient); ok {
-		r0 = rf()
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(aruba.SecurityClient)
-		}
-	}
-
-	return r0
-}
-
-// MockClient_FromSecurity_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'FromSecurity'
-type MockClient_FromSecurity_Call struct {
-	*mock.Call
-}
-
-// FromSecurity is a helper method to define mock.On call
-func (_e *MockClient_Expecter) FromSecurity() *MockClient_FromSecurity_Call {
-	return &MockClient_FromSecurity_Call{Call: _e.mock.On("FromSecurity")}
-}
-
-func (_c *MockClient_FromSecurity_Call) Run(run func()) *MockClient_FromSecurity_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run()
-	})
-	return _c
-}
-
-func (_c *MockClient_FromSecurity_Call) Return(_a0 aruba.SecurityClient) *MockClient_FromSecurity_Call {
-	_c.Call.Return(_a0)
-	return _c
-}
-
-func (_c *MockClient_FromSecurity_Call) RunAndReturn(run func() aruba.SecurityClient) *MockClient_FromSecurity_Call {
+func (_c *MockClient_FromProject_Call) RunAndReturn(run func() client.ProjectClient) *MockClient_FromProject_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // FromStorage provides a mock function with no fields
-func (_m *MockClient) FromStorage() aruba.StorageClient {
+func (_m *MockClient) FromStorage() client.StorageClient {
 	ret := _m.Called()
 
 	if len(ret) == 0 {
 		panic("no return value specified for FromStorage")
 	}
 
-	var r0 aruba.StorageClient
-	if rf, ok := ret.Get(0).(func() aruba.StorageClient); ok {
+	var r0 client.StorageClient
+	if rf, ok := ret.Get(0).(func() client.StorageClient); ok {
 		r0 = rf()
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(aruba.StorageClient)
+			r0 = ret.Get(0).(client.StorageClient)
 		}
 	}
 
@@ -480,12 +198,12 @@ func (_c *MockClient_FromStorage_Call) Run(run func()) *MockClient_FromStorage_C
 	return _c
 }
 
-func (_c *MockClient_FromStorage_Call) Return(_a0 aruba.StorageClient) *MockClient_FromStorage_Call {
+func (_c *MockClient_FromStorage_Call) Return(_a0 client.StorageClient) *MockClient_FromStorage_Call {
 	_c.Call.Return(_a0)
 	return _c
 }
 
-func (_c *MockClient_FromStorage_Call) RunAndReturn(run func() aruba.StorageClient) *MockClient_FromStorage_Call {
+func (_c *MockClient_FromStorage_Call) RunAndReturn(run func() client.StorageClient) *MockClient_FromStorage_Call {
 	_c.Call.Return(run)
 	return _c
 }

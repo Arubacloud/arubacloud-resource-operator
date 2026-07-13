@@ -33,20 +33,20 @@ func buildProjectResponse(id, name string, tags []string, description string, de
 	}
 }
 
-func buildProjectList(responses ...*arubatypes.ProjectResponse) *arubatypes.Response[arubatypes.ProjectList] {
-	list := &arubatypes.ProjectList{}
+func buildProjectList(responses ...*arubatypes.ProjectResponse) *arubatypes.Response[arubatypes.ProjectListResponse] {
+	list := &arubatypes.ProjectListResponse{}
 	for _, r := range responses {
 		list.Values = append(list.Values, *r)
 		list.Total++
 	}
-	return &arubatypes.Response[arubatypes.ProjectList]{
+	return &arubatypes.Response[arubatypes.ProjectListResponse]{
 		Data:       list,
 		StatusCode: http.StatusOK,
 	}
 }
 
-func buildProjectListErrorResponse(statusCode int) *arubatypes.Response[arubatypes.ProjectList] {
-	return &arubatypes.Response[arubatypes.ProjectList]{
+func buildProjectListErrorResponse(statusCode int) *arubatypes.Response[arubatypes.ProjectListResponse] {
+	return &arubatypes.Response[arubatypes.ProjectListResponse]{
 		StatusCode: statusCode,
 	}
 }

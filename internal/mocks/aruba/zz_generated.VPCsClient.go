@@ -144,85 +144,24 @@ func (_c *MockVPCsClient_Delete_Call) RunAndReturn(run func(context.Context, str
 	return _c
 }
 
-// Get provides a mock function with given fields: ctx, projectID, vpcID, params
-func (_m *MockVPCsClient) Get(ctx context.Context, projectID string, vpcID string, params *types.RequestParameters) (*types.Response[types.VPCResponse], error) {
-	ret := _m.Called(ctx, projectID, vpcID, params)
-
-	if len(ret) == 0 {
-		panic("no return value specified for Get")
-	}
-
-	var r0 *types.Response[types.VPCResponse]
-	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, string, *types.RequestParameters) (*types.Response[types.VPCResponse], error)); ok {
-		return rf(ctx, projectID, vpcID, params)
-	}
-	if rf, ok := ret.Get(0).(func(context.Context, string, string, *types.RequestParameters) *types.Response[types.VPCResponse]); ok {
-		r0 = rf(ctx, projectID, vpcID, params)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*types.Response[types.VPCResponse])
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func(context.Context, string, string, *types.RequestParameters) error); ok {
-		r1 = rf(ctx, projectID, vpcID, params)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
-// MockVPCsClient_Get_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Get'
-type MockVPCsClient_Get_Call struct {
-	*mock.Call
-}
-
-// Get is a helper method to define mock.On call
-//   - ctx context.Context
-//   - projectID string
-//   - vpcID string
-//   - params *types.RequestParameters
-func (_e *MockVPCsClient_Expecter) Get(ctx interface{}, projectID interface{}, vpcID interface{}, params interface{}) *MockVPCsClient_Get_Call {
-	return &MockVPCsClient_Get_Call{Call: _e.mock.On("Get", ctx, projectID, vpcID, params)}
-}
-
-func (_c *MockVPCsClient_Get_Call) Run(run func(ctx context.Context, projectID string, vpcID string, params *types.RequestParameters)) *MockVPCsClient_Get_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string), args[2].(string), args[3].(*types.RequestParameters))
-	})
-	return _c
-}
-
-func (_c *MockVPCsClient_Get_Call) Return(_a0 *types.Response[types.VPCResponse], _a1 error) *MockVPCsClient_Get_Call {
-	_c.Call.Return(_a0, _a1)
-	return _c
-}
-
-func (_c *MockVPCsClient_Get_Call) RunAndReturn(run func(context.Context, string, string, *types.RequestParameters) (*types.Response[types.VPCResponse], error)) *MockVPCsClient_Get_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
 // List provides a mock function with given fields: ctx, projectID, params
-func (_m *MockVPCsClient) List(ctx context.Context, projectID string, params *types.RequestParameters) (*types.Response[types.VPCList], error) {
+func (_m *MockVPCsClient) List(ctx context.Context, projectID string, params *types.RequestParameters) (*types.Response[types.VPCListResponse], error) {
 	ret := _m.Called(ctx, projectID, params)
 
 	if len(ret) == 0 {
 		panic("no return value specified for List")
 	}
 
-	var r0 *types.Response[types.VPCList]
+	var r0 *types.Response[types.VPCListResponse]
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, *types.RequestParameters) (*types.Response[types.VPCList], error)); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, string, *types.RequestParameters) (*types.Response[types.VPCListResponse], error)); ok {
 		return rf(ctx, projectID, params)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, string, *types.RequestParameters) *types.Response[types.VPCList]); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, string, *types.RequestParameters) *types.Response[types.VPCListResponse]); ok {
 		r0 = rf(ctx, projectID, params)
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*types.Response[types.VPCList])
+			r0 = ret.Get(0).(*types.Response[types.VPCListResponse])
 		}
 	}
 
@@ -255,12 +194,12 @@ func (_c *MockVPCsClient_List_Call) Run(run func(ctx context.Context, projectID 
 	return _c
 }
 
-func (_c *MockVPCsClient_List_Call) Return(_a0 *types.Response[types.VPCList], _a1 error) *MockVPCsClient_List_Call {
+func (_c *MockVPCsClient_List_Call) Return(_a0 *types.Response[types.VPCListResponse], _a1 error) *MockVPCsClient_List_Call {
 	_c.Call.Return(_a0, _a1)
 	return _c
 }
 
-func (_c *MockVPCsClient_List_Call) RunAndReturn(run func(context.Context, string, *types.RequestParameters) (*types.Response[types.VPCList], error)) *MockVPCsClient_List_Call {
+func (_c *MockVPCsClient_List_Call) RunAndReturn(run func(context.Context, string, *types.RequestParameters) (*types.Response[types.VPCListResponse], error)) *MockVPCsClient_List_Call {
 	_c.Call.Return(run)
 	return _c
 }

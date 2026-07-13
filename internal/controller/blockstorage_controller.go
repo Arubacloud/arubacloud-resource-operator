@@ -26,7 +26,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/Arubacloud/sdk-go/pkg/aruba"
+	arubaclient "github.com/Arubacloud/arubacloud-resource-operator/internal/client"
 	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
@@ -264,7 +264,7 @@ func (r *BlockStorageReconciler) fetchKubeDependencies(
 func (r *BlockStorageReconciler) fetchCMPDependencies(
 	ctx context.Context,
 	kubeBlockStorage *v1alpha1.BlockStorage,
-	arubaClient aruba.Client,
+	arubaClient arubaclient.Client,
 	isDeleting bool,
 ) (string, *arubatypes.BlockStorageResponse, ctrl.Result, error) {
 	blockStorageName, projectName := kubeBlockStorage.Name, kubeBlockStorage.Spec.ProjectReference.Name
@@ -679,14 +679,14 @@ func cmpBlockStorageNotExistsOrTransitory(_ *v1alpha1.BlockStorage, cmpBS *aruba
 
 func cmpBlockStorageIsActive(_ *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockStorageResponse) bool {
 	return cmpBS != nil && cmpBS.Status.State != nil &&
-		(*cmpBS.Status.State == reconciler.CSPResourceStateActive ||
-			*cmpBS.Status.State == reconciler.CSPResourceStateNotUsed ||
-			*cmpBS.Status.State == reconciler.CSPResourceStateInUse ||
-			*cmpBS.Status.State == reconciler.CSPResourceStateUsed)
+		(*cmpBS.Status.State == arubatypes.StateActive ||
+			*cmpBS.Status.State == arubatypes.StateNotUsed ||
+			*cmpBS.Status.State == arubatypes.StateInUse ||
+			*cmpBS.Status.State == arubatypes.StateUsed)
 }
 
 func cmpBlockStorageIsFailed(_ *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockStorageResponse) bool {
-	return cmpBS != nil && cmpBS.Status.State != nil && *cmpBS.Status.State == reconciler.CSPResourceStateFailed
+	return cmpBS != nil && cmpBS.Status.State != nil && *cmpBS.Status.State == arubatypes.StateFailed
 }
 
 // ---------------------------------------------------------------------------
@@ -774,7 +774,7 @@ func (r *BlockStorageReconciler) kubeSetFailed(ctx context.Context, kubeBS *v1al
 
 func (r *BlockStorageReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockStorageResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
-	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(arubaclient.Client)
 	cmpBSResp, err := arubaClient.FromStorage().Volumes().Delete(ctx, prjID, *cmpBS.Metadata.ID, nil)
 	if err != nil {
 		return reconciler.CMPTransportError("delete", *cmpBS.Metadata.Name, err)
@@ -785,7 +785,7 @@ func (r *BlockStorageReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.Bloc
 
 func (r *BlockStorageReconciler) cmpUpdate(ctx context.Context, kubeBS *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockStorageResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
-	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(arubaclient.Client)
 
 	// Guard: should have been caught by HasDeniedChanges, but double-check.
 	if err := checkBlockStorageDeniedChanges(kubeBS, cmpBS); err != nil {
@@ -804,7 +804,7 @@ func (r *BlockStorageReconciler) cmpUpdate(ctx context.Context, kubeBS *v1alpha1
 
 func (r *BlockStorageReconciler) cmpCreate(ctx context.Context, kubeBS *v1alpha1.BlockStorage, _ *arubatypes.BlockStorageResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
-	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(arubaclient.Client)
 
 	cmpBSResp, err := arubaClient.FromStorage().Volumes().Create(ctx, prjID, *cmpBlockStorageRequestFromKube(kubeBS), nil)
 	if err != nil {
@@ -839,7 +839,7 @@ func checkBlockStorageDeniedChanges(kubeBS *v1alpha1.BlockStorage, cmpBS *arubat
 	}
 	locationValue := ""
 	if cmpBS.Metadata.LocationResponse != nil {
-		locationValue = cmpBS.Metadata.LocationResponse.Value
+		locationValue = string(cmpBS.Metadata.LocationResponse.Value)
 	}
 	if kubeBS.Spec.Region != locationValue {
 		errs = append(errs, errors.New("change the 'location' is not allowed"))
@@ -855,10 +855,19 @@ func kubeBlockStorageNeedsUpdate(kubeBS *v1alpha1.BlockStorage, cmpBS *arubatype
 	if cmpBS == nil {
 		return false
 	}
-	return kubeBS.Spec.BillingPeriod != cmpBS.Properties.BillingPeriod ||
-		kubeBS.Spec.Zone != cmpBS.Properties.Zone ||
+	return kubeBS.Spec.BillingPeriod != billingPeriodString(cmpBS.Properties.BillingPeriod) ||
+		kubeBS.Spec.Zone != string(cmpBS.Properties.Zone) ||
 		kubeBS.Spec.SizeGB != int32(cmpBS.Properties.SizeGB) || //nolint:gosec // disk size in GB always fits int32
 		!reconciler.TagsAreEqual(kubeBS.Spec.Tags, cmpBS.Metadata.Tags)
+}
+
+// billingPeriodString dereferences an optional wire BillingPeriod into its
+// string form ("" when unset).
+func billingPeriodString(p *arubatypes.BillingPeriod) string {
+	if p == nil {
+		return ""
+	}
+	return string(*p)
 }
 
 func buildBlockStorageUpdateRequest(kubeBS *v1alpha1.BlockStorage, cmpBS *arubatypes.BlockStorageResponse) *arubatypes.BlockStorageRequest {
@@ -866,8 +875,9 @@ func buildBlockStorageUpdateRequest(kubeBS *v1alpha1.BlockStorage, cmpBS *arubat
 	if request == nil {
 		return nil
 	}
-	request.Properties.BillingPeriod = kubeBS.Spec.BillingPeriod
-	zone := kubeBS.Spec.Zone
+	billingPeriod := arubatypes.BillingPeriod(kubeBS.Spec.BillingPeriod)
+	request.Properties.BillingPeriod = &billingPeriod
+	zone := arubatypes.Zone(kubeBS.Spec.Zone)
 	request.Properties.Zone = &zone
 	request.Properties.SizeGB = int(kubeBS.Spec.SizeGB)
 	tags := make([]string, len(kubeBS.Spec.Tags))
@@ -911,18 +921,20 @@ func cmpBlockStorageRequestFromCMP(cmpBS *arubatypes.BlockStorageResponse) *arub
 }
 
 func cmpBlockStorageRequestFromKube(kubeBS *v1alpha1.BlockStorage) *arubatypes.BlockStorageRequest {
+	billingPeriod := arubatypes.BillingPeriod(kubeBS.Spec.BillingPeriod)
+	zone := arubatypes.Zone(kubeBS.Spec.Zone)
 	return &arubatypes.BlockStorageRequest{
 		Metadata: arubatypes.RegionalResourceMetadataRequest{
 			ResourceMetadataRequest: arubatypes.ResourceMetadataRequest{
 				Name: kubeBS.Name,
 				Tags: kubeBS.Spec.Tags,
 			},
-			Location: arubatypes.LocationRequest{Value: kubeBS.Spec.Region},
+			Location: arubatypes.LocationRequest{Value: arubatypes.Region(kubeBS.Spec.Region)},
 		},
 		Properties: arubatypes.BlockStoragePropertiesRequest{
 			SizeGB:        int(kubeBS.Spec.SizeGB),
-			BillingPeriod: kubeBS.Spec.BillingPeriod,
-			Zone:          &kubeBS.Spec.Zone,
+			BillingPeriod: &billingPeriod,
+			Zone:          &zone,
 			Bootable:      &kubeBS.Spec.Bootable,
 			Image:         &kubeBS.Spec.Image,
 			Type:          arubatypes.BlockStorageType(kubeBS.Spec.Type),

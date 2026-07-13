@@ -28,7 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/Arubacloud/sdk-go/pkg/aruba"
+	arubaclient "github.com/Arubacloud/arubacloud-resource-operator/internal/client"
 	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
@@ -331,7 +331,7 @@ func (r *CloudServerReconciler) fetchKubeDependencies(ctx context.Context, kubeC
 func (r *CloudServerReconciler) fetchCMPDependencies(
 	ctx context.Context,
 	kubeCS *v1alpha1.CloudServer,
-	arubaClient aruba.Client,
+	arubaClient arubaclient.Client,
 	isDeleting bool,
 	isCreating bool,
 ) (cmpCS *arubatypes.CloudServerResponse, cmpBdl *cmpCloudServerBundle, enrichedCtx context.Context, result ctrl.Result, err error) {
@@ -1059,7 +1059,7 @@ func (r *CloudServerReconciler) newTransitionSet() *reconciler.TransitionSet[*v1
 
 func (r *CloudServerReconciler) resolveProjectID(
 	ctx context.Context,
-	arubaClient aruba.Client,
+	arubaClient arubaclient.Client,
 	kubeCS *v1alpha1.CloudServer,
 	isDeleting bool,
 ) (string, ctrl.Result, error) {
@@ -1110,7 +1110,7 @@ func (r *CloudServerReconciler) resolveProjectID(
 
 func (r *CloudServerReconciler) resolveVpcID(
 	ctx context.Context,
-	arubaClient aruba.Client,
+	arubaClient arubaclient.Client,
 	kubeCS *v1alpha1.CloudServer,
 	isDeleting bool,
 	prjID string,
@@ -1165,7 +1165,7 @@ func (r *CloudServerReconciler) resolveVpcID(
 
 func (r *CloudServerReconciler) resolveBootVolumeID(
 	ctx context.Context,
-	arubaClient aruba.Client,
+	arubaClient arubaclient.Client,
 	kubeCS *v1alpha1.CloudServer,
 	isDeleting bool,
 	// WORKAROUND: isCreating gates the readiness check below.
@@ -1216,7 +1216,7 @@ func (r *CloudServerReconciler) resolveBootVolumeID(
 		if stateNature != reconciler.CSPResourceStateNatureFinal {
 			state := "<nil>"
 			if cmpVolList.Data.Values[0].Status.State != nil {
-				state = *cmpVolList.Data.Values[0].Status.State
+				state = string(*cmpVolList.Data.Values[0].Status.State)
 			}
 			log.FromContext(ctx).V(1).Info("boot volume not ready on CMP, requeuing", "volumeName", volName, "cmpState", state)
 			return "", nil, ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
@@ -1236,7 +1236,7 @@ func (r *CloudServerReconciler) resolveBootVolumeID(
 
 func (r *CloudServerReconciler) resolveSubnetIDs(
 	ctx context.Context,
-	arubaClient aruba.Client,
+	arubaClient arubaclient.Client,
 	kubeCS *v1alpha1.CloudServer,
 	isDeleting bool,
 	// WORKAROUND: isCreating gates the readiness check below.
@@ -1285,7 +1285,7 @@ func (r *CloudServerReconciler) resolveSubnetIDs(
 			if stateNature != reconciler.CSPResourceStateNatureFinal {
 				state := "<nil>"
 				if cmpList.Data.Values[0].Status.State != nil {
-					state = *cmpList.Data.Values[0].Status.State
+					state = string(*cmpList.Data.Values[0].Status.State)
 				}
 				log.FromContext(ctx).V(1).Info("subnet not ready on CMP, requeuing", "subnetName", ref.Name, "cmpState", state)
 				return nil, nil, ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
@@ -1301,7 +1301,7 @@ func (r *CloudServerReconciler) resolveSubnetIDs(
 
 func (r *CloudServerReconciler) resolveSecurityGroupIDs(
 	ctx context.Context,
-	arubaClient aruba.Client,
+	arubaClient arubaclient.Client,
 	kubeCS *v1alpha1.CloudServer,
 	isDeleting bool,
 	prjID, vpcID string,
@@ -1347,7 +1347,7 @@ func (r *CloudServerReconciler) resolveSecurityGroupIDs(
 
 func (r *CloudServerReconciler) resolveKeyPairID(
 	ctx context.Context,
-	arubaClient aruba.Client,
+	arubaClient arubaclient.Client,
 	kubeCS *v1alpha1.CloudServer,
 	isDeleting bool,
 	prjID string,
@@ -1390,7 +1390,7 @@ func (r *CloudServerReconciler) resolveKeyPairID(
 
 func (r *CloudServerReconciler) resolveElasticIPID(
 	ctx context.Context,
-	arubaClient aruba.Client,
+	arubaClient arubaclient.Client,
 	kubeCS *v1alpha1.CloudServer,
 	isDeleting bool,
 	prjID string,
@@ -1498,14 +1498,14 @@ func cmpCloudServerIsActive(_ *v1alpha1.CloudServer, cmpCS *arubatypes.CloudServ
 		return false
 	}
 	switch *cmpCS.Status.State {
-	case reconciler.CSPResourceStateActive, reconciler.CSPResourceStateRunning, reconciler.CSPResourceStateStopped:
+	case arubatypes.StateActive, arubatypes.StateRunning, arubatypes.StateStopped:
 		return true
 	}
 	return false
 }
 
 func cmpCloudServerIsFailed(_ *v1alpha1.CloudServer, cmpCS *arubatypes.CloudServerResponse) bool {
-	return cmpCS != nil && cmpCS.Status.State != nil && *cmpCS.Status.State == reconciler.CSPResourceStateFailed
+	return cmpCS != nil && cmpCS.Status.State != nil && *cmpCS.Status.State == arubatypes.StateFailed
 }
 
 // ---------------------------------------------------------------------------
@@ -1631,7 +1631,7 @@ func (r *CloudServerReconciler) kubeSetFailed(ctx context.Context, kubeCS *v1alp
 // ---------------------------------------------------------------------------
 
 func (r *CloudServerReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.CloudServer, cmpCS *arubatypes.CloudServerResponse) error {
-	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(arubaclient.Client)
 	prjID := ctx.Value(projectIDKey).(string)
 
 	resp, err := arubaClient.FromCompute().CloudServers().Delete(ctx, prjID, *cmpCS.Metadata.ID, nil)
@@ -1643,7 +1643,7 @@ func (r *CloudServerReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.Cloud
 }
 
 func (r *CloudServerReconciler) cmpUpdate(ctx context.Context, kubeCS *v1alpha1.CloudServer, cmpCS *arubatypes.CloudServerResponse) error {
-	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(arubaclient.Client)
 	prjID := ctx.Value(projectIDKey).(string)
 
 	// Guard: should have been caught by HasDeniedChanges, but double-check.
@@ -1661,7 +1661,7 @@ func (r *CloudServerReconciler) cmpUpdate(ctx context.Context, kubeCS *v1alpha1.
 }
 
 func (r *CloudServerReconciler) cmpCreate(ctx context.Context, kubeCS *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse) error {
-	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(arubaclient.Client)
 	prjID := ctx.Value(projectIDKey).(string)
 
 	request := cmpCSRequestFromKube(ctx, kubeCS)
@@ -1682,11 +1682,11 @@ func checkCSDeniedChanges(kubeCS *v1alpha1.CloudServer, cmpCS *arubatypes.CloudS
 		return nil
 	}
 
-	if kubeCS.Spec.Zone != cmpCS.Properties.Zone {
+	if kubeCS.Spec.Zone != string(cmpCS.Properties.Zone) {
 		return fmt.Errorf("%w: %w", reconciler.ErrNotAllowedChanges, errors.New("change the 'dataCenter' is not allowed"))
 	}
 
-	if kubeCS.Spec.FlavorName != cmpCS.Properties.Flavor.Name {
+	if kubeCS.Spec.FlavorName != string(cmpCS.Properties.Flavor.Name) {
 		return fmt.Errorf("%w: %w", reconciler.ErrNotAllowedChanges, errors.New("change the 'flavorName' is not allowed"))
 	}
 
@@ -1703,7 +1703,7 @@ func kubeCSNeedsUpdate(kubeCS *v1alpha1.CloudServer, cmpCS *arubatypes.CloudServ
 	if !reconciler.TagsAreEqual(kubeCS.Spec.Tags, cmpCS.Metadata.Tags) {
 		return true
 	}
-	if cmpCS.Metadata.LocationResponse != nil && kubeCS.Spec.Region != cmpCS.Metadata.LocationResponse.Value {
+	if cmpCS.Metadata.LocationResponse != nil && kubeCS.Spec.Region != string(cmpCS.Metadata.LocationResponse.Value) {
 		return true
 	}
 	return false
@@ -1719,14 +1719,14 @@ func buildCSUpdateRequest(ctx context.Context, kubeCS *v1alpha1.CloudServer, cmp
 	tags := make([]string, len(kubeCS.Spec.Tags))
 	copy(tags, kubeCS.Spec.Tags)
 
-	subnets := make([]arubatypes.ReferenceResource, 0, len(subnetIDs))
+	subnets := make([]arubatypes.ReferenceResourceCommon, 0, len(subnetIDs))
 	for _, sid := range subnetIDs {
-		subnets = append(subnets, arubatypes.ReferenceResource{URI: buildSubnetURI(prjID, vpcID, sid)})
+		subnets = append(subnets, arubatypes.ReferenceResourceCommon{URI: buildSubnetURI(prjID, vpcID, sid)})
 	}
 
-	sgs := make([]arubatypes.ReferenceResource, 0, len(sgIDs))
+	sgs := make([]arubatypes.ReferenceResourceCommon, 0, len(sgIDs))
 	for _, sgid := range sgIDs {
-		sgs = append(sgs, arubatypes.ReferenceResource{URI: buildSecurityGroupURI(prjID, vpcID, sgid)})
+		sgs = append(sgs, arubatypes.ReferenceResourceCommon{URI: buildSecurityGroupURI(prjID, vpcID, sgid)})
 	}
 
 	flavorName := cmpCS.Properties.Flavor.Name
@@ -1737,22 +1737,22 @@ func buildCSUpdateRequest(ctx context.Context, kubeCS *v1alpha1.CloudServer, cmp
 				Name: *cmpCS.Metadata.Name,
 				Tags: tags,
 			},
-			Location: arubatypes.LocationRequest{Value: kubeCS.Spec.Region},
+			Location: arubatypes.LocationRequest{Value: arubatypes.Region(kubeCS.Spec.Region)},
 		},
 		Properties: arubatypes.CloudServerPropertiesRequest{
 			Zone:           cmpCS.Properties.Zone,
-			VPC:            arubatypes.ReferenceResource{URI: cmpCS.Properties.VPC.URI},
+			VPC:            arubatypes.ReferenceResourceCommon{URI: cmpCS.Properties.VPC.URI},
 			VPCPreset:      false,
 			FlavorName:     &flavorName,
-			BootVolume:     arubatypes.ReferenceResource{URI: cmpCS.Properties.BootVolume.URI},
-			KeyPair:        arubatypes.ReferenceResource{URI: cmpCS.Properties.KeyPair.URI},
+			BootVolume:     arubatypes.ReferenceResourceCommon{URI: cmpCS.Properties.BootVolume.URI},
+			KeyPair:        &arubatypes.ReferenceResourceCommon{URI: cmpCS.Properties.KeyPair.URI},
 			Subnets:        subnets,
 			SecurityGroups: sgs,
 		},
 	}
 
 	if elasticIPID != "" {
-		req.Properties.ElasticIP = arubatypes.ReferenceResource{URI: buildElasticIPURI(prjID, elasticIPID)}
+		req.Properties.ElasticIP = &arubatypes.ReferenceResourceCommon{URI: buildElasticIPURI(prjID, elasticIPID)}
 	}
 
 	return req
@@ -1770,17 +1770,17 @@ func cmpCSRequestFromKube(ctx context.Context, kubeCS *v1alpha1.CloudServer) *ar
 	tags := make([]string, len(kubeCS.Spec.Tags))
 	copy(tags, kubeCS.Spec.Tags)
 
-	subnets := make([]arubatypes.ReferenceResource, 0, len(subnetIDs))
+	subnets := make([]arubatypes.ReferenceResourceCommon, 0, len(subnetIDs))
 	for _, sid := range subnetIDs {
-		subnets = append(subnets, arubatypes.ReferenceResource{URI: buildSubnetURI(prjID, vpcID, sid)})
+		subnets = append(subnets, arubatypes.ReferenceResourceCommon{URI: buildSubnetURI(prjID, vpcID, sid)})
 	}
 
-	sgs := make([]arubatypes.ReferenceResource, 0, len(sgIDs))
+	sgs := make([]arubatypes.ReferenceResourceCommon, 0, len(sgIDs))
 	for _, sgid := range sgIDs {
-		sgs = append(sgs, arubatypes.ReferenceResource{URI: buildSecurityGroupURI(prjID, vpcID, sgid)})
+		sgs = append(sgs, arubatypes.ReferenceResourceCommon{URI: buildSecurityGroupURI(prjID, vpcID, sgid)})
 	}
 
-	flavorName := kubeCS.Spec.FlavorName
+	flavorName := arubatypes.CloudServerFlavor(kubeCS.Spec.FlavorName)
 
 	req := &arubatypes.CloudServerRequest{
 		Metadata: arubatypes.RegionalResourceMetadataRequest{
@@ -1788,24 +1788,24 @@ func cmpCSRequestFromKube(ctx context.Context, kubeCS *v1alpha1.CloudServer) *ar
 				Name: kubeCS.Name,
 				Tags: tags,
 			},
-			Location: arubatypes.LocationRequest{Value: kubeCS.Spec.Region},
+			Location: arubatypes.LocationRequest{Value: arubatypes.Region(kubeCS.Spec.Region)},
 		},
 		Properties: arubatypes.CloudServerPropertiesRequest{
-			Zone:           kubeCS.Spec.Zone,
-			VPC:            arubatypes.ReferenceResource{URI: buildVpcURI(prjID, vpcID)},
+			Zone:           arubatypes.Zone(kubeCS.Spec.Zone),
+			VPC:            arubatypes.ReferenceResourceCommon{URI: buildVpcURI(prjID, vpcID)},
 			VPCPreset:      false,
 			FlavorName:     &flavorName,
-			BootVolume:     arubatypes.ReferenceResource{URI: buildVolumeURI(prjID, bootVolumeID)},
+			BootVolume:     arubatypes.ReferenceResourceCommon{URI: buildVolumeURI(prjID, bootVolumeID)},
 			Subnets:        subnets,
 			SecurityGroups: sgs,
 		},
 	}
 
 	if keyPairID != "" {
-		req.Properties.KeyPair = arubatypes.ReferenceResource{URI: buildKeyPairURI(prjID, keyPairID)}
+		req.Properties.KeyPair = &arubatypes.ReferenceResourceCommon{URI: buildKeyPairURI(prjID, keyPairID)}
 	}
 	if elasticIPID != "" {
-		req.Properties.ElasticIP = arubatypes.ReferenceResource{URI: buildElasticIPURI(prjID, elasticIPID)}
+		req.Properties.ElasticIP = &arubatypes.ReferenceResourceCommon{URI: buildElasticIPURI(prjID, elasticIPID)}
 	}
 
 	return req

@@ -27,7 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/Arubacloud/sdk-go/pkg/aruba"
+	arubaclient "github.com/Arubacloud/arubacloud-resource-operator/internal/client"
 	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
@@ -280,7 +280,7 @@ func (r *SubnetReconciler) fetchKubeDependencies(
 func (r *SubnetReconciler) fetchCMPDependencies(
 	ctx context.Context,
 	kubeSubnet *v1alpha1.Subnet,
-	arubaClient aruba.Client,
+	arubaClient arubaclient.Client,
 	isDeleting bool,
 ) (cmpSubnet *arubatypes.SubnetResponse, cmpVpc *arubatypes.VPCResponse, prjID string, vpcID string, result ctrl.Result, err error) {
 	logger := log.FromContext(ctx)
@@ -787,11 +787,11 @@ func cmpSubnetNotExistsOrTransitory(_ *v1alpha1.Subnet, cmpSubnet *arubatypes.Su
 
 func cmpSubnetIsActive(_ *v1alpha1.Subnet, cmpSubnet *arubatypes.SubnetResponse) bool {
 	return cmpSubnet != nil && cmpSubnet.Status.State != nil &&
-		*cmpSubnet.Status.State == reconciler.CSPResourceStateActive
+		*cmpSubnet.Status.State == arubatypes.StateActive
 }
 
 func cmpSubnetIsFailed(_ *v1alpha1.Subnet, cmpSubnet *arubatypes.SubnetResponse) bool {
-	return cmpSubnet != nil && cmpSubnet.Status.State != nil && *cmpSubnet.Status.State == reconciler.CSPResourceStateFailed
+	return cmpSubnet != nil && cmpSubnet.Status.State != nil && *cmpSubnet.Status.State == arubatypes.StateFailed
 }
 
 // ---------------------------------------------------------------------------
@@ -889,7 +889,7 @@ func (r *SubnetReconciler) kubeSetFailed(ctx context.Context, kubeSubnet *v1alph
 func (r *SubnetReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.Subnet, cmpSubnet *arubatypes.SubnetResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
 	vID := ctx.Value(vpcIDKey).(string)
-	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(arubaclient.Client)
 
 	cmpSubnetResp, err := arubaClient.FromNetwork().Subnets().Delete(ctx, prjID, vID, *cmpSubnet.Metadata.ID, nil)
 	if err != nil {
@@ -902,7 +902,7 @@ func (r *SubnetReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.Subnet, cm
 func (r *SubnetReconciler) cmpUpdate(ctx context.Context, kubeSubnet *v1alpha1.Subnet, cmpSubnet *arubatypes.SubnetResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
 	vID := ctx.Value(vpcIDKey).(string)
-	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(arubaclient.Client)
 
 	// Guard: should have been caught by HasDeniedChanges, but double-check.
 	if err := checkSubnetDeniedChanges(kubeSubnet, cmpSubnet); err != nil {
@@ -922,7 +922,7 @@ func (r *SubnetReconciler) cmpUpdate(ctx context.Context, kubeSubnet *v1alpha1.S
 func (r *SubnetReconciler) cmpCreate(ctx context.Context, kubeSubnet *v1alpha1.Subnet, _ *arubatypes.SubnetResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
 	vID := ctx.Value(vpcIDKey).(string)
-	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(arubaclient.Client)
 
 	cmpSubnetResp, err := arubaClient.FromNetwork().Subnets().Create(ctx, prjID, vID, *cmpSubnetRequestFromKube(kubeSubnet), nil)
 	if err != nil {
@@ -943,7 +943,7 @@ func checkSubnetDeniedChanges(kubeSubnet *v1alpha1.Subnet, cmpSubnet *arubatypes
 
 	locationValue := ""
 	if cmpSubnet.Metadata.LocationResponse != nil {
-		locationValue = cmpSubnet.Metadata.LocationResponse.Value
+		locationValue = string(cmpSubnet.Metadata.LocationResponse.Value)
 	}
 	if kubeSubnet.Spec.Region != locationValue {
 		return fmt.Errorf("%w: %w", reconciler.ErrNotAllowedChanges, errors.New("change the 'location' is not allowed"))
@@ -984,7 +984,7 @@ func buildSubnetUpdateRequest(kubeSubnet *v1alpha1.Subnet, cmpSubnet *arubatypes
 	if request.Properties.DHCP != nil {
 		request.Properties.DHCP.Enabled = kubeSubnet.Spec.DHCP.Enabled
 	} else {
-		request.Properties.DHCP = &arubatypes.SubnetDHCP{Enabled: kubeSubnet.Spec.DHCP.Enabled}
+		request.Properties.DHCP = &arubatypes.SubnetDHCPCommon{Enabled: kubeSubnet.Spec.DHCP.Enabled}
 	}
 	return request
 }
@@ -1015,16 +1015,16 @@ func cmpSubnetRequestFromCMP(cmpSubnet *arubatypes.SubnetResponse) *arubatypes.S
 		},
 		Properties: arubatypes.SubnetPropertiesRequest{
 			Type:    cmpSubnet.Properties.Type,
-			Default: cmpSubnet.Properties.Default,
+			Default: &cmpSubnet.Properties.Default,
 		},
 	}
 	if cmpSubnet.Properties.Network != nil {
-		req.Properties.Network = &arubatypes.SubnetNetwork{
+		req.Properties.Network = &arubatypes.SubnetNetworkCommon{
 			Address: cmpSubnet.Properties.Network.Address,
 		}
 	}
 	if cmpSubnet.Properties.DHCP != nil {
-		req.Properties.DHCP = &arubatypes.SubnetDHCP{
+		req.Properties.DHCP = &arubatypes.SubnetDHCPCommon{
 			Enabled: cmpSubnet.Properties.DHCP.Enabled,
 		}
 	}
@@ -1034,21 +1034,22 @@ func cmpSubnetRequestFromCMP(cmpSubnet *arubatypes.SubnetResponse) *arubatypes.S
 func cmpSubnetRequestFromKube(kubeSubnet *v1alpha1.Subnet) *arubatypes.SubnetRequest {
 	tags := make([]string, len(kubeSubnet.Spec.Tags))
 	copy(tags, kubeSubnet.Spec.Tags)
+	defaultVal := false
 	return &arubatypes.SubnetRequest{
 		Metadata: arubatypes.RegionalResourceMetadataRequest{
 			ResourceMetadataRequest: arubatypes.ResourceMetadataRequest{
 				Name: kubeSubnet.Name,
 				Tags: tags,
 			},
-			Location: arubatypes.LocationRequest{Value: kubeSubnet.Spec.Region},
+			Location: arubatypes.LocationRequest{Value: arubatypes.Region(kubeSubnet.Spec.Region)},
 		},
 		Properties: arubatypes.SubnetPropertiesRequest{
 			Type:    arubatypes.SubnetType(kubeSubnet.Spec.Type),
-			Default: false,
-			Network: &arubatypes.SubnetNetwork{
+			Default: &defaultVal,
+			Network: &arubatypes.SubnetNetworkCommon{
 				Address: kubeSubnet.Spec.CIDR,
 			},
-			DHCP: &arubatypes.SubnetDHCP{
+			DHCP: &arubatypes.SubnetDHCPCommon{
 				Enabled: kubeSubnet.Spec.DHCP.Enabled,
 			},
 		},

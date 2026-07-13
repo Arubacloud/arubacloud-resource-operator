@@ -6,30 +6,19 @@ disable-version-string: true
 packages:
   github.com/Arubacloud/arubacloud-resource-operator/internal/client:
     config:
-      all: true
-      dir: internal/mocks
-      outpkg: mocks
-  github.com/Arubacloud/sdk-go/pkg/aruba:
-    config:
       dir: internal/mocks/aruba
       outpkg: arubamocks
     interfaces:
       Client:
       ProjectClient:
-      StorageClient:
-      VolumesClient:
       NetworkClient:
       VPCsClient:
+      SubnetsClient:
+      SecurityGroupsClient:
+      SecurityGroupRulesClient:
       ElasticIPsClient:
       ComputeClient:
       CloudServersClient:
       KeyPairsClient:
-      SubnetsClient:
-      SecurityGroupsClient:
-      SecurityGroupRulesClient:
-  github.com/Arubacloud/sdk-go/pkg/multitenant:
-    config:
-      dir: internal/mocks/aruba
-      outpkg: arubamocks
-    interfaces:
-      Multitenant:
+      StorageClient:
+      VolumesClient:

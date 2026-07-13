@@ -19,9 +19,9 @@ import (
 
 // --- Builder helpers ---
 
-func buildSubnetResponse(id, name, state string) *arubatypes.SubnetResponse {
-	dhcp := &arubatypes.SubnetDHCP{Enabled: true}
-	network := &arubatypes.SubnetNetwork{Address: "192.168.1.0/24"}
+func buildSubnetResponse(id, name string, state arubatypes.State) *arubatypes.SubnetResponse {
+	dhcp := &arubatypes.SubnetDHCPCommon{Enabled: true}
+	network := &arubatypes.SubnetNetworkCommon{Address: "192.168.1.0/24"}
 	location := &arubatypes.LocationResponse{Value: "ITBG-Bergamo"}
 	return &arubatypes.SubnetResponse{
 		Metadata: arubatypes.ResourceMetadataResponse{
@@ -35,19 +35,19 @@ func buildSubnetResponse(id, name, state string) *arubatypes.SubnetResponse {
 			Network: network,
 			DHCP:    dhcp,
 		},
-		Status: arubatypes.ResourceStatus{
+		Status: arubatypes.ResourceStatusResponse{
 			State: &state,
 		},
 	}
 }
 
-func buildSubnetList(responses ...*arubatypes.SubnetResponse) *arubatypes.Response[arubatypes.SubnetList] {
-	list := &arubatypes.SubnetList{}
+func buildSubnetList(responses ...*arubatypes.SubnetResponse) *arubatypes.Response[arubatypes.SubnetListResponse] {
+	list := &arubatypes.SubnetListResponse{}
 	for _, r := range responses {
 		list.Values = append(list.Values, *r)
 		list.Total++
 	}
-	return &arubatypes.Response[arubatypes.SubnetList]{
+	return &arubatypes.Response[arubatypes.SubnetListResponse]{
 		Data:       list,
 		StatusCode: http.StatusOK,
 	}
@@ -59,7 +59,7 @@ func buildSubnetCRUDResponse(statusCode int) *arubatypes.Response[arubatypes.Sub
 	}
 }
 
-func buildVpcListForSubnet(vpcID, vpcName string) *arubatypes.Response[arubatypes.VPCList] {
+func buildVpcListForSubnet(vpcID, vpcName string) *arubatypes.Response[arubatypes.VPCListResponse] {
 	id := vpcID
 	name := vpcName
 	v := arubatypes.VPCResponse{
@@ -68,16 +68,16 @@ func buildVpcListForSubnet(vpcID, vpcName string) *arubatypes.Response[arubatype
 			Name: &name,
 		},
 	}
-	list := &arubatypes.VPCList{}
+	list := &arubatypes.VPCListResponse{}
 	list.Values = append(list.Values, v)
 	list.Total = 1
-	return &arubatypes.Response[arubatypes.VPCList]{
+	return &arubatypes.Response[arubatypes.VPCListResponse]{
 		Data:       list,
 		StatusCode: http.StatusOK,
 	}
 }
 
-func buildProjectListForSubnet(projectID, projectName string) *arubatypes.Response[arubatypes.ProjectList] {
+func buildProjectListForSubnet(projectID, projectName string) *arubatypes.Response[arubatypes.ProjectListResponse] {
 	id := projectID
 	name := projectName
 	proj := arubatypes.ProjectResponse{
@@ -86,10 +86,10 @@ func buildProjectListForSubnet(projectID, projectName string) *arubatypes.Respon
 			Name: &name,
 		},
 	}
-	list := &arubatypes.ProjectList{}
+	list := &arubatypes.ProjectListResponse{}
 	list.Values = append(list.Values, proj)
 	list.Total = 1
-	return &arubatypes.Response[arubatypes.ProjectList]{
+	return &arubatypes.Response[arubatypes.ProjectListResponse]{
 		Data:       list,
 		StatusCode: http.StatusOK,
 	}
@@ -336,7 +336,7 @@ var _ = Describe("SubnetReconciler", func() {
 			subnet = createTestSubnet(ctx, "test-subnet-wait-create-transitory", defaultSubnetSpec(subnetProjectName, subnetVpcName))
 			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "", "", "", 0, time.Now())
 
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-wait-create-transitory", reconciler.CSPResourceStateCreating)
+			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-wait-create-transitory", arubatypes.StateCreating)
 			m.expectProjectList(subnetProjectID, subnetProjectName)
 			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
 			m.expectSubnetList(subnetProjectID, subnetVpcID, cmpSubnet)
@@ -353,7 +353,7 @@ var _ = Describe("SubnetReconciler", func() {
 			subnet = createTestSubnet(ctx, "test-subnet-creation-confirmed", defaultSubnetSpec(subnetProjectName, subnetVpcName))
 			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "", "", "", 0, time.Now())
 
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-creation-confirmed", reconciler.CSPResourceStateActive)
+			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-creation-confirmed", arubatypes.StateActive)
 			m.expectProjectList(subnetProjectID, subnetProjectName)
 			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
 			m.expectSubnetList(subnetProjectID, subnetVpcID, cmpSubnet)
@@ -375,7 +375,7 @@ var _ = Describe("SubnetReconciler", func() {
 			subnet = createTestSubnet(ctx, "test-subnet-creation-accomplished", defaultSubnetSpec(subnetProjectName, subnetVpcName))
 			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronized, "", "", "", 0, time.Now())
 
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-creation-accomplished", reconciler.CSPResourceStateActive)
+			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-creation-accomplished", arubatypes.StateActive)
 			m.expectProjectList(subnetProjectID, subnetProjectName)
 			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
 			m.expectSubnetList(subnetProjectID, subnetVpcID, cmpSubnet)
@@ -404,7 +404,7 @@ var _ = Describe("SubnetReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
 
 			// CMP still has original location ITBG-Bergamo
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-denied-location", reconciler.CSPResourceStateActive)
+			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-denied-location", arubatypes.StateActive)
 			m.expectProjectList(subnetProjectID, subnetProjectName)
 			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
 			m.expectSubnetList(subnetProjectID, subnetVpcID, cmpSubnet)
@@ -427,7 +427,7 @@ var _ = Describe("SubnetReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
 
 			// CMP still has original network address 192.168.1.0/24
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-denied-changes", reconciler.CSPResourceStateActive)
+			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-denied-changes", arubatypes.StateActive)
 			m.expectProjectList(subnetProjectID, subnetProjectName)
 			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
 			m.expectSubnetList(subnetProjectID, subnetVpcID, cmpSubnet)
@@ -452,7 +452,7 @@ var _ = Describe("SubnetReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
 
 			// CMP matches: same tags, same DHCP
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-spec-in-sync", reconciler.CSPResourceStateActive)
+			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-spec-in-sync", arubatypes.StateActive)
 			cmpSubnet.Metadata.Tags = []string{"tag1"}
 			m.expectProjectList(subnetProjectID, subnetProjectName)
 			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
@@ -482,7 +482,7 @@ var _ = Describe("SubnetReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
 
 			// CMP has old tags
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-should-update", reconciler.CSPResourceStateActive)
+			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-should-update", arubatypes.StateActive)
 			cmpSubnet.Metadata.Tags = []string{"tag1"}
 			m.expectProjectList(subnetProjectID, subnetProjectName)
 			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
@@ -506,7 +506,7 @@ var _ = Describe("SubnetReconciler", func() {
 			subnet = createTestSubnet(ctx, "test-subnet-update-cmp", defaultSubnetSpec(subnetProjectName, subnetVpcName))
 			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, "subnet-id-1", subnetProjectID, subnetVpcID, 1, time.Now())
 
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-update-cmp", reconciler.CSPResourceStateActive)
+			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-update-cmp", arubatypes.StateActive)
 			m.expectProjectList(subnetProjectID, subnetProjectName)
 			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
 			m.expectSubnetList(subnetProjectID, subnetVpcID, cmpSubnet)
@@ -538,7 +538,7 @@ var _ = Describe("SubnetReconciler", func() {
 			Expect(k8sClient.Delete(ctx, subnet)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
 
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-should-delete", reconciler.CSPResourceStateActive)
+			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-should-delete", arubatypes.StateActive)
 			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
 			m.mockNetwork.EXPECT().Subnets().Return(m.mockSubnets)
 			m.mockSubnets.EXPECT().List(mock.Anything, subnetProjectID, subnetVpcID, mock.Anything).Return(buildSubnetList(cmpSubnet), nil)
@@ -567,7 +567,7 @@ var _ = Describe("SubnetReconciler", func() {
 			Expect(k8sClient.Delete(ctx, subnet)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
 
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-delete-cmp", reconciler.CSPResourceStateActive)
+			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-delete-cmp", arubatypes.StateActive)
 			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
 			m.mockNetwork.EXPECT().Subnets().Return(m.mockSubnets)
 			m.mockSubnets.EXPECT().List(mock.Anything, subnetProjectID, subnetVpcID, mock.Anything).Return(buildSubnetList(cmpSubnet), nil)
@@ -599,7 +599,7 @@ var _ = Describe("SubnetReconciler", func() {
 			Expect(k8sClient.Delete(ctx, subnet)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
 
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-deleting-transitory", reconciler.CSPResourceStateDeleting)
+			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-deleting-transitory", arubatypes.StateDeleting)
 			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
 			m.mockNetwork.EXPECT().Subnets().Return(m.mockSubnets)
 			m.mockSubnets.EXPECT().List(mock.Anything, subnetProjectID, subnetVpcID, mock.Anything).Return(buildSubnetList(cmpSubnet), nil)
@@ -641,7 +641,7 @@ var _ = Describe("SubnetReconciler", func() {
 			subnet = createTestSubnet(ctx, "test-subnet-in-error", defaultSubnetSpec(subnetProjectName, subnetVpcName))
 			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "subnet-id-1", subnetProjectID, subnetVpcID, 1, time.Now())
 
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-in-error", reconciler.CSPResourceStateFailed)
+			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-in-error", arubatypes.StateFailed)
 			m.expectProjectList(subnetProjectID, subnetProjectName)
 			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
 			m.expectSubnetList(subnetProjectID, subnetVpcID, cmpSubnet)
@@ -665,7 +665,7 @@ var _ = Describe("SubnetReconciler", func() {
 			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, "", subnetProjectID, subnetVpcID,
 				0, time.Now().Add(-(reconciler.MaxPhaseTimeout + time.Minute)))
 
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-timeout", reconciler.CSPResourceStateActive)
+			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-timeout", arubatypes.StateActive)
 			m.expectProjectList(subnetProjectID, subnetProjectName)
 			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
 			m.expectSubnetList(subnetProjectID, subnetVpcID, cmpSubnet)
@@ -700,8 +700,8 @@ var _ = Describe("SubnetReconciler", func() {
 
 			m.expectProjectList(subnetProjectID, subnetProjectName)
 
-			emptyVpcList := &arubatypes.Response[arubatypes.VPCList]{
-				Data:       &arubatypes.VPCList{},
+			emptyVpcList := &arubatypes.Response[arubatypes.VPCListResponse]{
+				Data:       &arubatypes.VPCListResponse{},
 				StatusCode: http.StatusOK,
 			}
 			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
@@ -770,7 +770,7 @@ var _ = Describe("SubnetReconciler", func() {
 				subnet = createTestSubnet(ctx, name, defaultSubnetSpec(subnetProjectName, subnetVpcName))
 				setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, "subnet-id-1", subnetProjectID, subnetVpcID, 1, time.Now())
 
-				cmpSubnet := buildSubnetResponse("subnet-id-1", name, reconciler.CSPResourceStateActive)
+				cmpSubnet := buildSubnetResponse("subnet-id-1", name, arubatypes.StateActive)
 				m.expectProjectList(subnetProjectID, subnetProjectName)
 				m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
 				m.expectSubnetList(subnetProjectID, subnetVpcID, cmpSubnet)
@@ -806,7 +806,7 @@ var _ = Describe("SubnetReconciler", func() {
 				Expect(k8sClient.Delete(ctx, subnet)).To(Succeed())
 				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
 
-				cmpSubnet := buildSubnetResponse("subnet-id-1", name, reconciler.CSPResourceStateActive)
+				cmpSubnet := buildSubnetResponse("subnet-id-1", name, arubatypes.StateActive)
 				m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
 				m.mockNetwork.EXPECT().Subnets().Return(m.mockSubnets)
 				m.mockSubnets.EXPECT().List(mock.Anything, subnetProjectID, subnetVpcID, mock.Anything).Return(buildSubnetList(cmpSubnet), nil)

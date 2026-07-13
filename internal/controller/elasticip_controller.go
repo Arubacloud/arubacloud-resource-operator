@@ -26,7 +26,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/Arubacloud/sdk-go/pkg/aruba"
+	arubaclient "github.com/Arubacloud/arubacloud-resource-operator/internal/client"
 	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
@@ -254,7 +254,7 @@ func (r *ElasticIPReconciler) fetchKubeDependencies(
 func (r *ElasticIPReconciler) fetchCMPDependencies(
 	ctx context.Context,
 	kubeEip *v1alpha1.ElasticIP,
-	arubaClient aruba.Client,
+	arubaClient arubaclient.Client,
 	isDeleting bool,
 ) (string, *arubatypes.ElasticIPResponse, ctrl.Result, error) {
 	eipName, projectName := kubeEip.Name, kubeEip.Spec.ProjectReference.Name
@@ -678,14 +678,14 @@ func cmpElasticIpIsActive(_ *v1alpha1.ElasticIP, cmpEip *arubatypes.ElasticIPRes
 		return false
 	}
 	switch *cmpEip.Status.State {
-	case reconciler.CSPResourceStateActive, reconciler.CSPResourceStateNotUsed, reconciler.CSPResourceStateInUse, reconciler.CSPResourceStateUsed:
+	case arubatypes.StateActive, arubatypes.StateNotUsed, arubatypes.StateInUse, arubatypes.StateUsed:
 		return true
 	}
 	return false
 }
 
 func cmpElasticIpIsFailed(_ *v1alpha1.ElasticIP, cmpEip *arubatypes.ElasticIPResponse) bool {
-	return cmpEip != nil && cmpEip.Status.State != nil && *cmpEip.Status.State == reconciler.CSPResourceStateFailed
+	return cmpEip != nil && cmpEip.Status.State != nil && *cmpEip.Status.State == arubatypes.StateFailed
 }
 
 // ---------------------------------------------------------------------------
@@ -773,7 +773,7 @@ func (r *ElasticIPReconciler) kubeSetFailed(ctx context.Context, kubeEip *v1alph
 
 func (r *ElasticIPReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.ElasticIP, cmpEip *arubatypes.ElasticIPResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
-	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(arubaclient.Client)
 
 	cmpEipResp, err := arubaClient.FromNetwork().ElasticIPs().Delete(ctx, prjID, *cmpEip.Metadata.ID, nil)
 	if err != nil {
@@ -785,7 +785,7 @@ func (r *ElasticIPReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.Elastic
 
 func (r *ElasticIPReconciler) cmpUpdate(ctx context.Context, kubeEip *v1alpha1.ElasticIP, cmpEip *arubatypes.ElasticIPResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
-	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(arubaclient.Client)
 
 	// Guard: should have been caught by HasDeniedChanges, but double-check.
 	if err := checkElasticIPDeniedChanges(kubeEip, cmpEip); err != nil {
@@ -804,7 +804,7 @@ func (r *ElasticIPReconciler) cmpUpdate(ctx context.Context, kubeEip *v1alpha1.E
 
 func (r *ElasticIPReconciler) cmpCreate(ctx context.Context, kubeEip *v1alpha1.ElasticIP, _ *arubatypes.ElasticIPResponse) error {
 	prjID := ctx.Value(projectIDKey).(string)
-	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(arubaclient.Client)
 
 	cmpEipResp, err := arubaClient.FromNetwork().ElasticIPs().Create(ctx, prjID, *cmpElasticIPRequestFromKube(kubeEip), nil)
 	if err != nil {
@@ -825,7 +825,7 @@ func checkElasticIPDeniedChanges(kubeEip *v1alpha1.ElasticIP, cmpEip *arubatypes
 
 	locationValue := ""
 	if cmpEip.Metadata.LocationResponse != nil {
-		locationValue = cmpEip.Metadata.LocationResponse.Value
+		locationValue = string(cmpEip.Metadata.LocationResponse.Value)
 	}
 	if kubeEip.Spec.Region != locationValue {
 		return fmt.Errorf("%w: %w", reconciler.ErrNotAllowedChanges, errors.New("change the 'location' is not allowed"))
@@ -841,10 +841,19 @@ func kubeElasticIPNeedsUpdate(kubeEip *v1alpha1.ElasticIP, cmpEip *arubatypes.El
 	if !reconciler.TagsAreEqual(kubeEip.Spec.Tags, cmpEip.Metadata.Tags) {
 		return true
 	}
-	if kubeEip.Spec.BillingPeriod != cmpEip.Properties.BillingPlan.BillingPeriod {
+	if kubeEip.Spec.BillingPeriod != billingPlanPeriodString(cmpEip.Properties.BillingPlanCommon) {
 		return true
 	}
 	return false
+}
+
+// billingPlanPeriodString extracts the billing period from an optional billing
+// plan wrapper as a string ("" when either level is unset).
+func billingPlanPeriodString(bp *arubatypes.BillingPlanCommon) string {
+	if bp == nil {
+		return ""
+	}
+	return billingPeriodString(bp.BillingPeriod)
 }
 
 func buildElasticIPUpdateRequest(kubeEip *v1alpha1.ElasticIP, cmpEip *arubatypes.ElasticIPResponse) *arubatypes.ElasticIPRequest {
@@ -855,7 +864,8 @@ func buildElasticIPUpdateRequest(kubeEip *v1alpha1.ElasticIP, cmpEip *arubatypes
 	tags := make([]string, len(kubeEip.Spec.Tags))
 	copy(tags, kubeEip.Spec.Tags)
 	request.Metadata.Tags = tags
-	request.Properties.BillingPlan.BillingPeriod = kubeEip.Spec.BillingPeriod
+	billingPeriod := arubatypes.BillingPeriod(kubeEip.Spec.BillingPeriod)
+	request.Properties.BillingPlanCommon = &arubatypes.BillingPlanCommon{BillingPeriod: &billingPeriod}
 	return request
 }
 
@@ -882,9 +892,7 @@ func cmpElasticIPRequestFromCMP(cmpEip *arubatypes.ElasticIPResponse) *arubatype
 			Location: location,
 		},
 		Properties: arubatypes.ElasticIPPropertiesRequest{
-			BillingPlan: arubatypes.BillingPeriodResource{
-				BillingPeriod: cmpEip.Properties.BillingPlan.BillingPeriod,
-			},
+			BillingPlanCommon: cmpEip.Properties.BillingPlanCommon,
 		},
 	}
 }
@@ -896,12 +904,13 @@ func cmpElasticIPRequestFromKube(kubeEip *v1alpha1.ElasticIP) *arubatypes.Elasti
 				Name: kubeEip.Name,
 				Tags: kubeEip.Spec.Tags,
 			},
-			Location: arubatypes.LocationRequest{Value: kubeEip.Spec.Region},
+			Location: arubatypes.LocationRequest{Value: arubatypes.Region(kubeEip.Spec.Region)},
 		},
 		Properties: arubatypes.ElasticIPPropertiesRequest{
-			BillingPlan: arubatypes.BillingPeriodResource{
-				BillingPeriod: kubeEip.Spec.BillingPeriod,
-			},
+			BillingPlanCommon: func() *arubatypes.BillingPlanCommon {
+				bp := arubatypes.BillingPeriod(kubeEip.Spec.BillingPeriod)
+				return &arubatypes.BillingPlanCommon{BillingPeriod: &bp}
+			}(),
 		},
 	}
 }

@@ -30,7 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/Arubacloud/sdk-go/pkg/aruba"
+	arubaclient "github.com/Arubacloud/arubacloud-resource-operator/internal/client"
 	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
@@ -276,7 +276,7 @@ func (r *SecurityRuleReconciler) fetchKubeDependencies(ctx context.Context, kube
 func (r *SecurityRuleReconciler) fetchCMPDependencies(
 	ctx context.Context,
 	sr *v1alpha1.SecurityRule,
-	arubaClient aruba.Client,
+	arubaClient arubaclient.Client,
 	isDeleting bool,
 ) (*arubatypes.SecurityRuleResponse, *arubatypes.SecurityGroupResponse, string, string, string, ctrl.Result, error) {
 	logger := log.FromContext(ctx)
@@ -814,11 +814,11 @@ func cmpSecurityRuleNotExistsOrTransitory(_ *v1alpha1.SecurityRule, cmpSR *aruba
 
 func cmpSecurityRuleIsActive(_ *v1alpha1.SecurityRule, cmpSR *arubatypes.SecurityRuleResponse) bool {
 	return cmpSR != nil && cmpSR.Status.State != nil &&
-		*cmpSR.Status.State == reconciler.CSPResourceStateActive
+		*cmpSR.Status.State == arubatypes.StateActive
 }
 
 func cmpSecurityRuleIsFailed(_ *v1alpha1.SecurityRule, cmpSR *arubatypes.SecurityRuleResponse) bool {
-	return cmpSR != nil && cmpSR.Status.State != nil && *cmpSR.Status.State == reconciler.CSPResourceStateFailed
+	return cmpSR != nil && cmpSR.Status.State != nil && *cmpSR.Status.State == arubatypes.StateFailed
 }
 
 // ---------------------------------------------------------------------------
@@ -878,9 +878,9 @@ func (r *SecurityRuleReconciler) kubeRollbackSpecAndSetActive(ctx context.Contex
 		srPatch := srCopy.DeepCopy()
 		srPatch.Spec.Tags = cmpSR.Metadata.Tags
 		if cmpSR.Metadata.LocationResponse != nil {
-			srPatch.Spec.Region = cmpSR.Metadata.LocationResponse.Value
+			srPatch.Spec.Region = string(cmpSR.Metadata.LocationResponse.Value)
 		}
-		srPatch.Spec.Protocol = cmpSR.Properties.Protocol
+		srPatch.Spec.Protocol = string(cmpSR.Properties.Protocol)
 		srPatch.Spec.Port = cmpSR.Properties.Port
 		srPatch.Spec.Direction = string(cmpSR.Properties.Direction)
 		if cmpSR.Properties.Target != nil {
@@ -953,7 +953,7 @@ func (r *SecurityRuleReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.Secu
 	prjID := ctx.Value(projectIDKey).(string)
 	vID := ctx.Value(vpcIDKey).(string)
 	sgID := ctx.Value(securityGroupIDKey).(string)
-	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(arubaclient.Client)
 
 	cmpResp, err := arubaClient.FromNetwork().SecurityGroupRules().Delete(ctx, prjID, vID, sgID, *cmpSR.Metadata.ID, nil)
 	if err != nil {
@@ -967,7 +967,7 @@ func (r *SecurityRuleReconciler) cmpCreate(ctx context.Context, kubeSR *v1alpha1
 	prjID := ctx.Value(projectIDKey).(string)
 	vID := ctx.Value(vpcIDKey).(string)
 	sgID := ctx.Value(securityGroupIDKey).(string)
-	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+	arubaClient := ctx.Value(reconciler.ArubaClientKey).(arubaclient.Client)
 
 	cmpResp, err := arubaClient.FromNetwork().SecurityGroupRules().Create(ctx, prjID, vID, sgID, *cmpSecurityRuleRequestFromKube(kubeSR), nil)
 	if err != nil {
@@ -991,14 +991,14 @@ func cmpSecurityRuleRequestFromKube(kubeSR *v1alpha1.SecurityRule) *arubatypes.S
 				Tags: tags,
 			},
 			Location: arubatypes.LocationRequest{
-				Value: kubeSR.Spec.Region,
+				Value: arubatypes.Region(kubeSR.Spec.Region),
 			},
 		},
 		Properties: arubatypes.SecurityRulePropertiesRequest{
-			Protocol:  kubeSR.Spec.Protocol,
+			Protocol:  arubatypes.RuleProtocol(kubeSR.Spec.Protocol),
 			Port:      kubeSR.Spec.Port,
 			Direction: arubatypes.RuleDirection(kubeSR.Spec.Direction),
-			Target: &arubatypes.RuleTarget{
+			Target: &arubatypes.RuleTargetCommon{
 				Kind:  arubatypes.EndpointTypeDto(kubeSR.Spec.Target.Type),
 				Value: kubeSR.Spec.Target.Value,
 			},

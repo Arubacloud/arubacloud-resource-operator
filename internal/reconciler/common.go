@@ -10,27 +10,11 @@ var (
 	ErrNotAllowedChanges = errors.New("not allowed change")
 )
 
-const (
-	CSPResourceStateInCreation   string = "InCreation"
-	CSPResourceStateCreating     string = "Creating"
-	CSPResourceStateUpdating     string = "Updating"
-	CSPResourceStateDeleting     string = "Deleting"
-	CSPResourceStateDeleted      string = "Deleted"
-	CSPResourceStateProvisioning string = "Provisioning"
-	CSPResourceStateActive       string = "Active"
-	CSPResourceStateNotUsed      string = "NotUsed"
-	CSPResourceStateInUse        string = "InUse"
-	CSPResourceStateUsed         string = "Used"
-	CSPResourceStateStopped      string = "Stopped"
-	CSPResourceStateRunning      string = "Running"
-
-	CSPResourceStateDisabling string = "Disabling" // after recharge credits is not successfully applied, the resource is in "Disabling" state, and then it will be "Disabled"
-	CSPResourceStateEnabling  string = "Enabling"  // after recharge credits is not successfully applied, the resource is in "Enabling" state, and then it will be "Active"
-
-	CSPResourceStateDisabled string = "Disabled" // final state after "Disabling"; customer cannot use the resource until is enabled again
-	CSPResourceStateFailed   string = "Failed"   // final state when some error occurs during creation or update of the resource; customer cannot use the resource and need to delete it
-)
-
+// CSPResourceStateNature classifies a CMP (Aruba-side) resource state as
+// transitory (an operation is in progress) or final (settled, including
+// failure). The transition engine uses it to decide when it is safe to act on
+// a resource. Compare raw states directly against the SDK's arubatypes.State*
+// constants.
 type CSPResourceStateNature int
 
 const (
@@ -40,33 +24,26 @@ const (
 	CSPResourceStateNatureUndetermined
 )
 
-func AssessCSPResourceStateNature(status *arubatypes.ResourceStatus) CSPResourceStateNature {
-	if status == nil {
+func AssessCSPResourceStateNature(status *arubatypes.ResourceStatusResponse) CSPResourceStateNature {
+	if status == nil || status.State == nil {
 		return CSPResourceStateNatureUndetermined
 	}
 
-	if status.State == nil {
-		return CSPResourceStateNatureUndetermined
+	// IsTransitory() covers exactly the transitory set (InCreation, Creating,
+	// Updating, Deleting, Provisioning, Disabling, Enabling).
+	if status.State.IsTransitory() {
+		return CSPResourceStateNatureTransitory
 	}
 
 	switch *status.State {
-	case CSPResourceStateInCreation,
-		CSPResourceStateCreating,
-		CSPResourceStateUpdating,
-		CSPResourceStateDeleting,
-		CSPResourceStateProvisioning,
-		CSPResourceStateDisabling,
-		CSPResourceStateEnabling:
-		return CSPResourceStateNatureTransitory
-
-	case CSPResourceStateActive,
-		CSPResourceStateNotUsed,
-		CSPResourceStateInUse,
-		CSPResourceStateUsed,
-		CSPResourceStateStopped,
-		CSPResourceStateRunning,
-		CSPResourceStateDisabled,
-		CSPResourceStateFailed:
+	case arubatypes.StateActive,
+		arubatypes.StateNotUsed,
+		arubatypes.StateInUse,
+		arubatypes.StateUsed,
+		arubatypes.StateStopped,
+		arubatypes.StateRunning,
+		arubatypes.StateDisabled,
+		arubatypes.StateFailed:
 		return CSPResourceStateNatureFinal
 	}
 

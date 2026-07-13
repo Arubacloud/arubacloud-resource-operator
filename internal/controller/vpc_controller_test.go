@@ -19,7 +19,7 @@ import (
 
 // --- Builder helpers ---
 
-func buildVPCResponse(id, name, state string) *arubatypes.VPCResponse {
+func buildVPCResponse(id, name string, state arubatypes.State) *arubatypes.VPCResponse {
 	location := &arubatypes.LocationResponse{Value: "ITBG-Bergamo"}
 	return &arubatypes.VPCResponse{
 		Metadata: arubatypes.ResourceMetadataResponse{
@@ -27,19 +27,19 @@ func buildVPCResponse(id, name, state string) *arubatypes.VPCResponse {
 			Name:             &name,
 			LocationResponse: location,
 		},
-		Status: arubatypes.ResourceStatus{
+		Status: arubatypes.ResourceStatusResponse{
 			State: &state,
 		},
 	}
 }
 
-func buildVPCList(responses ...*arubatypes.VPCResponse) *arubatypes.Response[arubatypes.VPCList] {
-	list := &arubatypes.VPCList{}
+func buildVPCList(responses ...*arubatypes.VPCResponse) *arubatypes.Response[arubatypes.VPCListResponse] {
+	list := &arubatypes.VPCListResponse{}
 	for _, r := range responses {
 		list.Values = append(list.Values, *r)
 		list.Total++
 	}
-	return &arubatypes.Response[arubatypes.VPCList]{
+	return &arubatypes.Response[arubatypes.VPCListResponse]{
 		Data:       list,
 		StatusCode: http.StatusOK,
 	}
@@ -51,7 +51,7 @@ func buildVPCCRUDResponse(statusCode int) *arubatypes.Response[arubatypes.VPCRes
 	}
 }
 
-func buildProjectListForVpc(projectID, projectName string) *arubatypes.Response[arubatypes.ProjectList] {
+func buildProjectListForVpc(projectID, projectName string) *arubatypes.Response[arubatypes.ProjectListResponse] {
 	id := projectID
 	name := projectName
 	proj := arubatypes.ProjectResponse{
@@ -60,10 +60,10 @@ func buildProjectListForVpc(projectID, projectName string) *arubatypes.Response[
 			Name: &name,
 		},
 	}
-	list := &arubatypes.ProjectList{}
+	list := &arubatypes.ProjectListResponse{}
 	list.Values = append(list.Values, proj)
 	list.Total = 1
-	return &arubatypes.Response[arubatypes.ProjectList]{
+	return &arubatypes.Response[arubatypes.ProjectListResponse]{
 		Data:       list,
 		StatusCode: http.StatusOK,
 	}
@@ -283,7 +283,7 @@ var _ = Describe("VPCReconciler", func() {
 			vpc = createTestVpc(ctx, "test-vpc-wait-create-transitory", defaultVPCSpec(vpcProjectName))
 			setVPCStatus(ctx, vpc, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "", "", 0, time.Now())
 
-			cmpVPC := buildVPCResponse("vpc-id-1", "test-vpc-wait-create-transitory", reconciler.CSPResourceStateCreating)
+			cmpVPC := buildVPCResponse("vpc-id-1", "test-vpc-wait-create-transitory", arubatypes.StateCreating)
 			m.expectProjectList(vpcProjectID, vpcProjectName)
 			m.expectVPCList(vpcProjectID, cmpVPC)
 
@@ -299,7 +299,7 @@ var _ = Describe("VPCReconciler", func() {
 			vpc = createTestVpc(ctx, "test-vpc-creation-confirmed", defaultVPCSpec(vpcProjectName))
 			setVPCStatus(ctx, vpc, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "", "", 0, time.Now())
 
-			cmpVPC := buildVPCResponse("vpc-id-1", "test-vpc-creation-confirmed", reconciler.CSPResourceStateActive)
+			cmpVPC := buildVPCResponse("vpc-id-1", "test-vpc-creation-confirmed", arubatypes.StateActive)
 			m.expectProjectList(vpcProjectID, vpcProjectName)
 			m.expectVPCList(vpcProjectID, cmpVPC)
 
@@ -320,7 +320,7 @@ var _ = Describe("VPCReconciler", func() {
 			vpc = createTestVpc(ctx, "test-vpc-creation-accomplished", defaultVPCSpec(vpcProjectName))
 			setVPCStatus(ctx, vpc, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronized, "", "", 0, time.Now())
 
-			cmpVPC := buildVPCResponse("vpc-id-1", "test-vpc-creation-accomplished", reconciler.CSPResourceStateActive)
+			cmpVPC := buildVPCResponse("vpc-id-1", "test-vpc-creation-accomplished", arubatypes.StateActive)
 			m.expectProjectList(vpcProjectID, vpcProjectName)
 			m.expectVPCList(vpcProjectID, cmpVPC)
 
@@ -348,7 +348,7 @@ var _ = Describe("VPCReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(vpc), vpc)).To(Succeed())
 
 			// CMP still has original location ITBG-Bergamo
-			cmpVPC := buildVPCResponse("vpc-id-1", "test-vpc-denied-changes", reconciler.CSPResourceStateActive)
+			cmpVPC := buildVPCResponse("vpc-id-1", "test-vpc-denied-changes", arubatypes.StateActive)
 			m.expectProjectList(vpcProjectID, vpcProjectName)
 			m.expectVPCList(vpcProjectID, cmpVPC)
 
@@ -372,7 +372,7 @@ var _ = Describe("VPCReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(vpc), vpc)).To(Succeed())
 
 			// CMP matches: same tags, same location
-			cmpVPC := buildVPCResponse("vpc-id-1", "test-vpc-spec-in-sync", reconciler.CSPResourceStateActive)
+			cmpVPC := buildVPCResponse("vpc-id-1", "test-vpc-spec-in-sync", arubatypes.StateActive)
 			cmpVPC.Metadata.Tags = []string{"tag1"}
 			m.expectProjectList(vpcProjectID, vpcProjectName)
 			m.expectVPCList(vpcProjectID, cmpVPC)
@@ -401,7 +401,7 @@ var _ = Describe("VPCReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(vpc), vpc)).To(Succeed())
 
 			// CMP has old tags
-			cmpVPC := buildVPCResponse("vpc-id-1", "test-vpc-should-update", reconciler.CSPResourceStateActive)
+			cmpVPC := buildVPCResponse("vpc-id-1", "test-vpc-should-update", arubatypes.StateActive)
 			cmpVPC.Metadata.Tags = []string{"tag1"}
 			m.expectProjectList(vpcProjectID, vpcProjectName)
 			m.expectVPCList(vpcProjectID, cmpVPC)
@@ -424,7 +424,7 @@ var _ = Describe("VPCReconciler", func() {
 			vpc = createTestVpc(ctx, "test-vpc-update-cmp", defaultVPCSpec(vpcProjectName))
 			setVPCStatus(ctx, vpc, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, "vpc-id-1", vpcProjectID, 1, time.Now())
 
-			cmpVPC := buildVPCResponse("vpc-id-1", "test-vpc-update-cmp", reconciler.CSPResourceStateActive)
+			cmpVPC := buildVPCResponse("vpc-id-1", "test-vpc-update-cmp", arubatypes.StateActive)
 			m.expectProjectList(vpcProjectID, vpcProjectName)
 			m.expectVPCList(vpcProjectID, cmpVPC)
 			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
@@ -455,7 +455,7 @@ var _ = Describe("VPCReconciler", func() {
 			Expect(k8sClient.Delete(ctx, vpc)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(vpc), vpc)).To(Succeed())
 
-			cmpVPC := buildVPCResponse("vpc-id-1", "test-vpc-should-delete", reconciler.CSPResourceStateActive)
+			cmpVPC := buildVPCResponse("vpc-id-1", "test-vpc-should-delete", arubatypes.StateActive)
 			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
 			m.mockNetwork.EXPECT().VPCs().Return(m.mockVPCsClient)
 			m.mockVPCsClient.EXPECT().List(mock.Anything, vpcProjectID, mock.Anything).Return(buildVPCList(cmpVPC), nil)
@@ -484,7 +484,7 @@ var _ = Describe("VPCReconciler", func() {
 			Expect(k8sClient.Delete(ctx, vpc)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(vpc), vpc)).To(Succeed())
 
-			cmpVPC := buildVPCResponse("vpc-id-1", "test-vpc-delete-cmp", reconciler.CSPResourceStateActive)
+			cmpVPC := buildVPCResponse("vpc-id-1", "test-vpc-delete-cmp", arubatypes.StateActive)
 			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
 			m.mockNetwork.EXPECT().VPCs().Return(m.mockVPCsClient)
 			m.mockVPCsClient.EXPECT().List(mock.Anything, vpcProjectID, mock.Anything).Return(buildVPCList(cmpVPC), nil)
@@ -516,7 +516,7 @@ var _ = Describe("VPCReconciler", func() {
 			Expect(k8sClient.Delete(ctx, vpc)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(vpc), vpc)).To(Succeed())
 
-			cmpVPC := buildVPCResponse("vpc-id-1", "test-vpc-deleting-transitory", reconciler.CSPResourceStateDeleting)
+			cmpVPC := buildVPCResponse("vpc-id-1", "test-vpc-deleting-transitory", arubatypes.StateDeleting)
 			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
 			m.mockNetwork.EXPECT().VPCs().Return(m.mockVPCsClient)
 			m.mockVPCsClient.EXPECT().List(mock.Anything, vpcProjectID, mock.Anything).Return(buildVPCList(cmpVPC), nil)
@@ -558,7 +558,7 @@ var _ = Describe("VPCReconciler", func() {
 			vpc = createTestVpc(ctx, "test-vpc-in-error", defaultVPCSpec(vpcProjectName))
 			setVPCStatus(ctx, vpc, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "vpc-id-1", vpcProjectID, 1, time.Now())
 
-			cmpVPC := buildVPCResponse("vpc-id-1", "test-vpc-in-error", reconciler.CSPResourceStateFailed)
+			cmpVPC := buildVPCResponse("vpc-id-1", "test-vpc-in-error", arubatypes.StateFailed)
 			m.expectProjectList(vpcProjectID, vpcProjectName)
 			m.expectVPCList(vpcProjectID, cmpVPC)
 
@@ -581,7 +581,7 @@ var _ = Describe("VPCReconciler", func() {
 			setVPCStatus(ctx, vpc, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, "", vpcProjectID,
 				0, time.Now().Add(-(reconciler.MaxPhaseTimeout + time.Minute)))
 
-			cmpVPC := buildVPCResponse("vpc-id-1", "test-vpc-timeout", reconciler.CSPResourceStateActive)
+			cmpVPC := buildVPCResponse("vpc-id-1", "test-vpc-timeout", arubatypes.StateActive)
 			m.expectProjectList(vpcProjectID, vpcProjectName)
 			m.expectVPCList(vpcProjectID, cmpVPC)
 
@@ -661,7 +661,7 @@ var _ = Describe("VPCReconciler", func() {
 				vpc = createTestVpc(ctx, name, defaultVPCSpec(vpcProjectName))
 				setVPCStatus(ctx, vpc, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, "vpc-id-1", vpcProjectID, 1, time.Now())
 
-				cmpVPC := buildVPCResponse("vpc-id-1", name, reconciler.CSPResourceStateActive)
+				cmpVPC := buildVPCResponse("vpc-id-1", name, arubatypes.StateActive)
 				m.expectProjectList(vpcProjectID, vpcProjectName)
 				m.expectVPCList(vpcProjectID, cmpVPC)
 				m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
@@ -696,7 +696,7 @@ var _ = Describe("VPCReconciler", func() {
 				Expect(k8sClient.Delete(ctx, vpc)).To(Succeed())
 				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(vpc), vpc)).To(Succeed())
 
-				cmpVPC := buildVPCResponse("vpc-id-1", name, reconciler.CSPResourceStateActive)
+				cmpVPC := buildVPCResponse("vpc-id-1", name, arubatypes.StateActive)
 				m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
 				m.mockNetwork.EXPECT().VPCs().Return(m.mockVPCsClient)
 				m.mockVPCsClient.EXPECT().List(mock.Anything, vpcProjectID, mock.Anything).Return(buildVPCList(cmpVPC), nil)

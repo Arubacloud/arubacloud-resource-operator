@@ -45,7 +45,9 @@ func AssessCSPResourceStateNature(status *arubatypes.ResourceStatusResponse) CSP
 		arubatypes.StateDisabled,
 		arubatypes.StateFailed:
 		return CSPResourceStateNatureFinal
+	case arubatypes.StateInCreation, arubatypes.StateCreating, arubatypes.StateUpdating, arubatypes.StateProvisioning, arubatypes.StateDeleting, arubatypes.StateDisabling, arubatypes.StateEnabling, arubatypes.StateReserved, arubatypes.StateDeleted, arubatypes.StateError:
+		return CSPResourceStateNatureInvalid
+	default:
+		return CSPResourceStateNatureInvalid
 	}
-
-	return CSPResourceStateNatureInvalid
 }

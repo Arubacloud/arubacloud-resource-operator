@@ -117,7 +117,7 @@ func hydrateErr[R any](w wireEnvelope[R], err error) (resp *types.Response[R], o
 	if err == nil {
 		return nil, nil, false
 	}
-	r, e := objResp[R](w, err)
+	r, e := objResp(w, err)
 	return r, e, true
 }
 
@@ -145,17 +145,17 @@ func (a projectAdapter) Create(ctx context.Context, body types.ProjectRequest, p
 	w := aruba.NewProject()
 	applyProject(w, body)
 	res, err := a.c.Create(ctx, w, opts(params)...)
-	return objResp[types.ProjectResponse](res, err)
+	return objResp(res, err)
 }
 
 func (a projectAdapter) Update(ctx context.Context, projectID string, body types.ProjectRequest, params *types.RequestParameters) (*types.Response[types.ProjectResponse], error) {
 	w, err := a.c.Get(ctx, projectRef(projectID), opts(params)...)
-	if resp, out, done := hydrateErr[types.ProjectResponse](w, err); done {
+	if resp, out, done := hydrateErr(w, err); done {
 		return resp, out
 	}
 	applyProject(w, body)
 	res, err := a.c.Update(ctx, w, opts(params)...)
-	return objResp[types.ProjectResponse](res, err)
+	return objResp(res, err)
 }
 
 func (a projectAdapter) Delete(ctx context.Context, projectID string, params *types.RequestParameters) (*types.Response[any], error) {
@@ -203,17 +203,17 @@ func (a vpcsAdapter) Create(ctx context.Context, projectID string, body types.VP
 	w := aruba.NewVPC().InProject(projectRef(projectID))
 	applyVPC(w, body)
 	res, err := a.c.Create(ctx, w, opts(params)...)
-	return objResp[types.VPCResponse](res, err)
+	return objResp(res, err)
 }
 
 func (a vpcsAdapter) Update(ctx context.Context, projectID, vpcID string, body types.VPCRequest, params *types.RequestParameters) (*types.Response[types.VPCResponse], error) {
 	w, err := a.c.Get(ctx, aruba.VPCRef(projectID, vpcID), opts(params)...)
-	if resp, out, done := hydrateErr[types.VPCResponse](w, err); done {
+	if resp, out, done := hydrateErr(w, err); done {
 		return resp, out
 	}
 	applyVPC(w, body)
 	res, err := a.c.Update(ctx, w, opts(params)...)
-	return objResp[types.VPCResponse](res, err)
+	return objResp(res, err)
 }
 
 func (a vpcsAdapter) Delete(ctx context.Context, projectID, vpcID string, params *types.RequestParameters) (*types.Response[any], error) {
@@ -253,17 +253,17 @@ func (a subnetsAdapter) Create(ctx context.Context, projectID, vpcID string, bod
 	w := aruba.NewSubnet().InVPC(aruba.VPCRef(projectID, vpcID))
 	applySubnet(w, body)
 	res, err := a.c.Create(ctx, w, opts(params)...)
-	return objResp[types.SubnetResponse](res, err)
+	return objResp(res, err)
 }
 
 func (a subnetsAdapter) Update(ctx context.Context, projectID, vpcID, subnetID string, body types.SubnetRequest, params *types.RequestParameters) (*types.Response[types.SubnetResponse], error) {
 	w, err := a.c.Get(ctx, aruba.SubnetRef(projectID, vpcID, subnetID), opts(params)...)
-	if resp, out, done := hydrateErr[types.SubnetResponse](w, err); done {
+	if resp, out, done := hydrateErr(w, err); done {
 		return resp, out
 	}
 	applySubnet(w, body)
 	res, err := a.c.Update(ctx, w, opts(params)...)
-	return objResp[types.SubnetResponse](res, err)
+	return objResp(res, err)
 }
 
 func (a subnetsAdapter) Delete(ctx context.Context, projectID, vpcID, subnetID string, params *types.RequestParameters) (*types.Response[any], error) {
@@ -307,17 +307,17 @@ func (a securityGroupsAdapter) Create(ctx context.Context, projectID, vpcID stri
 	w := aruba.NewSecurityGroup().InVPC(aruba.VPCRef(projectID, vpcID))
 	applySecurityGroup(w, body)
 	res, err := a.c.Create(ctx, w, opts(params)...)
-	return objResp[types.SecurityGroupResponse](res, err)
+	return objResp(res, err)
 }
 
 func (a securityGroupsAdapter) Update(ctx context.Context, projectID, vpcID, securityGroupID string, body types.SecurityGroupRequest, params *types.RequestParameters) (*types.Response[types.SecurityGroupResponse], error) {
 	w, err := a.c.Get(ctx, aruba.SecurityGroupRef(projectID, vpcID, securityGroupID), opts(params)...)
-	if resp, out, done := hydrateErr[types.SecurityGroupResponse](w, err); done {
+	if resp, out, done := hydrateErr(w, err); done {
 		return resp, out
 	}
 	applySecurityGroup(w, body)
 	res, err := a.c.Update(ctx, w, opts(params)...)
-	return objResp[types.SecurityGroupResponse](res, err)
+	return objResp(res, err)
 }
 
 func (a securityGroupsAdapter) Delete(ctx context.Context, projectID, vpcID, securityGroupID string, params *types.RequestParameters) (*types.Response[any], error) {
@@ -348,7 +348,7 @@ func (a securityGroupRulesAdapter) Create(ctx context.Context, projectID, vpcID,
 	w := aruba.NewSecurityRule().InSecurityGroup(aruba.SecurityGroupRef(projectID, vpcID, securityGroupID))
 	applySecurityRule(w, body)
 	res, err := a.c.Create(ctx, w, opts(params)...)
-	return objResp[types.SecurityRuleResponse](res, err)
+	return objResp(res, err)
 }
 
 func (a securityGroupRulesAdapter) Delete(ctx context.Context, projectID, vpcID, securityGroupID, securityGroupRuleID string, params *types.RequestParameters) (*types.Response[any], error) {
@@ -388,17 +388,17 @@ func (a elasticIPsAdapter) Create(ctx context.Context, projectID string, body ty
 	w := aruba.NewElasticIP().InProject(projectRef(projectID))
 	applyElasticIP(w, body)
 	res, err := a.c.Create(ctx, w, opts(params)...)
-	return objResp[types.ElasticIPResponse](res, err)
+	return objResp(res, err)
 }
 
 func (a elasticIPsAdapter) Update(ctx context.Context, projectID, elasticIPID string, body types.ElasticIPRequest, params *types.RequestParameters) (*types.Response[types.ElasticIPResponse], error) {
 	w, err := a.c.Get(ctx, aruba.ElasticIPRef(projectID, elasticIPID), opts(params)...)
-	if resp, out, done := hydrateErr[types.ElasticIPResponse](w, err); done {
+	if resp, out, done := hydrateErr(w, err); done {
 		return resp, out
 	}
 	applyElasticIP(w, body)
 	res, err := a.c.Update(ctx, w, opts(params)...)
-	return objResp[types.ElasticIPResponse](res, err)
+	return objResp(res, err)
 }
 
 func (a elasticIPsAdapter) Delete(ctx context.Context, projectID, elasticIPID string, params *types.RequestParameters) (*types.Response[any], error) {
@@ -436,17 +436,17 @@ func (a cloudServersAdapter) Create(ctx context.Context, projectID string, body 
 	w := aruba.NewCloudServer().InProject(projectRef(projectID))
 	applyCloudServer(w, body)
 	res, err := a.c.Create(ctx, w, opts(params)...)
-	return objResp[types.CloudServerResponse](res, err)
+	return objResp(res, err)
 }
 
 func (a cloudServersAdapter) Update(ctx context.Context, projectID, cloudServerID string, body types.CloudServerRequest, params *types.RequestParameters) (*types.Response[types.CloudServerResponse], error) {
 	w, err := a.c.Get(ctx, aruba.URI("/projects/"+projectID+"/cloudServers/"+cloudServerID), opts(params)...)
-	if resp, out, done := hydrateErr[types.CloudServerResponse](w, err); done {
+	if resp, out, done := hydrateErr(w, err); done {
 		return resp, out
 	}
 	applyCloudServer(w, body)
 	res, err := a.c.Update(ctx, w, opts(params)...)
-	return objResp[types.CloudServerResponse](res, err)
+	return objResp(res, err)
 }
 
 func (a cloudServersAdapter) Delete(ctx context.Context, projectID, cloudServerID string, params *types.RequestParameters) (*types.Response[any], error) {
@@ -457,10 +457,10 @@ func applyCloudServer(w *aruba.CloudServer, b types.CloudServerRequest) {
 	w.Named(b.Metadata.Name).RetaggedAs(b.Metadata.Tags...).InRegion(b.Metadata.Location.Value)
 	p := b.Properties
 	if p.Zone != "" {
-		w.InZone(aruba.Zone(p.Zone))
+		w.InZone(p.Zone)
 	}
 	if p.FlavorName != nil && *p.FlavorName != "" {
-		w.OfFlavor(aruba.CloudServerFlavor(*p.FlavorName))
+		w.OfFlavor(*p.FlavorName)
 	}
 	if p.VPCPreset {
 		w.WithVPCPreset()
@@ -500,7 +500,7 @@ func (a keyPairsAdapter) Create(ctx context.Context, projectID string, body type
 	w := aruba.NewKeyPair().InProject(projectRef(projectID))
 	applyKeyPair(w, body)
 	res, err := a.c.Create(ctx, w, opts(params)...)
-	return objResp[types.KeyPairResponse](res, err)
+	return objResp(res, err)
 }
 
 func (a keyPairsAdapter) Delete(ctx context.Context, projectID, keyPairID string, params *types.RequestParameters) (*types.Response[any], error) {
@@ -533,17 +533,17 @@ func (a volumesAdapter) Create(ctx context.Context, projectID string, body types
 	w := aruba.NewBlockStorage().InProject(projectRef(projectID))
 	applyBlockStorage(w, body)
 	res, err := a.c.Create(ctx, w, opts(params)...)
-	return objResp[types.BlockStorageResponse](res, err)
+	return objResp(res, err)
 }
 
 func (a volumesAdapter) Update(ctx context.Context, projectID, volumeID string, body types.BlockStorageRequest, params *types.RequestParameters) (*types.Response[types.BlockStorageResponse], error) {
 	w, err := a.c.Get(ctx, aruba.URI("/projects/"+projectID+"/blockStorages/"+volumeID), opts(params)...)
-	if resp, out, done := hydrateErr[types.BlockStorageResponse](w, err); done {
+	if resp, out, done := hydrateErr(w, err); done {
 		return resp, out
 	}
 	applyBlockStorage(w, body)
 	res, err := a.c.Update(ctx, w, opts(params)...)
-	return objResp[types.BlockStorageResponse](res, err)
+	return objResp(res, err)
 }
 
 func (a volumesAdapter) Delete(ctx context.Context, projectID, volumeID string, params *types.RequestParameters) (*types.Response[any], error) {

@@ -18,15 +18,9 @@ import (
 
 func defaultVPCSpec(projectName string) v1alpha1.VPCSpec {
 	return v1alpha1.VPCSpec{
-<<<<<<< HEAD
 		Tenant:           "test-tenant",
 		Region:           "ITBG-Bergamo",
 		Tags:             []string{"tag1"},
-=======
-		Tenant: "test-tenant",
-		Region: "ITBG-Bergamo",
-		Tags:   []string{"tag1"},
->>>>>>> 28ce438 (test: blockstorage, vpc, elasticip, keypair controller tests on fake CMP)
 		ProjectReference: v1alpha1.ResourceReference{Name: projectName, Namespace: "default"},
 	}
 }
@@ -68,13 +62,9 @@ func newVPCReconcilerWithFake() *vpcFake {
 	return &vpcFake{r: NewVPCReconciler(newTestReconciler(GinkgoT(), f)), f: f}
 }
 
-<<<<<<< HEAD
 func (m *vpcFake) stageProject(id, name string) {
 	m.f.stage("projects", projectItem(id, name, nil, "", false))
 }
-=======
-func (m *vpcFake) stageProject(id, name string) { m.f.stage("projects", projectItem(id, name, nil, "", false)) }
->>>>>>> 28ce438 (test: blockstorage, vpc, elasticip, keypair controller tests on fake CMP)
 func (m *vpcFake) stageVPCs(items ...map[string]any) { m.f.stage("vpcs", items...) }
 
 // --- Tests ---

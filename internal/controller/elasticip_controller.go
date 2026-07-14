@@ -27,7 +27,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/Arubacloud/sdk-go/pkg/aruba"
-	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
 	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
@@ -61,9 +60,9 @@ type elasticIPBundle struct {
 // ElasticIPReconciler reconciles a ElasticIP object
 type ElasticIPReconciler struct {
 	*reconciler.Reconciler
-	ivs *reconciler.ValidationSet[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse, *kubeElasticIPBundle]
-	vs  *reconciler.ValidationSet[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse, *elasticIPBundle]
-	ts  *reconciler.TransitionSet[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse]
+	ivs *reconciler.ValidationSet[*v1alpha1.ElasticIP, *aruba.ElasticIP, *kubeElasticIPBundle]
+	vs  *reconciler.ValidationSet[*v1alpha1.ElasticIP, *aruba.ElasticIP, *elasticIPBundle]
+	ts  *reconciler.TransitionSet[*v1alpha1.ElasticIP, *aruba.ElasticIP]
 }
 
 // ---------------------------------------------------------------------------
@@ -256,7 +255,7 @@ func (r *ElasticIPReconciler) fetchCMPDependencies(
 	kubeEip *v1alpha1.ElasticIP,
 	arubaClient aruba.Client,
 	isDeleting bool,
-) (string, *arubatypes.ElasticIPResponse, ctrl.Result, error) {
+) (string, *aruba.ElasticIP, ctrl.Result, error) {
 	eipName, projectName := kubeEip.Name, kubeEip.Spec.ProjectReference.Name
 	eipFilter := fmt.Sprintf(`name:eq("%s")`, eipName)
 	prjFilter := fmt.Sprintf(`name:eq("%s")`, projectName)
@@ -266,35 +265,30 @@ func (r *ElasticIPReconciler) fetchCMPDependencies(
 	if isDeleting && kubeEip.Status.ProjectID != "" {
 		prjID = kubeEip.Status.ProjectID
 	} else {
-		cmpProjectList, err := arubaClient.FromProject().List(ctx, &arubatypes.RequestParameters{Filter: &prjFilter})
+		cmpProjectList, err := arubaClient.FromProject().List(ctx, aruba.WithFilter(prjFilter))
 		if err != nil {
 			return "", nil, ctrl.Result{}, fmt.Errorf(
 				"failed to find project in Aruba cloud: %w, project_name: '%s', project_filter: '%s'",
 				err, projectName, prjFilter,
 			)
 		}
-		if cmpProjectList.IsError() {
-			return "", nil, ctrl.Result{}, fmt.Errorf(
-				"failed to find project in Aruba cloud: status_code: %d, project_name: '%s', project_filter: '%s'",
-				cmpProjectList.StatusCode, projectName, prjFilter,
-			)
-		}
-		if cmpProjectList.Data.Total == 0 && kubeEip.Status.ProjectID != "" {
+		cmpProjects := cmpProjectList.Items()
+		if len(cmpProjects) == 0 && kubeEip.Status.ProjectID != "" {
 			return "", nil, ctrl.Result{}, fmt.Errorf(
 				"inconsistent data in project list: expected: 1, project not found: project_name: '%s', project_filter: '%s'", projectName, prjFilter,
 			)
 		}
-		if cmpProjectList.Data.Total > 1 {
+		if len(cmpProjects) > 1 {
 			return "", nil, ctrl.Result{}, fmt.Errorf(
 				"inconsistent data in project list: expected: 1, found: %d, project_name: '%s', project_filter: '%s'",
-				cmpProjectList.Data.Total, projectName, prjFilter,
+				len(cmpProjects), projectName, prjFilter,
 			)
 		}
-		if cmpProjectList.Data.Total == 0 {
+		if len(cmpProjects) == 0 {
 			log.FromContext(ctx).V(1).Info("parent project not found on CMP, requeuing", "projectName", projectName)
 			return "", nil, ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
 		}
-		prjID = *(cmpProjectList.Data.Values[0].Metadata.ID)
+		prjID = cmpProjects[0].ID()
 	}
 
 	if kubeEip.Status.ProjectID != "" && kubeEip.Status.ProjectID != prjID {
@@ -304,32 +298,30 @@ func (r *ElasticIPReconciler) fetchCMPDependencies(
 		)
 	}
 
-	cmpEipList, err := arubaClient.FromNetwork().ElasticIPs().List(ctx, prjID, &arubatypes.RequestParameters{Filter: &eipFilter})
-	if err != nil {
+	cmpEipList, err := arubaClient.FromNetwork().ElasticIPs().List(ctx, aruba.URI("/projects/"+prjID), aruba.WithFilter(eipFilter))
+	if err != nil && !isCMPNotFound(err) {
 		return "", nil, ctrl.Result{}, fmt.Errorf(
 			"failed to find elasticip in Aruba cloud: %w, eip_name: '%s', eip_filter: '%s', project_name: '%s'",
 			err, eipName, eipFilter, projectName,
 		)
 	}
-	if cmpEipList.IsError() && cmpEipList.StatusCode != http.StatusNotFound {
-		return "", nil, ctrl.Result{}, fmt.Errorf(
-			"failed to find elasticip in Aruba cloud: status_code: %d, eip_name: '%s', project_name: '%s'",
-			cmpEipList.StatusCode, eipName, projectName,
-		)
-	}
-	// TODO: Remove once CMP API name:eq() filter is fixed (issue https://jira.aruba.it/browse/DEV-66643).
-	applyNameFilterToElasticIPList(cmpEipList, eipName, log.FromContext(ctx))
 
-	if !cmpEipList.IsError() && (cmpEipList.Data.Total < 0 || cmpEipList.Data.Total > 1) {
+	// Client-side name filter workaround: the CMP API ignores name:eq() on
+	// network-domain List endpoints (issue https://jira.aruba.it/browse/DEV-66643).
+	var cmpEips []*aruba.ElasticIP
+	if cmpEipList != nil {
+		cmpEips = filterByName(cmpEipList.Items(), eipName, func(e *aruba.ElasticIP) string { return e.Name() })
+	}
+	if len(cmpEips) > 1 {
 		return "", nil, ctrl.Result{}, fmt.Errorf(
 			"inconsistent data in elasticip list: eip_name: '%s', eip_filter: '%s', project_name: '%s', instances: %d",
-			eipName, eipFilter, projectName, cmpEipList.Data.Total,
+			eipName, eipFilter, projectName, len(cmpEips),
 		)
 	}
 
-	var cmpEip *arubatypes.ElasticIPResponse
-	if cmpEipList.Data != nil && cmpEipList.Data.Total == 1 {
-		cmpEip = &cmpEipList.Data.Values[0]
+	var cmpEip *aruba.ElasticIP
+	if len(cmpEips) == 1 {
+		cmpEip = cmpEips[0]
 	}
 	log.FromContext(ctx).V(1).Info("CMP elastic IP state", "found", cmpEip != nil, "projectID", prjID)
 	return prjID, cmpEip, ctrl.Result{}, nil
@@ -339,17 +331,17 @@ func (r *ElasticIPReconciler) fetchCMPDependencies(
 // Major HandleReconcile helpers
 // ---------------------------------------------------------------------------
 
-func (r *ElasticIPReconciler) newIntentionValidationSet() *reconciler.ValidationSet[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse, *kubeElasticIPBundle] {
-	ivs := &reconciler.ValidationSet[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse, *kubeElasticIPBundle]{}
+func (r *ElasticIPReconciler) newIntentionValidationSet() *reconciler.ValidationSet[*v1alpha1.ElasticIP, *aruba.ElasticIP, *kubeElasticIPBundle] {
+	ivs := &reconciler.ValidationSet[*v1alpha1.ElasticIP, *aruba.ElasticIP, *kubeElasticIPBundle]{}
 	// 1. Required references
-	ivs.Add("ProjectReferenceRequired", func(k *v1alpha1.ElasticIP, _ *arubatypes.ElasticIPResponse, _ *kubeElasticIPBundle) error {
+	ivs.Add("ProjectReferenceRequired", func(k *v1alpha1.ElasticIP, _ *aruba.ElasticIP, _ *kubeElasticIPBundle) error {
 		if k.Spec.ProjectReference.Name == "" {
 			return fmt.Errorf("project reference is required")
 		}
 		return nil
 	})
 	// 2. Tenant must match Project (nil-guarded — Project may not be resolved yet)
-	ivs.Add("TenantMustMatchProject", func(k *v1alpha1.ElasticIP, _ *arubatypes.ElasticIPResponse, b *kubeElasticIPBundle) error {
+	ivs.Add("TenantMustMatchProject", func(k *v1alpha1.ElasticIP, _ *aruba.ElasticIP, b *kubeElasticIPBundle) error {
 		if b.KubeProject == nil {
 			return nil
 		}
@@ -361,9 +353,9 @@ func (r *ElasticIPReconciler) newIntentionValidationSet() *reconciler.Validation
 	return ivs
 }
 
-func (r *ElasticIPReconciler) newValidationSet() *reconciler.ValidationSet[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse, *elasticIPBundle] {
-	vs := &reconciler.ValidationSet[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse, *elasticIPBundle]{}
-	vs.Add("TenantMustMatchProject", reconciler.FieldMustMatch[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse, *elasticIPBundle](
+func (r *ElasticIPReconciler) newValidationSet() *reconciler.ValidationSet[*v1alpha1.ElasticIP, *aruba.ElasticIP, *elasticIPBundle] {
+	vs := &reconciler.ValidationSet[*v1alpha1.ElasticIP, *aruba.ElasticIP, *elasticIPBundle]{}
+	vs.Add("TenantMustMatchProject", reconciler.FieldMustMatch[*v1alpha1.ElasticIP, *aruba.ElasticIP, *elasticIPBundle](
 		"tenant",
 		func(k *v1alpha1.ElasticIP) string { return k.Spec.Tenant },
 		func(b *elasticIPBundle) string { return b.KubeProject.Spec.Tenant },
@@ -372,244 +364,244 @@ func (r *ElasticIPReconciler) newValidationSet() *reconciler.ValidationSet[*v1al
 	return vs
 }
 
-func (r *ElasticIPReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse] {
-	ts := &reconciler.TransitionSet[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse]{
-		DefaultRequeue:        reconciler.NoRequeue[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
-		DefaultRequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+func (r *ElasticIPReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alpha1.ElasticIP, *aruba.ElasticIP] {
+	ts := &reconciler.TransitionSet[*v1alpha1.ElasticIP, *aruba.ElasticIP]{
+		DefaultRequeue:        reconciler.NoRequeue[*v1alpha1.ElasticIP, *aruba.ElasticIP],
+		DefaultRequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 	}
 
 	// 0. PhaseTimedOut — safety net: fail if stuck in a transitory phase too long
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *aruba.ElasticIP]{
 		Name:           "PhaseTimedOut",
-		KCondition:     reconciler.KubePhaseTimedOut[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
-		ACondition:     reconciler.AlwaysTrue[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		KCondition:     reconciler.KubePhaseTimedOut[*v1alpha1.ElasticIP, *aruba.ElasticIP],
+		ACondition:     reconciler.AlwaysTrue[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 		KAction:        r.kubeSetFailedOnTimeout,
-		Requeue:        reconciler.NoRequeue[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		Requeue:        reconciler.NoRequeue[*v1alpha1.ElasticIP, *aruba.ElasticIP],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 	})
 
 	// 1. ValidationFailedAndDeleting — unblock deletion for resources stuck in any *ValidationFailed state
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *aruba.ElasticIP]{
 		Name:           "ValidationFailedAndDeleting",
-		KCondition:     reconciler.KubeAnyValidationFailedAndDeleting[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
-		ACondition:     reconciler.AlwaysTrue[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
-		KAction:        reconciler.KubeResetValidationFailedForDeletion[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse](r.Client),
-		Requeue:        reconciler.ShortRequeue[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
-		RequeueOnError: reconciler.NoRequeueAndPropagateError[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		KCondition:     reconciler.KubeAnyValidationFailedAndDeleting[*v1alpha1.ElasticIP, *aruba.ElasticIP],
+		ACondition:     reconciler.AlwaysTrue[*v1alpha1.ElasticIP, *aruba.ElasticIP],
+		KAction:        reconciler.KubeResetValidationFailedForDeletion[*v1alpha1.ElasticIP, *aruba.ElasticIP](r.Client),
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.ElasticIP, *aruba.ElasticIP],
+		RequeueOnError: reconciler.NoRequeueAndPropagateError[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 	})
 
 	// 2. PendingAndDeleting — resource deleted while still in Pending; skip CMP entirely
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *aruba.ElasticIP]{
 		Name:       "PendingAndDeleting",
-		KCondition: reconciler.KubePendingAndDeleting[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
-		ACondition: reconciler.AlwaysTrue[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
-		KAction:    reconciler.KubeDeleteFromPending[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse](r.Client),
-		Requeue:    reconciler.NoRequeue[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		KCondition: reconciler.KubePendingAndDeleting[*v1alpha1.ElasticIP, *aruba.ElasticIP],
+		ACondition: reconciler.AlwaysTrue[*v1alpha1.ElasticIP, *aruba.ElasticIP],
+		KAction:    reconciler.KubeDeleteFromPending[*v1alpha1.ElasticIP, *aruba.ElasticIP](r.Client),
+		Requeue:    reconciler.NoRequeue[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 	})
 
 	// 3. ShouldBeDeleted
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *aruba.ElasticIP]{
 		Name:           "ShouldBeDeleted",
-		KCondition:     reconciler.KubeShouldDelete[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		KCondition:     reconciler.KubeShouldDelete[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 		ACondition:     cmpElasticIpIsFinal,
 		KAction:        r.kubeMarkToDelete,
-		Requeue:        reconciler.ShortRequeue[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.ElasticIP, *aruba.ElasticIP],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 	})
 
 	// 4. ShouldDeleteTimedOut — enter deletion flow for timed-out resources
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *aruba.ElasticIP]{
 		Name:           "ShouldDeleteTimedOut",
-		KCondition:     reconciler.KubeShouldDeleteTimedOut[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
-		ACondition:     reconciler.AlwaysTrue[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		KCondition:     reconciler.KubeShouldDeleteTimedOut[*v1alpha1.ElasticIP, *aruba.ElasticIP],
+		ACondition:     reconciler.AlwaysTrue[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 		KAction:        r.kubeMarkToDelete,
-		Requeue:        reconciler.ShortRequeue[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.ElasticIP, *aruba.ElasticIP],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 	})
 
 	// 5. ShouldBeDeletedOnCMP
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *aruba.ElasticIP]{
 		Name:              "ShouldBeDeletedOnCMP",
-		KCondition:        reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		KCondition:        reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 		ACondition:        cmpElasticIpIsFinal,
 		AAction:           r.cmpDelete,
 		KActionOnASuccess: r.kubeMarkDeleting,
-		KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse](r.Client),
-		Requeue:           reconciler.ShortRequeue[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
-		RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.ElasticIP, *aruba.ElasticIP](r.Client),
+		Requeue:           reconciler.ShortRequeue[*v1alpha1.ElasticIP, *aruba.ElasticIP],
+		RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 	})
 
 	// 6. DeletionOnCMPNotNeeded — resource marked for deletion but CMP resource doesn't exist
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *aruba.ElasticIP]{
 		Name:           "DeletionOnCMPNotNeeded",
-		KCondition:     reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		KCondition:     reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 		ACondition:     cmpElasticIpNotExists,
 		KAction:        r.kubeMarkDeletingDone,
-		Requeue:        reconciler.ShortRequeue[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.ElasticIP, *aruba.ElasticIP],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 	})
 
 	// 7. WaitingDeletionOnCMP
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *aruba.ElasticIP]{
 		Name:           "WaitingDeletionOnCMP",
-		KCondition:     reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		KCondition:     reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 		ACondition:     cmpElasticIpIsTransitory,
-		Requeue:        reconciler.LongRequeue[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		Requeue:        reconciler.LongRequeue[*v1alpha1.ElasticIP, *aruba.ElasticIP],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 	})
 
 	// 8. DeletionConfirmedOnCMP
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *aruba.ElasticIP]{
 		Name:           "DeletionConfirmedOnCMP",
-		KCondition:     reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		KCondition:     reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 		ACondition:     cmpElasticIpNotExists,
 		KAction:        r.kubeMarkDeletingDone,
-		Requeue:        reconciler.ShortRequeue[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.ElasticIP, *aruba.ElasticIP],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 	})
 
 	// 9. DeletionAccomplished
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *aruba.ElasticIP]{
 		Name:           "DeletionAccomplished",
-		KCondition:     reconciler.KubeDeletionAccomplished[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		KCondition:     reconciler.KubeDeletionAccomplished[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 		ACondition:     cmpElasticIpNotExists,
 		KAction:        r.kubeMarkDeleted,
-		Requeue:        reconciler.ShortRequeue[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.ElasticIP, *aruba.ElasticIP],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 	})
 
 	// 10. HasDeniedChanges — surface immutable field violations before attempting update
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *aruba.ElasticIP]{
 		Name:       "HasDeniedChanges",
 		KCondition: kubeElasticIPHasDeniedChanges,
 		ACondition: cmpElasticIpIsFinal,
-		KAction: func(ctx context.Context, kubeEip *v1alpha1.ElasticIP, cmpEip *arubatypes.ElasticIPResponse) error {
+		KAction: func(ctx context.Context, kubeEip *v1alpha1.ElasticIP, cmpEip *aruba.ElasticIP) error {
 			return fmt.Errorf("elasticip update rejected: %w", checkElasticIPDeniedChanges(kubeEip, cmpEip))
 		},
-		Requeue:        reconciler.NoRequeue[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
-		RequeueOnError: reconciler.LongRequeueAndIgnoreError[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		Requeue:        reconciler.NoRequeue[*v1alpha1.ElasticIP, *aruba.ElasticIP],
+		RequeueOnError: reconciler.LongRequeueAndIgnoreError[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 	})
 
 	// 11. SpecAlreadyInSyncWithCMP — generation changed but spec identical to CMP; just re-stamp ObservedGeneration
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *aruba.ElasticIP]{
 		Name:           "SpecAlreadyInSyncWithCMP",
 		KCondition:     kubeElasticIPSpecInSyncWithCMP,
 		ACondition:     cmpElasticIpIsActive,
 		KAction:        r.kubeSetActiveAndSetID,
-		Requeue:        reconciler.NoRequeue[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		Requeue:        reconciler.NoRequeue[*v1alpha1.ElasticIP, *aruba.ElasticIP],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 	})
 
 	// 12. ShouldBeUpdated — spec changed and CMP is ready
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *aruba.ElasticIP]{
 		Name:           "ShouldBeUpdated",
 		KCondition:     kubeElasticIPShouldUpdate,
 		ACondition:     cmpElasticIpIsFinal,
 		KAction:        r.kubeMarkToUpdate,
-		Requeue:        reconciler.ShortRequeue[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.ElasticIP, *aruba.ElasticIP],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 	})
 
 	// 13. ShouldBeUpdatedOnCMP — send update to CMP
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *aruba.ElasticIP]{
 		Name:              "ShouldBeUpdatedOnCMP",
-		KCondition:        reconciler.KubeShouldBeUpdatedOnCMP[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		KCondition:        reconciler.KubeShouldBeUpdatedOnCMP[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 		ACondition:        cmpElasticIpIsFinal,
 		AAction:           r.cmpUpdate,
 		KActionOnASuccess: r.kubeMarkUpdating,
-		KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse](r.Client),
-		Requeue:           reconciler.ShortRequeue[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
-		RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.ElasticIP, *aruba.ElasticIP](r.Client),
+		Requeue:           reconciler.ShortRequeue[*v1alpha1.ElasticIP, *aruba.ElasticIP],
+		RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 	})
 
 	// 14. WaitingUpdateOnCMP — CMP is still processing the update
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *aruba.ElasticIP]{
 		Name:           "WaitingUpdateOnCMP",
-		KCondition:     reconciler.KubeWaitingUpdateOnCMP[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		KCondition:     reconciler.KubeWaitingUpdateOnCMP[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 		ACondition:     cmpElasticIpIsTransitory,
-		Requeue:        reconciler.LongRequeue[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		Requeue:        reconciler.LongRequeue[*v1alpha1.ElasticIP, *aruba.ElasticIP],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 	})
 
 	// 15. UpdateConfirmedOnCMP — CMP has settled; advance to Synchronized
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *aruba.ElasticIP]{
 		Name:           "UpdateConfirmedOnCMP",
-		KCondition:     reconciler.KubeWaitingUpdateOnCMP[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		KCondition:     reconciler.KubeWaitingUpdateOnCMP[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 		ACondition:     cmpElasticIpIsFinal,
 		KAction:        r.kubeMarkUpdatingDone,
-		Requeue:        reconciler.ShortRequeue[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.ElasticIP, *aruba.ElasticIP],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 	})
 
 	// 16. UpdateAccomplished — transition back to Active and stamp generation
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *aruba.ElasticIP]{
 		Name:           "UpdateAccomplished",
-		KCondition:     reconciler.KubeUpdateAccomplished[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		KCondition:     reconciler.KubeUpdateAccomplished[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 		ACondition:     cmpElasticIpIsActive,
 		KAction:        r.kubeSetActiveAndSetID,
-		Requeue:        reconciler.NoRequeue[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		Requeue:        reconciler.NoRequeue[*v1alpha1.ElasticIP, *aruba.ElasticIP],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 	})
 
 	// 17. ShouldBeCreated
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *aruba.ElasticIP]{
 		Name:           "ShouldBeCreated",
-		KCondition:     reconciler.KubeIsFirstReconciliation[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		KCondition:     reconciler.KubeIsFirstReconciliation[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 		ACondition:     cmpElasticIpNotExists,
 		KAction:        r.kubeMarkToCreate,
-		Requeue:        reconciler.ShortRequeue[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.ElasticIP, *aruba.ElasticIP],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 	})
 
 	// 18. ShouldBeCreatedInCMP
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *aruba.ElasticIP]{
 		Name:              "ShouldBeCreatedInCMP",
-		KCondition:        reconciler.KubeShouldBeCreatedOnCMP[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		KCondition:        reconciler.KubeShouldBeCreatedOnCMP[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 		ACondition:        cmpElasticIpNotExists,
 		AAction:           r.cmpCreate,
 		KActionOnASuccess: r.kubeMarkCreating,
-		KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse](r.Client),
-		Requeue:           reconciler.ShortRequeue[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
-		RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.ElasticIP, *aruba.ElasticIP](r.Client),
+		Requeue:           reconciler.ShortRequeue[*v1alpha1.ElasticIP, *aruba.ElasticIP],
+		RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 	})
 
 	// 19. WaitingCreationInCMP
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *aruba.ElasticIP]{
 		Name:           "WaitingCreationInCMP",
-		KCondition:     reconciler.KubeWaitingCreationInCMP[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		KCondition:     reconciler.KubeWaitingCreationInCMP[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 		ACondition:     cmpElasticIpNotExistsOrTransitory,
-		Requeue:        reconciler.LongRequeue[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		Requeue:        reconciler.LongRequeue[*v1alpha1.ElasticIP, *aruba.ElasticIP],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 	})
 
 	// 20. CreationConfirmedOnCMP
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *aruba.ElasticIP]{
 		Name:           "CreationConfirmedOnCMP",
-		KCondition:     reconciler.KubeWaitingCreationInCMP[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		KCondition:     reconciler.KubeWaitingCreationInCMP[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 		ACondition:     cmpElasticIpIsActive,
 		KAction:        r.kubeMarkCreatingDone,
-		Requeue:        reconciler.ShortRequeue[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.ElasticIP, *aruba.ElasticIP],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 	})
 
 	// 21. CreationAccomplished
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *aruba.ElasticIP]{
 		Name:           "CreationAccomplished",
-		KCondition:     reconciler.KubeIsCreatedOnCMP[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		KCondition:     reconciler.KubeIsCreatedOnCMP[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 		ACondition:     cmpElasticIpIsActive,
 		KAction:        r.kubeSetActiveAndSetID,
-		Requeue:        reconciler.NoRequeue[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		Requeue:        reconciler.NoRequeue[*v1alpha1.ElasticIP, *aruba.ElasticIP],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 	})
 
 	// 22. IsInError
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.ElasticIP, *aruba.ElasticIP]{
 		Name:           "IsInError",
-		KCondition:     reconciler.AlwaysTrue[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		KCondition:     reconciler.AlwaysTrue[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 		ACondition:     cmpElasticIpIsFailed,
 		KAction:        r.kubeSetFailed,
-		Requeue:        reconciler.NoRequeue[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *arubatypes.ElasticIPResponse],
+		Requeue:        reconciler.NoRequeue[*v1alpha1.ElasticIP, *aruba.ElasticIP],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.ElasticIP, *aruba.ElasticIP],
 	})
 
 	return ts
@@ -619,7 +611,7 @@ func (r *ElasticIPReconciler) newTransitionSet() *reconciler.TransitionSet[*v1al
 // Kube conditions
 // ---------------------------------------------------------------------------
 
-func kubeElasticIPHasDeniedChanges(kubeEip *v1alpha1.ElasticIP, cmpEip *arubatypes.ElasticIPResponse) bool {
+func kubeElasticIPHasDeniedChanges(kubeEip *v1alpha1.ElasticIP, cmpEip *aruba.ElasticIP) bool {
 	if !kubeEip.DeletionTimestamp.IsZero() {
 		return false
 	}
@@ -629,13 +621,13 @@ func kubeElasticIPHasDeniedChanges(kubeEip *v1alpha1.ElasticIP, cmpEip *arubatyp
 	return checkElasticIPDeniedChanges(kubeEip, cmpEip) != nil
 }
 
-func kubeElasticIPSpecInSyncWithCMP(kubeEip *v1alpha1.ElasticIP, cmpEip *arubatypes.ElasticIPResponse) bool {
+func kubeElasticIPSpecInSyncWithCMP(kubeEip *v1alpha1.ElasticIP, cmpEip *aruba.ElasticIP) bool {
 	return reconciler.KubeActiveAndGenerationChanged(kubeEip, cmpEip) &&
 		checkElasticIPDeniedChanges(kubeEip, cmpEip) == nil &&
 		!kubeElasticIPNeedsUpdate(kubeEip, cmpEip)
 }
 
-func kubeElasticIPShouldUpdate(kubeEip *v1alpha1.ElasticIP, cmpEip *arubatypes.ElasticIPResponse) bool {
+func kubeElasticIPShouldUpdate(kubeEip *v1alpha1.ElasticIP, cmpEip *aruba.ElasticIP) bool {
 	return reconciler.KubeActiveAndGenerationChanged(kubeEip, cmpEip) &&
 		checkElasticIPDeniedChanges(kubeEip, cmpEip) == nil &&
 		kubeElasticIPNeedsUpdate(kubeEip, cmpEip)
@@ -645,47 +637,35 @@ func kubeElasticIPShouldUpdate(kubeEip *v1alpha1.ElasticIP, cmpEip *arubatypes.E
 // CMP conditions
 // ---------------------------------------------------------------------------
 
-func cmpElasticIpNotExists(_ *v1alpha1.ElasticIP, cmpEip *arubatypes.ElasticIPResponse) bool {
+func cmpElasticIpNotExists(_ *v1alpha1.ElasticIP, cmpEip *aruba.ElasticIP) bool {
 	return cmpEip == nil
 }
 
-func cmpElasticIpIsFinal(_ *v1alpha1.ElasticIP, cmpEip *arubatypes.ElasticIPResponse) bool {
-	if cmpEip == nil || cmpEip.Status.State == nil {
-		return false
-	}
-	return reconciler.AssessCSPResourceStateNature(&cmpEip.Status) == reconciler.CSPResourceStateNatureFinal
+func cmpElasticIpIsFinal(_ *v1alpha1.ElasticIP, cmpEip *aruba.ElasticIP) bool {
+	return cmpEip != nil && reconciler.IsFinalState(cmpEip.State())
 }
 
-func cmpElasticIpIsTransitory(_ *v1alpha1.ElasticIP, cmpEip *arubatypes.ElasticIPResponse) bool {
-	if cmpEip == nil || cmpEip.Status.State == nil {
-		return false
-	}
-	return reconciler.AssessCSPResourceStateNature(&cmpEip.Status) == reconciler.CSPResourceStateNatureTransitory
+func cmpElasticIpIsTransitory(_ *v1alpha1.ElasticIP, cmpEip *aruba.ElasticIP) bool {
+	return cmpEip != nil && cmpEip.State().IsTransitory()
 }
 
-func cmpElasticIpNotExistsOrTransitory(_ *v1alpha1.ElasticIP, cmpEip *arubatypes.ElasticIPResponse) bool {
+func cmpElasticIpNotExistsOrTransitory(_ *v1alpha1.ElasticIP, cmpEip *aruba.ElasticIP) bool {
+	return cmpEip == nil || cmpEip.State().IsTransitory()
+}
+
+func cmpElasticIpIsActive(_ *v1alpha1.ElasticIP, cmpEip *aruba.ElasticIP) bool {
 	if cmpEip == nil {
-		return true
-	}
-	if cmpEip.Status.State == nil {
 		return false
 	}
-	return reconciler.AssessCSPResourceStateNature(&cmpEip.Status) == reconciler.CSPResourceStateNatureTransitory
-}
-
-func cmpElasticIpIsActive(_ *v1alpha1.ElasticIP, cmpEip *arubatypes.ElasticIPResponse) bool {
-	if cmpEip == nil || cmpEip.Status.State == nil {
-		return false
-	}
-	switch *cmpEip.Status.State {
-	case reconciler.CSPResourceStateActive, reconciler.CSPResourceStateNotUsed, reconciler.CSPResourceStateInUse, reconciler.CSPResourceStateUsed:
+	switch cmpEip.State() {
+	case aruba.StateActive, aruba.StateNotUsed, aruba.StateInUse, aruba.StateUsed:
 		return true
 	}
 	return false
 }
 
-func cmpElasticIpIsFailed(_ *v1alpha1.ElasticIP, cmpEip *arubatypes.ElasticIPResponse) bool {
-	return cmpEip != nil && cmpEip.Status.State != nil && *cmpEip.Status.State == reconciler.CSPResourceStateFailed
+func cmpElasticIpIsFailed(_ *v1alpha1.ElasticIP, cmpEip *aruba.ElasticIP) bool {
+	return cmpEip != nil && cmpEip.State().IsFailure()
 }
 
 // ---------------------------------------------------------------------------
@@ -703,50 +683,50 @@ func (r *ElasticIPReconciler) kubeSetPhaseAndCondition(ctx context.Context, kube
 	return reconciler.SetPhaseAndCondition(r.Client, ctx, kubeEip, phase, reason, nil, prePatches...)
 }
 
-func (r *ElasticIPReconciler) kubeMarkToDelete(ctx context.Context, kubeEip *v1alpha1.ElasticIP, _ *arubatypes.ElasticIPResponse) error {
+func (r *ElasticIPReconciler) kubeMarkToDelete(ctx context.Context, kubeEip *v1alpha1.ElasticIP, _ *aruba.ElasticIP) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeEip, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize, nil)
 }
 
-func (r *ElasticIPReconciler) kubeMarkDeleting(ctx context.Context, kubeEip *v1alpha1.ElasticIP, _ *arubatypes.ElasticIPResponse) error {
+func (r *ElasticIPReconciler) kubeMarkDeleting(ctx context.Context, kubeEip *v1alpha1.ElasticIP, _ *aruba.ElasticIP) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeEip, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronizing, nil)
 }
 
-func (r *ElasticIPReconciler) kubeMarkDeletingDone(ctx context.Context, kubeEip *v1alpha1.ElasticIP, _ *arubatypes.ElasticIPResponse) error {
+func (r *ElasticIPReconciler) kubeMarkDeletingDone(ctx context.Context, kubeEip *v1alpha1.ElasticIP, _ *aruba.ElasticIP) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeEip, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronized, nil)
 }
 
-func (r *ElasticIPReconciler) kubeMarkDeleted(ctx context.Context, kubeEip *v1alpha1.ElasticIP, _ *arubatypes.ElasticIPResponse) error {
+func (r *ElasticIPReconciler) kubeMarkDeleted(ctx context.Context, kubeEip *v1alpha1.ElasticIP, _ *aruba.ElasticIP) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeEip, v1alpha1.ResourcePhaseDeleted, v1alpha1.ConditionReasonSynchronized, nil)
 }
 
-func (r *ElasticIPReconciler) kubeMarkToUpdate(ctx context.Context, kubeEip *v1alpha1.ElasticIP, _ *arubatypes.ElasticIPResponse) error {
+func (r *ElasticIPReconciler) kubeMarkToUpdate(ctx context.Context, kubeEip *v1alpha1.ElasticIP, _ *aruba.ElasticIP) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeEip, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, nil)
 }
 
-func (r *ElasticIPReconciler) kubeMarkUpdating(ctx context.Context, kubeEip *v1alpha1.ElasticIP, _ *arubatypes.ElasticIPResponse) error {
+func (r *ElasticIPReconciler) kubeMarkUpdating(ctx context.Context, kubeEip *v1alpha1.ElasticIP, _ *aruba.ElasticIP) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeEip, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonSynchronizing, nil)
 }
 
-func (r *ElasticIPReconciler) kubeMarkUpdatingDone(ctx context.Context, kubeEip *v1alpha1.ElasticIP, _ *arubatypes.ElasticIPResponse) error {
+func (r *ElasticIPReconciler) kubeMarkUpdatingDone(ctx context.Context, kubeEip *v1alpha1.ElasticIP, _ *aruba.ElasticIP) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeEip, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonSynchronized, nil)
 }
 
-func (r *ElasticIPReconciler) kubeMarkToCreate(ctx context.Context, kubeEip *v1alpha1.ElasticIP, _ *arubatypes.ElasticIPResponse) error {
+func (r *ElasticIPReconciler) kubeMarkToCreate(ctx context.Context, kubeEip *v1alpha1.ElasticIP, _ *aruba.ElasticIP) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeEip, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, nil)
 }
 
-func (r *ElasticIPReconciler) kubeMarkCreating(ctx context.Context, kubeEip *v1alpha1.ElasticIP, _ *arubatypes.ElasticIPResponse) error {
+func (r *ElasticIPReconciler) kubeMarkCreating(ctx context.Context, kubeEip *v1alpha1.ElasticIP, _ *aruba.ElasticIP) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeEip, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, nil)
 }
 
-func (r *ElasticIPReconciler) kubeMarkCreatingDone(ctx context.Context, kubeEip *v1alpha1.ElasticIP, _ *arubatypes.ElasticIPResponse) error {
+func (r *ElasticIPReconciler) kubeMarkCreatingDone(ctx context.Context, kubeEip *v1alpha1.ElasticIP, _ *aruba.ElasticIP) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeEip, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronized, nil)
 }
 
-func (r *ElasticIPReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeEip *v1alpha1.ElasticIP, cmpEip *arubatypes.ElasticIPResponse) error {
+func (r *ElasticIPReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeEip *v1alpha1.ElasticIP, cmpEip *aruba.ElasticIP) error {
 	cmpID := ""
-	if cmpEip != nil && cmpEip.Metadata.ID != nil {
-		cmpID = *cmpEip.Metadata.ID
+	if cmpEip != nil {
+		cmpID = cmpEip.ID()
 	}
 	return reconciler.SetActiveAndSetID(r.Client, ctx, kubeEip, cmpID, nil, func(eip *v1alpha1.ElasticIP) {
 		if prjID, ok := ctx.Value(projectIDKey).(string); ok && eip.Status.ProjectID != "" {
@@ -755,7 +735,7 @@ func (r *ElasticIPReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeEip
 	})
 }
 
-func (r *ElasticIPReconciler) kubeSetFailedOnTimeout(ctx context.Context, kubeEip *v1alpha1.ElasticIP, _ *arubatypes.ElasticIPResponse) error {
+func (r *ElasticIPReconciler) kubeSetFailedOnTimeout(ctx context.Context, kubeEip *v1alpha1.ElasticIP, _ *aruba.ElasticIP) error {
 	return reconciler.SetFailedOnTimeout(r.Client, ctx, kubeEip, func(eip *v1alpha1.ElasticIP) {
 		if prjID, ok := ctx.Value(projectIDKey).(string); ok && eip.Status.ProjectID == "" {
 			eip.Status.ProjectID = prjID
@@ -763,7 +743,7 @@ func (r *ElasticIPReconciler) kubeSetFailedOnTimeout(ctx context.Context, kubeEi
 	})
 }
 
-func (r *ElasticIPReconciler) kubeSetFailed(ctx context.Context, kubeEip *v1alpha1.ElasticIP, _ *arubatypes.ElasticIPResponse) error {
+func (r *ElasticIPReconciler) kubeSetFailed(ctx context.Context, kubeEip *v1alpha1.ElasticIP, _ *aruba.ElasticIP) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeEip, v1alpha1.ResourcePhaseFailed, v1alpha1.ConditionReasonSynchronized, nil)
 }
 
@@ -771,20 +751,13 @@ func (r *ElasticIPReconciler) kubeSetFailed(ctx context.Context, kubeEip *v1alph
 // CMP actions
 // ---------------------------------------------------------------------------
 
-func (r *ElasticIPReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.ElasticIP, cmpEip *arubatypes.ElasticIPResponse) error {
-	prjID := ctx.Value(projectIDKey).(string)
+func (r *ElasticIPReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.ElasticIP, cmpEip *aruba.ElasticIP) error {
 	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
-
-	cmpEipResp, err := arubaClient.FromNetwork().ElasticIPs().Delete(ctx, prjID, *cmpEip.Metadata.ID, nil)
-	if err != nil {
-		return reconciler.CMPTransportError("delete", *cmpEip.Metadata.Name, err)
-	}
-	return reconciler.CMPCheckResponse("delete", *cmpEip.Metadata.Name, cmpEipResp,
-		http.StatusOK, http.StatusAccepted, http.StatusNoContent, http.StatusNotFound)
+	err := arubaClient.FromNetwork().ElasticIPs().Delete(ctx, cmpEip)
+	return reconciler.CMPErrorFromResult("delete", cmpEip.Name(), err, http.StatusNotFound)
 }
 
-func (r *ElasticIPReconciler) cmpUpdate(ctx context.Context, kubeEip *v1alpha1.ElasticIP, cmpEip *arubatypes.ElasticIPResponse) error {
-	prjID := ctx.Value(projectIDKey).(string)
+func (r *ElasticIPReconciler) cmpUpdate(ctx context.Context, kubeEip *v1alpha1.ElasticIP, cmpEip *aruba.ElasticIP) error {
 	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
 
 	// Guard: should have been caught by HasDeniedChanges, but double-check.
@@ -792,118 +765,49 @@ func (r *ElasticIPReconciler) cmpUpdate(ctx context.Context, kubeEip *v1alpha1.E
 		return err
 	}
 
-	request := buildElasticIPUpdateRequest(kubeEip, cmpEip)
-
-	cmpEipResp, err := arubaClient.FromNetwork().ElasticIPs().Update(ctx, prjID, *cmpEip.Metadata.ID, *request, nil)
-	if err != nil {
-		return reconciler.CMPTransportError("update", kubeEip.Name, err)
-	}
-	return reconciler.CMPCheckResponse("update", kubeEip.Name, cmpEipResp,
-		http.StatusOK, http.StatusAccepted, http.StatusNoContent)
+	// Mutate only the mutable fields (tags, billing period) on the fetched wrapper.
+	cmpEip.RetaggedAs(kubeEip.Spec.Tags...).
+		BilledBy(aruba.BillingPeriod(kubeEip.Spec.BillingPeriod))
+	_, err := arubaClient.FromNetwork().ElasticIPs().Update(ctx, cmpEip)
+	return reconciler.CMPErrorFromResult("update", kubeEip.Name, err)
 }
 
-func (r *ElasticIPReconciler) cmpCreate(ctx context.Context, kubeEip *v1alpha1.ElasticIP, _ *arubatypes.ElasticIPResponse) error {
+func (r *ElasticIPReconciler) cmpCreate(ctx context.Context, kubeEip *v1alpha1.ElasticIP, _ *aruba.ElasticIP) error {
 	prjID := ctx.Value(projectIDKey).(string)
 	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
 
-	cmpEipResp, err := arubaClient.FromNetwork().ElasticIPs().Create(ctx, prjID, *cmpElasticIPRequestFromKube(kubeEip), nil)
-	if err != nil {
-		return reconciler.CMPTransportError("create", kubeEip.Name, err)
-	}
-	return reconciler.CMPCheckResponse("create", kubeEip.Name, cmpEipResp,
-		http.StatusOK, http.StatusCreated, http.StatusAccepted)
+	eip := aruba.NewElasticIP().
+		InProject(aruba.URI("/projects/" + prjID)).
+		Named(kubeEip.Name).
+		Tagged(kubeEip.Spec.Tags...).
+		InRegion(aruba.Region(kubeEip.Spec.Region)).
+		BilledBy(aruba.BillingPeriod(kubeEip.Spec.BillingPeriod))
+	_, err := arubaClient.FromNetwork().ElasticIPs().Create(ctx, eip)
+	return reconciler.CMPErrorFromResult("create", kubeEip.Name, err)
 }
 
 // ---------------------------------------------------------------------------
 // Other helpers
 // ---------------------------------------------------------------------------
 
-func checkElasticIPDeniedChanges(kubeEip *v1alpha1.ElasticIP, cmpEip *arubatypes.ElasticIPResponse) error {
+func checkElasticIPDeniedChanges(kubeEip *v1alpha1.ElasticIP, cmpEip *aruba.ElasticIP) error {
 	if cmpEip == nil {
 		return nil
 	}
-
-	locationValue := ""
-	if cmpEip.Metadata.LocationResponse != nil {
-		locationValue = cmpEip.Metadata.LocationResponse.Value
-	}
-	if kubeEip.Spec.Region != locationValue {
+	if kubeEip.Spec.Region != string(cmpEip.Region()) {
 		return fmt.Errorf("%w: %w", reconciler.ErrNotAllowedChanges, errors.New("change the 'location' is not allowed"))
 	}
-
 	return nil
 }
 
-func kubeElasticIPNeedsUpdate(kubeEip *v1alpha1.ElasticIP, cmpEip *arubatypes.ElasticIPResponse) bool {
+func kubeElasticIPNeedsUpdate(kubeEip *v1alpha1.ElasticIP, cmpEip *aruba.ElasticIP) bool {
 	if cmpEip == nil {
 		return false
 	}
-	if !reconciler.TagsAreEqual(kubeEip.Spec.Tags, cmpEip.Metadata.Tags) {
+	if !reconciler.TagsAreEqual(kubeEip.Spec.Tags, cmpEip.Tags()) {
 		return true
 	}
-	if kubeEip.Spec.BillingPeriod != cmpEip.Properties.BillingPlan.BillingPeriod {
-		return true
-	}
-	return false
-}
-
-func buildElasticIPUpdateRequest(kubeEip *v1alpha1.ElasticIP, cmpEip *arubatypes.ElasticIPResponse) *arubatypes.ElasticIPRequest {
-	request := cmpElasticIPRequestFromCMP(cmpEip)
-	if request == nil {
-		return nil
-	}
-	tags := make([]string, len(kubeEip.Spec.Tags))
-	copy(tags, kubeEip.Spec.Tags)
-	request.Metadata.Tags = tags
-	request.Properties.BillingPlan.BillingPeriod = kubeEip.Spec.BillingPeriod
-	return request
-}
-
-func cmpElasticIPRequestFromCMP(cmpEip *arubatypes.ElasticIPResponse) *arubatypes.ElasticIPRequest {
-	if cmpEip == nil {
-		return nil
-	}
-	name := ""
-	if cmpEip.Metadata.Name != nil {
-		name = *cmpEip.Metadata.Name
-	}
-	tags := make([]string, len(cmpEip.Metadata.Tags))
-	copy(tags, cmpEip.Metadata.Tags)
-	location := arubatypes.LocationRequest{Value: ""}
-	if cmpEip.Metadata.LocationResponse != nil {
-		location.Value = cmpEip.Metadata.LocationResponse.Value
-	}
-	return &arubatypes.ElasticIPRequest{
-		Metadata: arubatypes.RegionalResourceMetadataRequest{
-			ResourceMetadataRequest: arubatypes.ResourceMetadataRequest{
-				Name: name,
-				Tags: tags,
-			},
-			Location: location,
-		},
-		Properties: arubatypes.ElasticIPPropertiesRequest{
-			BillingPlan: arubatypes.BillingPeriodResource{
-				BillingPeriod: cmpEip.Properties.BillingPlan.BillingPeriod,
-			},
-		},
-	}
-}
-
-func cmpElasticIPRequestFromKube(kubeEip *v1alpha1.ElasticIP) *arubatypes.ElasticIPRequest {
-	return &arubatypes.ElasticIPRequest{
-		Metadata: arubatypes.RegionalResourceMetadataRequest{
-			ResourceMetadataRequest: arubatypes.ResourceMetadataRequest{
-				Name: kubeEip.Name,
-				Tags: kubeEip.Spec.Tags,
-			},
-			Location: arubatypes.LocationRequest{Value: kubeEip.Spec.Region},
-		},
-		Properties: arubatypes.ElasticIPPropertiesRequest{
-			BillingPlan: arubatypes.BillingPeriodResource{
-				BillingPeriod: kubeEip.Spec.BillingPeriod,
-			},
-		},
-	}
+	return kubeEip.Spec.BillingPeriod != string(cmpEip.BillingPeriod())
 }
 
 // ---------------------------------------------------------------------------

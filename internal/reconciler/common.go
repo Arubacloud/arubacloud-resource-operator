@@ -3,72 +3,28 @@ package reconciler
 import (
 	"errors"
 
-	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
+	"github.com/Arubacloud/sdk-go/pkg/aruba"
 )
 
 var (
 	ErrNotAllowedChanges = errors.New("not allowed change")
 )
 
-const (
-	CSPResourceStateInCreation   string = "InCreation"
-	CSPResourceStateCreating     string = "Creating"
-	CSPResourceStateUpdating     string = "Updating"
-	CSPResourceStateDeleting     string = "Deleting"
-	CSPResourceStateDeleted      string = "Deleted"
-	CSPResourceStateProvisioning string = "Provisioning"
-	CSPResourceStateActive       string = "Active"
-	CSPResourceStateNotUsed      string = "NotUsed"
-	CSPResourceStateInUse        string = "InUse"
-	CSPResourceStateUsed         string = "Used"
-	CSPResourceStateStopped      string = "Stopped"
-	CSPResourceStateRunning      string = "Running"
+// IsFinalState reports whether a CMP resource lifecycle state is settled — i.e.
+// non-empty and not transitory. Settled covers both healthy steady states
+// (Active, Running, NotUsed, InUse, …) and failure states (Failed, Error,
+// Disabled). It is the classification the operator uses to decide the CMP
+// resource is stable enough to act on (dispatch a delete or an update).
+//
+// It replaces the former AssessCSPResourceStateNature "Final" nature, delegating
+// the transitory/settled distinction to the SDK's aruba.State.IsTransitory().
+func IsFinalState(s aruba.State) bool {
+	return s != "" && !s.IsTransitory()
+}
 
-	CSPResourceStateDisabling string = "Disabling" // after recharge credits is not successfully applied, the resource is in "Disabling" state, and then it will be "Disabled"
-	CSPResourceStateEnabling  string = "Enabling"  // after recharge credits is not successfully applied, the resource is in "Enabling" state, and then it will be "Active"
-
-	CSPResourceStateDisabled string = "Disabled" // final state after "Disabling"; customer cannot use the resource until is enabled again
-	CSPResourceStateFailed   string = "Failed"   // final state when some error occurs during creation or update of the resource; customer cannot use the resource and need to delete it
-)
-
-type CSPResourceStateNature int
-
-const (
-	CSPResourceStateNatureInvalid CSPResourceStateNature = iota
-	CSPResourceStateNatureTransitory
-	CSPResourceStateNatureFinal
-	CSPResourceStateNatureUndetermined
-)
-
-func AssessCSPResourceStateNature(status *arubatypes.ResourceStatus) CSPResourceStateNature {
-	if status == nil {
-		return CSPResourceStateNatureUndetermined
-	}
-
-	if status.State == nil {
-		return CSPResourceStateNatureUndetermined
-	}
-
-	switch *status.State {
-	case CSPResourceStateInCreation,
-		CSPResourceStateCreating,
-		CSPResourceStateUpdating,
-		CSPResourceStateDeleting,
-		CSPResourceStateProvisioning,
-		CSPResourceStateDisabling,
-		CSPResourceStateEnabling:
-		return CSPResourceStateNatureTransitory
-
-	case CSPResourceStateActive,
-		CSPResourceStateNotUsed,
-		CSPResourceStateInUse,
-		CSPResourceStateUsed,
-		CSPResourceStateStopped,
-		CSPResourceStateRunning,
-		CSPResourceStateDisabled,
-		CSPResourceStateFailed:
-		return CSPResourceStateNatureFinal
-	}
-
-	return CSPResourceStateNatureInvalid
+// IsTransitoryState reports whether a CMP resource lifecycle state indicates an
+// operation in progress (InCreation, Creating, Updating, Deleting, …). Thin
+// wrapper over aruba.State.IsTransitory() for symmetry with IsFinalState.
+func IsTransitoryState(s aruba.State) bool {
+	return s.IsTransitory()
 }

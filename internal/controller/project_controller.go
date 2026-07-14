@@ -28,7 +28,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/Arubacloud/sdk-go/pkg/aruba"
-	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
 	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
@@ -49,7 +48,7 @@ const (
 // ProjectReconciler reconciles a Project object
 type ProjectReconciler struct {
 	*reconciler.Reconciler
-	ts *reconciler.TransitionSet[*v1alpha1.Project, *arubatypes.ProjectResponse]
+	ts *reconciler.TransitionSet[*v1alpha1.Project, *aruba.Project]
 }
 
 // ---------------------------------------------------------------------------
@@ -114,24 +113,22 @@ func (r *ProjectReconciler) HandleReconcile(ctx context.Context, obj reconciler.
 	projectName := kubeProject.Name
 	projectFilter := fmt.Sprintf(`name:eq("%s")`, projectName)
 
-	cmpProjectList, err := arubaClient.FromProject().List(ctx, &arubatypes.RequestParameters{Filter: &projectFilter})
+	cmpProjectList, err := arubaClient.FromProject().List(ctx, aruba.WithFilter(projectFilter))
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("listing CMP projects: %w", err)
 	}
-	if cmpProjectList.IsError() {
-		return ctrl.Result{}, fmt.Errorf("listing CMP projects: status %d", cmpProjectList.StatusCode)
-	}
 
-	if cmpProjectList.Data.Total < 0 || cmpProjectList.Data.Total > 1 {
+	cmpProjects := cmpProjectList.Items()
+	if len(cmpProjects) > 1 {
 		return ctrl.Result{}, fmt.Errorf(
 			"inconsistent CMP project list: total %d for %q",
-			cmpProjectList.Data.Total, projectName,
+			len(cmpProjects), projectName,
 		)
 	}
 
-	var cmpProject *arubatypes.ProjectResponse
-	if cmpProjectList.Data.Total == 1 {
-		cmpProject = &cmpProjectList.Data.Values[0]
+	var cmpProject *aruba.Project
+	if len(cmpProjects) == 1 {
+		cmpProject = cmpProjects[0]
 	}
 	logger.V(1).Info("CMP project state", "found", cmpProject != nil)
 
@@ -160,62 +157,62 @@ func (r *ProjectReconciler) HandleReconcile(ctx context.Context, obj reconciler.
 // newTransitionSet
 // ---------------------------------------------------------------------------
 
-func (r *ProjectReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alpha1.Project, *arubatypes.ProjectResponse] {
-	ts := &reconciler.TransitionSet[*v1alpha1.Project, *arubatypes.ProjectResponse]{
-		DefaultRequeue:        reconciler.NoRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-		DefaultRequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+func (r *ProjectReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alpha1.Project, *aruba.Project] {
+	ts := &reconciler.TransitionSet[*v1alpha1.Project, *aruba.Project]{
+		DefaultRequeue:        reconciler.NoRequeue[*v1alpha1.Project, *aruba.Project],
+		DefaultRequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Project, *aruba.Project],
 	}
 
 	// 0. PhaseTimedOut — safety net: fail if stuck in a transitory phase too long
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Project, *aruba.Project]{
 		Name:           "PhaseTimedOut",
-		KCondition:     reconciler.KubePhaseTimedOut[*v1alpha1.Project, *arubatypes.ProjectResponse],
-		ACondition:     reconciler.AlwaysTrue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+		KCondition:     reconciler.KubePhaseTimedOut[*v1alpha1.Project, *aruba.Project],
+		ACondition:     reconciler.AlwaysTrue[*v1alpha1.Project, *aruba.Project],
 		KAction:        r.kubeSetFailedOnTimeout,
-		Requeue:        reconciler.NoRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+		Requeue:        reconciler.NoRequeue[*v1alpha1.Project, *aruba.Project],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Project, *aruba.Project],
 	})
 
 	// 1. ValidationFailedAndDeleting — unblock deletion for resources stuck in any *ValidationFailed state
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Project, *aruba.Project]{
 		Name:           "ValidationFailedAndDeleting",
-		KCondition:     reconciler.KubeAnyValidationFailedAndDeleting[*v1alpha1.Project, *arubatypes.ProjectResponse],
-		ACondition:     reconciler.AlwaysTrue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-		KAction:        reconciler.KubeResetValidationFailedForDeletion[*v1alpha1.Project, *arubatypes.ProjectResponse](r.Client),
-		Requeue:        reconciler.ShortRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-		RequeueOnError: reconciler.NoRequeueAndPropagateError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+		KCondition:     reconciler.KubeAnyValidationFailedAndDeleting[*v1alpha1.Project, *aruba.Project],
+		ACondition:     reconciler.AlwaysTrue[*v1alpha1.Project, *aruba.Project],
+		KAction:        reconciler.KubeResetValidationFailedForDeletion[*v1alpha1.Project, *aruba.Project](r.Client),
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.Project, *aruba.Project],
+		RequeueOnError: reconciler.NoRequeueAndPropagateError[*v1alpha1.Project, *aruba.Project],
 	})
 
 	// 2. PendingAndDeleting — resource deleted while still in Pending; skip CMP entirely
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Project, *aruba.Project]{
 		Name:       "PendingAndDeleting",
-		KCondition: reconciler.KubePendingAndDeleting[*v1alpha1.Project, *arubatypes.ProjectResponse],
-		ACondition: reconciler.AlwaysTrue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-		KAction:    reconciler.KubeDeleteFromPending[*v1alpha1.Project, *arubatypes.ProjectResponse](r.Client),
-		Requeue:    reconciler.NoRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+		KCondition: reconciler.KubePendingAndDeleting[*v1alpha1.Project, *aruba.Project],
+		ACondition: reconciler.AlwaysTrue[*v1alpha1.Project, *aruba.Project],
+		KAction:    reconciler.KubeDeleteFromPending[*v1alpha1.Project, *aruba.Project](r.Client),
+		Requeue:    reconciler.NoRequeue[*v1alpha1.Project, *aruba.Project],
 	})
 
 	// 3. ShouldBeDeleted — DeletionTimestamp set + active → mark Deleting+ShallSynchronize
 	ts.Add(
-		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+		&reconciler.AbstractTransition[*v1alpha1.Project, *aruba.Project]{
 			Name:           "ShouldBeDeleted",
-			KCondition:     reconciler.KubeShouldDelete[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			KCondition:     reconciler.KubeShouldDelete[*v1alpha1.Project, *aruba.Project],
 			ACondition:     cmpProjectExists,
 			KAction:        r.kubeMarkToDelete, // Mark as "Deleting + ShallSynchronize"
-			Requeue:        reconciler.ShortRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			Requeue:        reconciler.ShortRequeue[*v1alpha1.Project, *aruba.Project],
+			RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Project, *aruba.Project],
 		},
 	)
 
 	// 4. ShouldDeleteTimedOut — enter deletion flow for timed-out resources (except those that timed out during Deleting)
 	ts.Add(
-		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+		&reconciler.AbstractTransition[*v1alpha1.Project, *aruba.Project]{
 			Name:           "ShouldDeleteTimedOut",
-			KCondition:     reconciler.KubeShouldDeleteTimedOut[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			ACondition:     reconciler.AlwaysTrue[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			KCondition:     reconciler.KubeShouldDeleteTimedOut[*v1alpha1.Project, *aruba.Project],
+			ACondition:     reconciler.AlwaysTrue[*v1alpha1.Project, *aruba.Project],
 			KAction:        r.kubeMarkToDelete,
-			Requeue:        reconciler.ShortRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			Requeue:        reconciler.ShortRequeue[*v1alpha1.Project, *aruba.Project],
+			RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Project, *aruba.Project],
 		},
 	)
 
@@ -223,210 +220,210 @@ func (r *ProjectReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alph
 	// The kAction explicitly deletes children because the K8s GC only cascades after the
 	// owner is fully removed from etcd (impossible while the project finalizer is present).
 	ts.Add(
-		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+		&reconciler.AbstractTransition[*v1alpha1.Project, *aruba.Project]{
 			Name: "WaitingChildrenDeletion",
-			KCondition: func(k *v1alpha1.Project, a *arubatypes.ProjectResponse) bool {
+			KCondition: func(k *v1alpha1.Project, a *aruba.Project) bool {
 				return reconciler.KubeShouldBeDeletedOnCMP(k, a) && r.kubeProjectHasOwnedChildren(k, a)
 			},
 			ACondition:     cmpProjectExists,
 			KAction:        r.kubeProjectDeleteOwnedChildren,
-			Requeue:        reconciler.LongRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			RequeueOnError: reconciler.ShortRequeueAndIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			Requeue:        reconciler.LongRequeue[*v1alpha1.Project, *aruba.Project],
+			RequeueOnError: reconciler.ShortRequeueAndIgnoreError[*v1alpha1.Project, *aruba.Project],
 		},
 	)
 
 	// 6. ShouldBeDeletedOnCMP — marked Deleting+ShallSynchronize + CMP exists → dispatch delete
 	ts.Add(
-		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+		&reconciler.AbstractTransition[*v1alpha1.Project, *aruba.Project]{
 			Name:              "ShouldBeDeletedOnCMP",
-			KCondition:        reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			KCondition:        reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.Project, *aruba.Project],
 			ACondition:        cmpProjectExists,
 			AAction:           r.cmpDelete,
 			KActionOnASuccess: r.kubeMarkDeleting,
-			KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.Project, *arubatypes.ProjectResponse](r.Client),
-			Requeue:           reconciler.ShortRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.Project, *aruba.Project](r.Client),
+			Requeue:           reconciler.ShortRequeue[*v1alpha1.Project, *aruba.Project],
+			RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.Project, *aruba.Project],
 		},
 	)
 
 	// 7. DeletionOnCMPNotNeeded — resource marked for deletion but CMP resource doesn't exist; skip CMP delete
 	ts.Add(
-		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+		&reconciler.AbstractTransition[*v1alpha1.Project, *aruba.Project]{
 			Name:           "DeletionOnCMPNotNeeded",
-			KCondition:     reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			KCondition:     reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.Project, *aruba.Project],
 			ACondition:     cmpProjectNotExists,
 			KAction:        r.kubeMarkDeletingDone,
-			Requeue:        reconciler.ShortRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			Requeue:        reconciler.ShortRequeue[*v1alpha1.Project, *aruba.Project],
+			RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Project, *aruba.Project],
 		},
 	)
 
 	// 8. WaitingDeletionOnCMP — marked Deleting+Synchronizing + CMP still exists → poll
 	ts.Add(
-		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+		&reconciler.AbstractTransition[*v1alpha1.Project, *aruba.Project]{
 			Name:           "WaitingDeletionOnCMP",
-			KCondition:     reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			KCondition:     reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.Project, *aruba.Project],
 			ACondition:     cmpProjectExists,
-			Requeue:        reconciler.LongRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			Requeue:        reconciler.LongRequeue[*v1alpha1.Project, *aruba.Project],
+			RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Project, *aruba.Project],
 		},
 	)
 
 	// 9. DeletionConfirmedOnCMP — marked Deleting+Synchronizing + CMP gone → advance to Synchronized
 	ts.Add(
-		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+		&reconciler.AbstractTransition[*v1alpha1.Project, *aruba.Project]{
 			Name:           "DeletionConfirmedOnCMP",
-			KCondition:     reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			KCondition:     reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.Project, *aruba.Project],
 			ACondition:     cmpProjectNotExists,
 			KAction:        r.kubeMarkDeletingDone,
-			Requeue:        reconciler.ShortRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			Requeue:        reconciler.ShortRequeue[*v1alpha1.Project, *aruba.Project],
+			RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Project, *aruba.Project],
 		},
 	)
 
 	// 10. DeletionAccomplished — marked Deleting+Synchronized + CMP gone → mark Deleted
 	ts.Add(
-		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+		&reconciler.AbstractTransition[*v1alpha1.Project, *aruba.Project]{
 			Name:           "DeletionAccomplished",
-			KCondition:     reconciler.KubeDeletionAccomplished[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			KCondition:     reconciler.KubeDeletionAccomplished[*v1alpha1.Project, *aruba.Project],
 			ACondition:     cmpProjectNotExists,
 			KAction:        r.kubeMarkDeleted,
-			Requeue:        reconciler.ShortRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			Requeue:        reconciler.ShortRequeue[*v1alpha1.Project, *aruba.Project],
+			RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Project, *aruba.Project],
 		},
 	)
 
 	// 11. SpecAlreadyInSyncWithCMP — generation changed but spec identical to CMP; just re-stamp ObservedGeneration
 	ts.Add(
-		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+		&reconciler.AbstractTransition[*v1alpha1.Project, *aruba.Project]{
 			Name:           "SpecAlreadyInSyncWithCMP",
 			KCondition:     kubeProjectSpecInSyncWithCMP,
 			ACondition:     cmpProjectExists,
 			KAction:        r.kubeSetActiveAndSetID, // re-stamps ObservedGeneration, keeps Active+Synchronized
-			Requeue:        reconciler.NoRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			Requeue:        reconciler.NoRequeue[*v1alpha1.Project, *aruba.Project],
+			RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Project, *aruba.Project],
 		},
 	)
 
 	// 12. ShouldBeUpdated — spec changed and CMP is ready
 	ts.Add(
-		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+		&reconciler.AbstractTransition[*v1alpha1.Project, *aruba.Project]{
 			Name:           "ShouldBeUpdated",
 			KCondition:     kubeProjectShouldUpdate,
 			ACondition:     cmpProjectExists,
 			KAction:        r.kubeMarkToUpdate, // Mark as "Updating + ShallSynchronize"
-			Requeue:        reconciler.ShortRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			Requeue:        reconciler.ShortRequeue[*v1alpha1.Project, *aruba.Project],
+			RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Project, *aruba.Project],
 		},
 	)
 
 	// 13. ShouldBeUpdatedOnCMP — send update to CMP
 	ts.Add(
-		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+		&reconciler.AbstractTransition[*v1alpha1.Project, *aruba.Project]{
 			Name:              "ShouldBeUpdatedOnCMP",
-			KCondition:        reconciler.KubeShouldBeUpdatedOnCMP[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			KCondition:        reconciler.KubeShouldBeUpdatedOnCMP[*v1alpha1.Project, *aruba.Project],
 			ACondition:        cmpProjectExists,
 			AAction:           r.cmpUpdate,
 			KActionOnASuccess: r.kubeMarkUpdating, // Mark as "Updating + Synchronizing"
-			KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.Project, *arubatypes.ProjectResponse](r.Client),
-			Requeue:           reconciler.ShortRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.Project, *aruba.Project](r.Client),
+			Requeue:           reconciler.ShortRequeue[*v1alpha1.Project, *aruba.Project],
+			RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.Project, *aruba.Project],
 		},
 	)
 
 	// 14. WaitingUpdateOnCMP — CMP is still processing the update
 	ts.Add(
-		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+		&reconciler.AbstractTransition[*v1alpha1.Project, *aruba.Project]{
 			Name:           "WaitingUpdateOnCMP",
 			KCondition:     kubeProjectWaitingUpdateOnCMP,
 			ACondition:     cmpProjectExists,
-			Requeue:        reconciler.LongRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			Requeue:        reconciler.LongRequeue[*v1alpha1.Project, *aruba.Project],
+			RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Project, *aruba.Project],
 		},
 	)
 
 	// 15. UpdateConfirmedOnCMP — CMP has settled; advance to Synchronized
 	ts.Add(
-		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+		&reconciler.AbstractTransition[*v1alpha1.Project, *aruba.Project]{
 			Name:           "UpdateConfirmedOnCMP",
 			KCondition:     kubeProjectUpdateConfirmedOnCMP,
 			ACondition:     cmpProjectExists,
 			KAction:        r.kubeMarkUpdatingDone,
-			Requeue:        reconciler.ShortRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			Requeue:        reconciler.ShortRequeue[*v1alpha1.Project, *aruba.Project],
+			RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Project, *aruba.Project],
 		},
 	)
 
 	// 16. UpdateAccomplished — transition back to Active and stamp generation
 	ts.Add(
-		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+		&reconciler.AbstractTransition[*v1alpha1.Project, *aruba.Project]{
 			Name:           "UpdateAccomplished",
-			KCondition:     reconciler.KubeUpdateAccomplished[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			KCondition:     reconciler.KubeUpdateAccomplished[*v1alpha1.Project, *aruba.Project],
 			ACondition:     cmpProjectExists,
 			KAction:        r.kubeSetActiveAndSetID,
-			Requeue:        reconciler.NoRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			Requeue:        reconciler.NoRequeue[*v1alpha1.Project, *aruba.Project],
+			RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Project, *aruba.Project],
 		},
 	)
 
 	// 17. ShouldBeCreated — first reconciliation + CMP not found → mark Creating+ShallSynchronize
 	ts.Add(
-		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+		&reconciler.AbstractTransition[*v1alpha1.Project, *aruba.Project]{
 			Name:           "ShouldBeCreated",
-			KCondition:     reconciler.KubeIsFirstReconciliation[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			KCondition:     reconciler.KubeIsFirstReconciliation[*v1alpha1.Project, *aruba.Project],
 			ACondition:     cmpProjectNotExists,
 			KAction:        r.kubeMarkToCreate,
-			Requeue:        reconciler.ShortRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			Requeue:        reconciler.ShortRequeue[*v1alpha1.Project, *aruba.Project],
+			RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Project, *aruba.Project],
 		},
 	)
 
 	// 18. ShouldBeCreatedInCMP — Creating+ShallSynchronize + CMP not found → dispatch create
 	ts.Add(
-		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+		&reconciler.AbstractTransition[*v1alpha1.Project, *aruba.Project]{
 			Name:              "ShouldBeCreatedInCMP",
-			KCondition:        reconciler.KubeShouldBeCreatedOnCMP[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			KCondition:        reconciler.KubeShouldBeCreatedOnCMP[*v1alpha1.Project, *aruba.Project],
 			ACondition:        cmpProjectNotExists,
 			AAction:           r.cmpCreate,
 			KActionOnASuccess: r.kubeMarkCreating,
-			KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.Project, *arubatypes.ProjectResponse](r.Client),
-			Requeue:           reconciler.ShortRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.Project, *aruba.Project](r.Client),
+			Requeue:           reconciler.ShortRequeue[*v1alpha1.Project, *aruba.Project],
+			RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.Project, *aruba.Project],
 		},
 	)
 
 	// 19. WaitingCreationInCMP — Creating+Synchronizing + CMP not found yet → poll
 	ts.Add(
-		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+		&reconciler.AbstractTransition[*v1alpha1.Project, *aruba.Project]{
 			Name:           "WaitingCreationInCMP",
-			KCondition:     reconciler.KubeWaitingCreationInCMP[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			KCondition:     reconciler.KubeWaitingCreationInCMP[*v1alpha1.Project, *aruba.Project],
 			ACondition:     cmpProjectNotExists,
-			Requeue:        reconciler.LongRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			Requeue:        reconciler.LongRequeue[*v1alpha1.Project, *aruba.Project],
+			RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Project, *aruba.Project],
 		},
 	)
 
 	// 20. CreationConfirmedOnCMP — Creating+Synchronizing + CMP found → mark Creating+Synchronized
 	ts.Add(
-		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+		&reconciler.AbstractTransition[*v1alpha1.Project, *aruba.Project]{
 			Name:           "CreationConfirmedOnCMP",
-			KCondition:     reconciler.KubeWaitingCreationInCMP[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			KCondition:     reconciler.KubeWaitingCreationInCMP[*v1alpha1.Project, *aruba.Project],
 			ACondition:     cmpProjectExists,
 			KAction:        r.kubeMarkCreatingDone,
-			Requeue:        reconciler.ShortRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			Requeue:        reconciler.ShortRequeue[*v1alpha1.Project, *aruba.Project],
+			RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Project, *aruba.Project],
 		},
 	)
 
 	// 21. CreationAccomplished — Creating+Synchronized + CMP found → set Active + store ResourceID
 	ts.Add(
-		&reconciler.AbstractTransition[*v1alpha1.Project, *arubatypes.ProjectResponse]{
+		&reconciler.AbstractTransition[*v1alpha1.Project, *aruba.Project]{
 			Name:           "CreationAccomplished",
-			KCondition:     reconciler.KubeIsCreatedOnCMP[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			KCondition:     reconciler.KubeIsCreatedOnCMP[*v1alpha1.Project, *aruba.Project],
 			ACondition:     cmpProjectExists,
 			KAction:        r.kubeSetActiveAndSetID,
-			Requeue:        reconciler.NoRequeue[*v1alpha1.Project, *arubatypes.ProjectResponse],
-			RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Project, *arubatypes.ProjectResponse],
+			Requeue:        reconciler.NoRequeue[*v1alpha1.Project, *aruba.Project],
+			RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Project, *aruba.Project],
 		},
 	)
 
@@ -440,7 +437,7 @@ func (r *ProjectReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alph
 // kubeProjectHasOwnedChildren returns true when any Kubernetes resource directly owned
 // by the project still exists. Used by the WaitingChildrenDeletion transition to prevent
 // CMP deletion before all child CMP resources have been cleaned up.
-func (r *ProjectReconciler) kubeProjectHasOwnedChildren(k *v1alpha1.Project, _ *arubatypes.ProjectResponse) bool {
+func (r *ProjectReconciler) kubeProjectHasOwnedChildren(k *v1alpha1.Project, _ *aruba.Project) bool {
 	labelKey, _ := ownerLabelKey(r.Scheme, k)
 	has, err := hasOwnedChildren(context.Background(), r.Client, k, labelKey,
 		&v1alpha1.VPCList{},
@@ -458,7 +455,7 @@ func (r *ProjectReconciler) kubeProjectHasOwnedChildren(k *v1alpha1.Project, _ *
 
 // kubeProjectDeleteOwnedChildren deletes all K8s children of the project that have not
 // yet received a deletionTimestamp. Called by the WaitingChildrenDeletion action.
-func (r *ProjectReconciler) kubeProjectDeleteOwnedChildren(ctx context.Context, k *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
+func (r *ProjectReconciler) kubeProjectDeleteOwnedChildren(ctx context.Context, k *v1alpha1.Project, _ *aruba.Project) error {
 	labelKey, _ := ownerLabelKey(r.Scheme, k)
 	return deleteOwnedChildren(ctx, r.Client, k, labelKey,
 		&v1alpha1.VPCList{},
@@ -473,30 +470,30 @@ func (r *ProjectReconciler) kubeProjectDeleteOwnedChildren(ctx context.Context, 
 // Condition functions
 // ---------------------------------------------------------------------------
 
-func cmpProjectExists(_ *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) bool {
+func cmpProjectExists(_ *v1alpha1.Project, cmpProj *aruba.Project) bool {
 	return cmpProj != nil
 }
 
-func cmpProjectNotExists(_ *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) bool {
+func cmpProjectNotExists(_ *v1alpha1.Project, cmpProj *aruba.Project) bool {
 	return cmpProj == nil
 }
 
-func kubeProjectSpecInSyncWithCMP(kubeProj *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) bool {
+func kubeProjectSpecInSyncWithCMP(kubeProj *v1alpha1.Project, cmpProj *aruba.Project) bool {
 	return reconciler.KubeActiveAndGenerationChanged(kubeProj, cmpProj) &&
 		!kubeProjectNeedsUpdate(kubeProj, cmpProj)
 }
 
-func kubeProjectShouldUpdate(kubeProj *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) bool {
+func kubeProjectShouldUpdate(kubeProj *v1alpha1.Project, cmpProj *aruba.Project) bool {
 	return reconciler.KubeActiveAndGenerationChanged(kubeProj, cmpProj) &&
 		kubeProjectNeedsUpdate(kubeProj, cmpProj)
 }
 
-func kubeProjectWaitingUpdateOnCMP(kubeProj *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) bool {
+func kubeProjectWaitingUpdateOnCMP(kubeProj *v1alpha1.Project, cmpProj *aruba.Project) bool {
 	return reconciler.KubeWaitingUpdateOnCMP(kubeProj, cmpProj) &&
 		kubeProjectNeedsUpdate(kubeProj, cmpProj)
 }
 
-func kubeProjectUpdateConfirmedOnCMP(kubeProj *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) bool {
+func kubeProjectUpdateConfirmedOnCMP(kubeProj *v1alpha1.Project, cmpProj *aruba.Project) bool {
 	return reconciler.KubeWaitingUpdateOnCMP(kubeProj, cmpProj) &&
 		!kubeProjectNeedsUpdate(kubeProj, cmpProj)
 }
@@ -509,54 +506,54 @@ func (r *ProjectReconciler) kubeSetPhaseAndCondition(ctx context.Context, kubePr
 	return reconciler.SetPhaseAndCondition(r.Client, ctx, kubeProj, phase, reason, nil)
 }
 
-func (r *ProjectReconciler) kubeSetFailedOnTimeout(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
+func (r *ProjectReconciler) kubeSetFailedOnTimeout(ctx context.Context, kubeProj *v1alpha1.Project, _ *aruba.Project) error {
 	return reconciler.SetFailedOnTimeout(r.Client, ctx, kubeProj)
 }
 
-func (r *ProjectReconciler) kubeMarkToDelete(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
+func (r *ProjectReconciler) kubeMarkToDelete(ctx context.Context, kubeProj *v1alpha1.Project, _ *aruba.Project) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize, nil)
 }
 
-func (r *ProjectReconciler) kubeMarkDeleting(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
+func (r *ProjectReconciler) kubeMarkDeleting(ctx context.Context, kubeProj *v1alpha1.Project, _ *aruba.Project) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronizing, nil)
 }
 
-func (r *ProjectReconciler) kubeMarkDeletingDone(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
+func (r *ProjectReconciler) kubeMarkDeletingDone(ctx context.Context, kubeProj *v1alpha1.Project, _ *aruba.Project) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronized, nil)
 }
 
-func (r *ProjectReconciler) kubeMarkDeleted(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
+func (r *ProjectReconciler) kubeMarkDeleted(ctx context.Context, kubeProj *v1alpha1.Project, _ *aruba.Project) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseDeleted, v1alpha1.ConditionReasonSynchronized, nil)
 }
 
-func (r *ProjectReconciler) kubeMarkToUpdate(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
+func (r *ProjectReconciler) kubeMarkToUpdate(ctx context.Context, kubeProj *v1alpha1.Project, _ *aruba.Project) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, nil)
 }
 
-func (r *ProjectReconciler) kubeMarkUpdating(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
+func (r *ProjectReconciler) kubeMarkUpdating(ctx context.Context, kubeProj *v1alpha1.Project, _ *aruba.Project) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonSynchronizing, nil)
 }
 
-func (r *ProjectReconciler) kubeMarkUpdatingDone(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
+func (r *ProjectReconciler) kubeMarkUpdatingDone(ctx context.Context, kubeProj *v1alpha1.Project, _ *aruba.Project) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonSynchronized, nil)
 }
 
-func (r *ProjectReconciler) kubeMarkToCreate(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
+func (r *ProjectReconciler) kubeMarkToCreate(ctx context.Context, kubeProj *v1alpha1.Project, _ *aruba.Project) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, nil)
 }
 
-func (r *ProjectReconciler) kubeMarkCreating(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
+func (r *ProjectReconciler) kubeMarkCreating(ctx context.Context, kubeProj *v1alpha1.Project, _ *aruba.Project) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, nil)
 }
 
-func (r *ProjectReconciler) kubeMarkCreatingDone(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
+func (r *ProjectReconciler) kubeMarkCreatingDone(ctx context.Context, kubeProj *v1alpha1.Project, _ *aruba.Project) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeProj, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronized, nil)
 }
 
-func (r *ProjectReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeProj *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) error {
+func (r *ProjectReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeProj *v1alpha1.Project, cmpProj *aruba.Project) error {
 	cmpID := ""
-	if cmpProj != nil && cmpProj.Metadata.ID != nil {
-		cmpID = *cmpProj.Metadata.ID
+	if cmpProj != nil {
+		cmpID = cmpProj.ID()
 	}
 	return reconciler.SetActiveAndSetID(r.Client, ctx, kubeProj, cmpID, nil)
 }
@@ -565,93 +562,45 @@ func (r *ProjectReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeProj 
 // CMP actions
 // ---------------------------------------------------------------------------
 
-func (r *ProjectReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) error {
+func (r *ProjectReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.Project, cmpProj *aruba.Project) error {
 	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
-
-	cmpProjList, err := arubaClient.FromProject().Delete(ctx, *cmpProj.Metadata.ID, nil)
-	if err != nil {
-		return reconciler.CMPTransportError("delete", *cmpProj.Metadata.Name, err)
-	}
-	return reconciler.CMPCheckResponse("delete", *cmpProj.Metadata.Name, cmpProjList,
-		http.StatusOK, http.StatusAccepted, http.StatusNoContent, http.StatusNotFound)
+	// The fetched wrapper is itself a Ref (carries its own project ID).
+	err := arubaClient.FromProject().Delete(ctx, cmpProj)
+	return reconciler.CMPErrorFromResult("delete", cmpProj.Name(), err, http.StatusNotFound)
 }
 
-func (r *ProjectReconciler) cmpUpdate(ctx context.Context, kubeProj *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) error {
-	// Seed the request from the current CMP state to preserve any CMP-managed fields,
-	// then overwrite only the mutable spec fields.
-	request := cmpProjectRequestFromCMP(cmpProj)
-	request.Metadata.Tags = kubeProj.Spec.Tags
-	request.Properties.Description = &kubeProj.Spec.Description
-	request.Properties.Default = false
+func (r *ProjectReconciler) cmpUpdate(ctx context.Context, kubeProj *v1alpha1.Project, cmpProj *aruba.Project) error {
 	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
-
-	cmpProjResp, err := arubaClient.FromProject().Update(ctx, kubeProj.Status.ResourceID, *request, nil)
-	if err != nil {
-		return reconciler.CMPTransportError("update", kubeProj.Name, err)
-	}
-	return reconciler.CMPCheckResponse("update", kubeProj.Name, cmpProjResp,
-		http.StatusOK, http.StatusAccepted, http.StatusNoContent)
+	// Mutate the fetched wrapper in place: it retains its server-assigned ID and
+	// any CMP-managed fields; only the operator-owned mutable fields are overwritten.
+	cmpProj.RetaggedAs(kubeProj.Spec.Tags...).
+		DescribedAs(kubeProj.Spec.Description).
+		NotDefault()
+	_, err := arubaClient.FromProject().Update(ctx, cmpProj)
+	return reconciler.CMPErrorFromResult("update", kubeProj.Name, err)
 }
 
-func (r *ProjectReconciler) cmpCreate(ctx context.Context, kubeProj *v1alpha1.Project, _ *arubatypes.ProjectResponse) error {
+func (r *ProjectReconciler) cmpCreate(ctx context.Context, kubeProj *v1alpha1.Project, _ *aruba.Project) error {
 	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
-	cmpProjResp, err := arubaClient.FromProject().Create(ctx, *cmpProjectRequestFromKube(kubeProj), nil)
-	if err != nil {
-		return reconciler.CMPTransportError("create", kubeProj.Name, err)
-	}
-	return reconciler.CMPCheckResponse("create", kubeProj.Name, cmpProjResp, http.StatusOK, http.StatusCreated)
+	project := aruba.NewProject().
+		Named(kubeProj.Name).
+		Tagged(kubeProj.Spec.Tags...).
+		DescribedAs(kubeProj.Spec.Description).
+		NotDefault()
+	_, err := arubaClient.FromProject().Create(ctx, project)
+	return reconciler.CMPErrorFromResult("create", kubeProj.Name, err)
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-func kubeProjectNeedsUpdate(kubeProj *v1alpha1.Project, cmpProj *arubatypes.ProjectResponse) bool {
+func kubeProjectNeedsUpdate(kubeProj *v1alpha1.Project, cmpProj *aruba.Project) bool {
 	if cmpProj == nil {
 		return false
 	}
-	descriptionDiffers := cmpProj.Properties.Description == nil ||
-		kubeProj.Spec.Description != *cmpProj.Properties.Description
-	return descriptionDiffers ||
-		!reconciler.TagsAreEqual(kubeProj.Spec.Tags, cmpProj.Metadata.Tags)
-}
-
-func cmpProjectRequestFromKube(kubeProj *v1alpha1.Project) *arubatypes.ProjectRequest {
-	return &arubatypes.ProjectRequest{
-		Metadata: arubatypes.ResourceMetadataRequest{
-			Name: kubeProj.Name,
-			Tags: kubeProj.Spec.Tags,
-		},
-
-		Properties: arubatypes.ProjectPropertiesRequest{
-			Description: &kubeProj.Spec.Description,
-			Default:     false,
-		},
-	}
-}
-
-// cmpProjectRequestFromCMP creates an update request seeded from the current CMP state,
-// preserving CMP-managed fields that the operator does not own.
-func cmpProjectRequestFromCMP(cmpProj *arubatypes.ProjectResponse) *arubatypes.ProjectRequest {
-	if cmpProj == nil {
-		return &arubatypes.ProjectRequest{}
-	}
-	name := ""
-	if cmpProj.Metadata.Name != nil {
-		name = *cmpProj.Metadata.Name
-	}
-	tags := make([]string, len(cmpProj.Metadata.Tags))
-	copy(tags, cmpProj.Metadata.Tags)
-	return &arubatypes.ProjectRequest{
-		Metadata: arubatypes.ResourceMetadataRequest{
-			Name: name,
-			Tags: tags,
-		},
-		Properties: arubatypes.ProjectPropertiesRequest{
-			Description: cmpProj.Properties.Description,
-			Default:     cmpProj.Properties.Default,
-		},
-	}
+	return kubeProj.Spec.Description != cmpProj.Description() ||
+		!reconciler.TagsAreEqual(kubeProj.Spec.Tags, cmpProj.Tags())
 }
 
 // ---------------------------------------------------------------------------

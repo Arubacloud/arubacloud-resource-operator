@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
+	"github.com/Arubacloud/sdk-go/pkg/aruba"
 )
 
 // CMPErrorCategory classifies a CMP error as semantic or technical.
@@ -93,9 +93,33 @@ func sanitizeCMPString(s string) string {
 	return strings.TrimSpace(s)
 }
 
-// CMPTransportError creates a CMPError for a Go-level transport or network failure
-// (e.g., connection refused, context cancellation). Always classified as Technical.
-func CMPTransportError(operation, resource string, err error) *CMPError {
+// CMPErrorFromResult classifies the error returned by a high-level SDK call
+// (Create/Update/Delete on an aruba resource client) into a *CMPError, or
+// returns nil when err is nil. It is the single categorization entry point that
+// replaces the former CMPTransportError + CMPCheckResponse pair now that the SDK
+// returns a plain error instead of a typed *Response.
+//
+//   - err == nil                                → nil (success)
+//   - err is *aruba.HTTPError (non-2xx reply)   → categorized by status code
+//     (4xx with field-level errors → Semantic, 4xx without → Transient, else Technical)
+//   - any other error (network, context cancel,
+//     builder/setter validation from Err())     → Technical
+//
+// okStatusCodes lets a caller treat specific non-2xx replies as success — used by
+// delete flows to accept HTTP 404 (resource already gone).
+func CMPErrorFromResult(operation, resource string, err error, okStatusCodes ...int) error {
+	if err == nil {
+		return nil
+	}
+	var httpErr *aruba.HTTPError
+	if errors.As(err, &httpErr) {
+		if slices.Contains(okStatusCodes, httpErr.StatusCode) {
+			return nil
+		}
+		return cmpResponseError(operation, resource, httpErr)
+	}
+	// Transport / builder-time failure (network, timeout, context cancel, or an
+	// accumulated wrapper setter error surfaced by Create/Update).
 	return &CMPError{
 		Category:  CMPErrorCategoryTechnical,
 		Operation: operation,
@@ -104,11 +128,13 @@ func CMPTransportError(operation, resource string, err error) *CMPError {
 	}
 }
 
-// cmpResponseError creates a CMPError from a non-success HTTP response.
-// For HTTP 4xx: Semantic when ErrorResponse.Errors is non-empty (field-level validation
-// failures), Transient otherwise (temporary condition, e.g. dependency in wrong state).
-// For everything else: Technical.
-func cmpResponseError(operation, resource string, statusCode int, errResp *arubatypes.ErrorResponse) *CMPError {
+// cmpResponseError creates a CMPError from a non-success HTTP reply carried by an
+// *aruba.HTTPError. For HTTP 4xx: Semantic when the error body carries field-level
+// validation errors, Transient otherwise (temporary condition, e.g. dependency in
+// a wrong state). For everything else: Technical.
+func cmpResponseError(operation, resource string, httpErr *aruba.HTTPError) *CMPError {
+	statusCode := httpErr.StatusCode
+	errResp := httpErr.ErrResp
 	category := CMPErrorCategoryTechnical
 	if statusCode >= 400 && statusCode < 500 {
 		if errResp != nil && len(errResp.Errors) > 0 {
@@ -161,16 +187,6 @@ func cmpResponseError(operation, resource string, statusCode int, errResp *aruba
 		Operation:  operation,
 		Resource:   resource,
 	}
-}
-
-// CMPCheckResponse inspects a CMP API response and returns nil if the status code
-// is in successCodes, or a *CMPError otherwise. This replaces the repeated
-// status-code switch blocks in cmpCreate / cmpUpdate / cmpDelete methods.
-func CMPCheckResponse[T any](operation, resource string, resp *arubatypes.Response[T], successCodes ...int) error {
-	if slices.Contains(successCodes, resp.StatusCode) {
-		return nil
-	}
-	return cmpResponseError(operation, resource, resp.StatusCode, resp.Error)
 }
 
 // CMPErrorIsSemantic reports whether err (or any error in its chain) is a *CMPError

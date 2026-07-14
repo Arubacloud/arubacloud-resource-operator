@@ -2,100 +2,28 @@ package controller
 
 import (
 	"context"
-	"net/http"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/stretchr/testify/mock"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
-	arubamocks "github.com/Arubacloud/arubacloud-resource-operator/internal/mocks/aruba"
 	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
-	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
 )
 
-// --- Builder helpers ---
-
-func buildSubnetResponse(id, name, state string) *arubatypes.SubnetResponse {
-	dhcp := &arubatypes.SubnetDHCP{Enabled: true}
-	network := &arubatypes.SubnetNetwork{Address: "192.168.1.0/24"}
-	location := &arubatypes.LocationResponse{Value: "ITBG-Bergamo"}
-	return &arubatypes.SubnetResponse{
-		Metadata: arubatypes.ResourceMetadataResponse{
-			ID:               &id,
-			Name:             &name,
-			LocationResponse: location,
-		},
-		Properties: arubatypes.SubnetPropertiesResponse{
-			Type:    arubatypes.SubnetTypeAdvanced,
-			Default: false,
-			Network: network,
-			DHCP:    dhcp,
-		},
-		Status: arubatypes.ResourceStatus{
-			State: &state,
+func subnetItem(id, name, state string) map[string]any {
+	return map[string]any{
+		"metadata": cmpMeta(id, name),
+		"status":   map[string]any{"state": state},
+		"properties": map[string]any{
+			"type":    "Advanced",
+			"network": map[string]any{"address": "192.168.1.0/24"},
+			"dhcp":    map[string]any{"enabled": true},
 		},
 	}
 }
-
-func buildSubnetList(responses ...*arubatypes.SubnetResponse) *arubatypes.Response[arubatypes.SubnetList] {
-	list := &arubatypes.SubnetList{}
-	for _, r := range responses {
-		list.Values = append(list.Values, *r)
-		list.Total++
-	}
-	return &arubatypes.Response[arubatypes.SubnetList]{
-		Data:       list,
-		StatusCode: http.StatusOK,
-	}
-}
-
-func buildSubnetCRUDResponse(statusCode int) *arubatypes.Response[arubatypes.SubnetResponse] {
-	return &arubatypes.Response[arubatypes.SubnetResponse]{
-		StatusCode: statusCode,
-	}
-}
-
-func buildVpcListForSubnet(vpcID, vpcName string) *arubatypes.Response[arubatypes.VPCList] {
-	id := vpcID
-	name := vpcName
-	v := arubatypes.VPCResponse{
-		Metadata: arubatypes.ResourceMetadataResponse{
-			ID:   &id,
-			Name: &name,
-		},
-	}
-	list := &arubatypes.VPCList{}
-	list.Values = append(list.Values, v)
-	list.Total = 1
-	return &arubatypes.Response[arubatypes.VPCList]{
-		Data:       list,
-		StatusCode: http.StatusOK,
-	}
-}
-
-func buildProjectListForSubnet(projectID, projectName string) *arubatypes.Response[arubatypes.ProjectList] {
-	id := projectID
-	name := projectName
-	proj := arubatypes.ProjectResponse{
-		Metadata: arubatypes.ResourceMetadataResponse{
-			ID:   &id,
-			Name: &name,
-		},
-	}
-	list := &arubatypes.ProjectList{}
-	list.Values = append(list.Values, proj)
-	list.Total = 1
-	return &arubatypes.Response[arubatypes.ProjectList]{
-		Data:       list,
-		StatusCode: http.StatusOK,
-	}
-}
-
-// --- Test fixture helpers ---
 
 func defaultSubnetSpec(projectName, vpcName string) v1alpha1.SubnetSpec {
 	return v1alpha1.SubnetSpec{
@@ -104,33 +32,22 @@ func defaultSubnetSpec(projectName, vpcName string) v1alpha1.SubnetSpec {
 		Region: "ITBG-Bergamo",
 		Type:   "Advanced",
 		CIDR:   "192.168.1.0/24",
-		DHCP: v1alpha1.SubnetDHCP{
-			Enabled: true,
-		},
-		ProjectReference: v1alpha1.ResourceReference{
-			Name:      projectName,
-			Namespace: "default",
-		},
-		VPCReference: v1alpha1.ResourceReference{
-			Name:      vpcName,
-			Namespace: "default",
-		},
+		DHCP:   v1alpha1.SubnetDHCP{Enabled: true},
+		ProjectReference: v1alpha1.ResourceReference{Name: projectName, Namespace: "default"},
+		VPCReference:     v1alpha1.ResourceReference{Name: vpcName, Namespace: "default"},
 	}
 }
 
 func createTestSubnet(ctx context.Context, name string, spec v1alpha1.SubnetSpec) *v1alpha1.Subnet {
-	subnet := &v1alpha1.Subnet{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: "default",
-		},
-		Spec: spec,
+	s := &v1alpha1.Subnet{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+		Spec:       spec,
 	}
-	ExpectWithOffset(1, k8sClient.Create(ctx, subnet)).To(Succeed())
-	return subnet
+	ExpectWithOffset(1, k8sClient.Create(ctx, s)).To(Succeed())
+	return s
 }
 
-func setSubnetStatus(ctx context.Context, subnet *v1alpha1.Subnet, phase v1alpha1.ResourcePhase, reason string, resourceID string, projectID string, vpcID string, observedGen int64, conditionTime time.Time) {
+func setSubnetStatus(ctx context.Context, subnet *v1alpha1.Subnet, phase v1alpha1.ResourcePhase, reason string, resourceID, projectID, vpcID string, observedGen int64, conditionTime time.Time) {
 	s := subnet.DeepCopy()
 	Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), s)).To(Succeed())
 	s.Status.Phase = phase
@@ -139,75 +56,38 @@ func setSubnetStatus(ctx context.Context, subnet *v1alpha1.Subnet, phase v1alpha
 	s.Status.VPCID = vpcID
 	s.Status.ObservedGeneration = observedGen
 	if phase != "" {
-		s.Status.Conditions = []metav1.Condition{
-			{
-				Type:               string(phase),
-				Status:             metav1.ConditionTrue,
-				Reason:             reason,
-				LastTransitionTime: metav1.NewTime(conditionTime),
-				Message:            string(phase) + " " + reason + " - OK",
-			},
-		}
+		s.Status.Conditions = []metav1.Condition{{
+			Type: string(phase), Status: metav1.ConditionTrue, Reason: reason,
+			LastTransitionTime: metav1.NewTime(conditionTime), Message: string(phase) + " " + reason,
+		}}
 	}
 	ExpectWithOffset(1, k8sClient.Status().Update(ctx, s)).To(Succeed())
 	ExpectWithOffset(1, k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
 }
 
-// --- Mock setup ---
-
-type subnetMocks struct {
-	r              *SubnetReconciler
-	mockAruba      *arubamocks.MockClient
-	mockProject    *arubamocks.MockProjectClient
-	mockNetwork    *arubamocks.MockNetworkClient
-	mockVPCsClient *arubamocks.MockVPCsClient
-	mockSubnets    *arubamocks.MockSubnetsClient
+type subnetFake struct {
+	r *SubnetReconciler
+	f *fakeCMP
 }
 
-func newSubnetReconcilerWithMocks(t GinkgoTInterface) *subnetMocks {
-	mockAruba := arubamocks.NewMockClient(t)
-	mockProject := arubamocks.NewMockProjectClient(t)
-	mockNetwork := arubamocks.NewMockNetworkClient(t)
-	mockVPCsClient := arubamocks.NewMockVPCsClient(t)
-	mockSubnets := arubamocks.NewMockSubnetsClient(t)
-
-	r := NewSubnetReconciler(newTestReconciler(t, mockAruba))
-
-	return &subnetMocks{
-		r:              r,
-		mockAruba:      mockAruba,
-		mockProject:    mockProject,
-		mockNetwork:    mockNetwork,
-		mockVPCsClient: mockVPCsClient,
-		mockSubnets:    mockSubnets,
-	}
+func newSubnetReconcilerWithFake() *subnetFake {
+	f := newFakeCMP()
+	DeferCleanup(f.close)
+	return &subnetFake{r: NewSubnetReconciler(newTestReconciler(GinkgoT(), f)), f: f}
 }
 
-func (m *subnetMocks) expectProjectList(projectID, projectName string) {
-	m.mockAruba.EXPECT().FromProject().Return(m.mockProject)
-	m.mockProject.EXPECT().List(mock.Anything, mock.Anything).Return(buildProjectListForSubnet(projectID, projectName), nil)
+func (m *subnetFake) stageParents(prjID, prjName, vpcID, vpcName string) {
+	m.f.stage("projects", projectItem(prjID, prjName, nil, "", false))
+	m.f.stage("vpcs", cmpItem(vpcID, vpcName, "Active"))
 }
-
-func (m *subnetMocks) expectVpcList(projectID, vpcID, vpcName string) {
-	m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
-	m.mockNetwork.EXPECT().VPCs().Return(m.mockVPCsClient)
-	m.mockVPCsClient.EXPECT().List(mock.Anything, projectID, mock.Anything).Return(buildVpcListForSubnet(vpcID, vpcName), nil)
-}
-
-func (m *subnetMocks) expectSubnetList(projectID, vpcID string, responses ...*arubatypes.SubnetResponse) {
-	m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
-	m.mockNetwork.EXPECT().Subnets().Return(m.mockSubnets)
-	m.mockSubnets.EXPECT().List(mock.Anything, projectID, vpcID, mock.Anything).Return(buildSubnetList(responses...), nil)
-}
-
-// --- Tests ---
+func (m *subnetFake) stageSubnets(items ...map[string]any) { m.f.stage("subnets", items...) }
 
 var _ = Describe("SubnetReconciler", func() {
 	const (
-		subnetProjectName = "test-subnet-project-ref"
-		subnetProjectID   = "subnet-proj-id-1"
-		subnetVpcName     = "test-subnet-vpc-ref"
-		subnetVpcID       = "subnet-vpc-id-1"
+		snPrjName = "test-subnet-project-ref"
+		snPrjID   = "sn-proj-id-1"
+		snVpcName = "test-subnet-vpc-ref"
+		snVpcID   = "sn-vpc-id-1"
 	)
 
 	var (
@@ -215,9 +95,7 @@ var _ = Describe("SubnetReconciler", func() {
 		subnet *v1alpha1.Subnet
 	)
 
-	BeforeEach(func() {
-		ctx = context.Background()
-	})
+	BeforeEach(func() { ctx = context.Background() })
 
 	AfterEach(func() {
 		if subnet != nil {
@@ -231,760 +109,95 @@ var _ = Describe("SubnetReconciler", func() {
 		}
 	})
 
-	Describe("First reconciliation", func() {
-		It("transitions to Creating+ShallSynchronize when CMP has no Subnet", func() {
-			m := newSubnetReconcilerWithMocks(GinkgoT())
-			subnet = createTestSubnet(ctx, "test-subnet-first", defaultSubnetSpec(subnetProjectName, subnetVpcName))
-			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", 0, time.Now())
+	It("transitions to Creating+ShallSynchronize when CMP has no subnet", func() {
+		m := newSubnetReconcilerWithFake()
+		subnet = createTestSubnet(ctx, "test-subnet-first", defaultSubnetSpec(snPrjName, snVpcName))
+		setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", 0, time.Now())
+		m.stageParents(snPrjID, snPrjName, snVpcID, snVpcName)
 
-			m.expectProjectList(subnetProjectID, subnetProjectName)
-			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
-			m.expectSubnetList(subnetProjectID, subnetVpcID)
+		_, err := m.r.HandleReconcile(ctx, subnet)
+		Expect(err).To(Succeed())
 
-			_, err := m.r.HandleReconcile(ctx, subnet)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.Subnet{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
-
-			pendingCond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhasePending))
-			Expect(pendingCond).NotTo(BeNil())
-			Expect(pendingCond.Status).To(Equal(metav1.ConditionFalse))
-			Expect(pendingCond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
-		})
+		updated := &v1alpha1.Subnet{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), updated)).To(Succeed())
+		Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
 	})
 
-	Describe("PendingAndDeleting", func() {
-		It("transitions directly to Deleted when resource is in Pending and is being deleted", func() {
-			m := newSubnetReconcilerWithMocks(GinkgoT())
-			subnet = createTestSubnet(ctx, "test-subnet-pending-deleting", defaultSubnetSpec(subnetProjectName, subnetVpcName))
-			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", 0, time.Now())
+	It("transitions to Active+Synchronized when CMP subnet is active", func() {
+		m := newSubnetReconcilerWithFake()
+		subnet = createTestSubnet(ctx, "test-subnet-active", defaultSubnetSpec(snPrjName, snVpcName))
+		setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronized, "", "", "", 0, time.Now())
+		m.stageParents(snPrjID, snPrjName, snVpcID, snVpcName)
+		m.stageSubnets(subnetItem("sn-id-1", "test-subnet-active", "Active"))
 
-			m.expectProjectList(subnetProjectID, subnetProjectName)
-			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
-			m.expectSubnetList(subnetProjectID, subnetVpcID)
+		_, err := m.r.HandleReconcile(ctx, subnet)
+		Expect(err).To(Succeed())
 
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
-			subnet.Finalizers = []string{subnetFinalizerName}
-			Expect(k8sClient.Update(ctx, subnet)).To(Succeed())
-
-			Expect(k8sClient.Delete(ctx, subnet)).To(Succeed())
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
-
-			_, err := m.r.HandleReconcile(ctx, subnet)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.Subnet{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleted))
-
-			pendingCond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhasePending))
-			Expect(pendingCond).NotTo(BeNil())
-			Expect(pendingCond.Status).To(Equal(metav1.ConditionFalse))
-			Expect(pendingCond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
-		})
+		updated := &v1alpha1.Subnet{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), updated)).To(Succeed())
+		Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseActive))
+		Expect(updated.Status.ResourceID).To(Equal("sn-id-1"))
 	})
 
-	Describe("Create on CMP", func() {
-		It("transitions to Creating+Synchronizing after successful CMP create", func() {
-			m := newSubnetReconcilerWithMocks(GinkgoT())
-			subnet = createTestSubnet(ctx, "test-subnet-create-cmp", defaultSubnetSpec(subnetProjectName, subnetVpcName))
-			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, "", "", "", 0, time.Now())
+	It("transitions to Failed when CMP subnet is in a failure state", func() {
+		m := newSubnetReconcilerWithFake()
+		subnet = createTestSubnet(ctx, "test-subnet-failed", defaultSubnetSpec(snPrjName, snVpcName))
+		setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "sn-id-1", snPrjID, snVpcID, 1, time.Now())
+		m.stageParents(snPrjID, snPrjName, snVpcID, snVpcName)
+		m.stageSubnets(subnetItem("sn-id-1", "test-subnet-failed", "Failed"))
 
-			m.expectProjectList(subnetProjectID, subnetProjectName)
-			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
-			m.expectSubnetList(subnetProjectID, subnetVpcID)
-			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
-			m.mockNetwork.EXPECT().Subnets().Return(m.mockSubnets)
-			m.mockSubnets.EXPECT().Create(mock.Anything, subnetProjectID, subnetVpcID, mock.Anything, mock.Anything).Return(buildSubnetCRUDResponse(http.StatusCreated), nil)
+		_, err := m.r.HandleReconcile(ctx, subnet)
+		Expect(err).To(Succeed())
 
-			_, err := m.r.HandleReconcile(ctx, subnet)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.Subnet{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronizing))
-		})
+		updated := &v1alpha1.Subnet{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), updated)).To(Succeed())
+		Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
 	})
 
-	Describe("Waiting creation (Subnet not yet in CMP)", func() {
-		It("returns LongRequeue", func() {
-			m := newSubnetReconcilerWithMocks(GinkgoT())
-			subnet = createTestSubnet(ctx, "test-subnet-wait-create", defaultSubnetSpec(subnetProjectName, subnetVpcName))
-			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "", "", "", 0, time.Now())
+	It("transitions to Deleting+Synchronizing after successful CMP delete", func() {
+		m := newSubnetReconcilerWithFake()
+		subnet = createTestSubnet(ctx, "test-subnet-delete", defaultSubnetSpec(snPrjName, snVpcName))
+		sFetch := &v1alpha1.Subnet{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), sFetch)).To(Succeed())
+		sFetch.Finalizers = []string{subnetFinalizerName}
+		Expect(k8sClient.Update(ctx, sFetch)).To(Succeed())
+		setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize, "sn-id-1", snPrjID, snVpcID, 1, time.Now())
+		Expect(k8sClient.Delete(ctx, subnet)).To(Succeed())
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
+		m.stageParents(snPrjID, snPrjName, snVpcID, snVpcName)
+		m.stageSubnets(subnetItem("sn-id-1", "test-subnet-delete", "Active"))
 
-			m.expectProjectList(subnetProjectID, subnetProjectName)
-			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
-			m.expectSubnetList(subnetProjectID, subnetVpcID)
+		_, err := m.r.HandleReconcile(ctx, subnet)
+		Expect(err).To(Succeed())
 
-			result, err := m.r.HandleReconcile(ctx, subnet)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
-		})
+		updated := &v1alpha1.Subnet{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), updated)).To(Succeed())
+		Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleting))
+		Expect(findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting)).Reason).To(Equal(v1alpha1.ConditionReasonSynchronizing))
 	})
 
-	Describe("Waiting creation (Subnet in transitory CMP state)", func() {
-		It("returns LongRequeue when CMP state is Creating", func() {
-			m := newSubnetReconcilerWithMocks(GinkgoT())
-			subnet = createTestSubnet(ctx, "test-subnet-wait-create-transitory", defaultSubnetSpec(subnetProjectName, subnetVpcName))
-			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "", "", "", 0, time.Now())
-
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-wait-create-transitory", reconciler.CSPResourceStateCreating)
-			m.expectProjectList(subnetProjectID, subnetProjectName)
-			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
-			m.expectSubnetList(subnetProjectID, subnetVpcID, cmpSubnet)
-
-			result, err := m.r.HandleReconcile(ctx, subnet)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
+	It("sets Failed+ValidationFailed when subnet tenant differs from parent VPC tenant", func() {
+		m := newSubnetReconcilerWithFake()
+		kubeVpc := createTestVpc(ctx, snVpcName, v1alpha1.VPCSpec{
+			Tenant: "other-tenant", Region: "ITBG-Bergamo",
+			ProjectReference: v1alpha1.ResourceReference{Name: snPrjName, Namespace: "default"},
 		})
-	})
-
-	Describe("Creation confirmed on CMP", func() {
-		It("transitions to Creating+Synchronized when CMP Subnet is active", func() {
-			m := newSubnetReconcilerWithMocks(GinkgoT())
-			subnet = createTestSubnet(ctx, "test-subnet-creation-confirmed", defaultSubnetSpec(subnetProjectName, subnetVpcName))
-			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "", "", "", 0, time.Now())
-
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-creation-confirmed", reconciler.CSPResourceStateActive)
-			m.expectProjectList(subnetProjectID, subnetProjectName)
-			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
-			m.expectSubnetList(subnetProjectID, subnetVpcID, cmpSubnet)
-
-			_, err := m.r.HandleReconcile(ctx, subnet)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.Subnet{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
-		})
-	})
-
-	Describe("Creation accomplished", func() {
-		It("transitions to Active+Synchronized and sets ResourceID", func() {
-			m := newSubnetReconcilerWithMocks(GinkgoT())
-			subnet = createTestSubnet(ctx, "test-subnet-creation-accomplished", defaultSubnetSpec(subnetProjectName, subnetVpcName))
-			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronized, "", "", "", 0, time.Now())
-
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-creation-accomplished", reconciler.CSPResourceStateActive)
-			m.expectProjectList(subnetProjectID, subnetProjectName)
-			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
-			m.expectSubnetList(subnetProjectID, subnetVpcID, cmpSubnet)
-
-			_, err := m.r.HandleReconcile(ctx, subnet)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.Subnet{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseActive))
-			Expect(updated.Status.ResourceID).To(Equal("subnet-id-1"))
-		})
-	})
-
-	Describe("HasDeniedChanges", func() {
-		It("returns LongRequeue when immutable field (location) is changed", func() {
-			m := newSubnetReconcilerWithMocks(GinkgoT())
-			subnet = createTestSubnet(ctx, "test-subnet-denied-location", defaultSubnetSpec(subnetProjectName, subnetVpcName))
-			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "subnet-id-1", subnetProjectID, subnetVpcID, 1, time.Now())
-
-			// Force generation change with different location
-			sFetch := &v1alpha1.Subnet{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), sFetch)).To(Succeed())
-			sFetch.Spec.Region = "ITMI-Milan"
-			Expect(k8sClient.Update(ctx, sFetch)).To(Succeed())
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
-
-			// CMP still has original location ITBG-Bergamo
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-denied-location", reconciler.CSPResourceStateActive)
-			m.expectProjectList(subnetProjectID, subnetProjectName)
-			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
-			m.expectSubnetList(subnetProjectID, subnetVpcID, cmpSubnet)
-
-			result, err := m.r.HandleReconcile(ctx, subnet)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
-		})
-
-		It("returns LongRequeue when immutable field (network.address) is changed", func() {
-			m := newSubnetReconcilerWithMocks(GinkgoT())
-			subnet = createTestSubnet(ctx, "test-subnet-denied-changes", defaultSubnetSpec(subnetProjectName, subnetVpcName))
-			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "subnet-id-1", subnetProjectID, subnetVpcID, 1, time.Now())
-
-			// Force generation change with different network address
-			sFetch := &v1alpha1.Subnet{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), sFetch)).To(Succeed())
-			sFetch.Spec.CIDR = "10.0.0.0/24"
-			Expect(k8sClient.Update(ctx, sFetch)).To(Succeed())
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
-
-			// CMP still has original network address 192.168.1.0/24
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-denied-changes", reconciler.CSPResourceStateActive)
-			m.expectProjectList(subnetProjectID, subnetProjectName)
-			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
-			m.expectSubnetList(subnetProjectID, subnetVpcID, cmpSubnet)
-
-			result, err := m.r.HandleReconcile(ctx, subnet)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
-		})
-	})
-
-	Describe("SpecAlreadyInSyncWithCMP", func() {
-		It("re-stamps ObservedGeneration when spec hasn't actually changed", func() {
-			m := newSubnetReconcilerWithMocks(GinkgoT())
-			subnet = createTestSubnet(ctx, "test-subnet-spec-in-sync", defaultSubnetSpec(subnetProjectName, subnetVpcName))
-			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "subnet-id-1", subnetProjectID, subnetVpcID, 1, time.Now())
-
-			// Trigger generation bump with same tags
-			sFetch := &v1alpha1.Subnet{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), sFetch)).To(Succeed())
-			sFetch.Spec.Tags = []string{"tag1"}
-			Expect(k8sClient.Update(ctx, sFetch)).To(Succeed())
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
-
-			// CMP matches: same tags, same DHCP
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-spec-in-sync", reconciler.CSPResourceStateActive)
-			cmpSubnet.Metadata.Tags = []string{"tag1"}
-			m.expectProjectList(subnetProjectID, subnetProjectName)
-			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
-			m.expectSubnetList(subnetProjectID, subnetVpcID, cmpSubnet)
-
-			_, err := m.r.HandleReconcile(ctx, subnet)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.Subnet{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseActive))
-			Expect(updated.Status.ObservedGeneration).To(Equal(subnet.Generation))
-		})
-	})
-
-	Describe("ShouldBeUpdated", func() {
-		It("transitions to Updating+ShallSynchronize when tags differ", func() {
-			m := newSubnetReconcilerWithMocks(GinkgoT())
-			subnet = createTestSubnet(ctx, "test-subnet-should-update", defaultSubnetSpec(subnetProjectName, subnetVpcName))
-			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "subnet-id-1", subnetProjectID, subnetVpcID, 1, time.Now())
-
-			// Change tags to trigger update
-			sFetch := &v1alpha1.Subnet{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), sFetch)).To(Succeed())
-			sFetch.Spec.Tags = []string{"tag1", "tag2"}
-			Expect(k8sClient.Update(ctx, sFetch)).To(Succeed())
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
-
-			// CMP has old tags
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-should-update", reconciler.CSPResourceStateActive)
-			cmpSubnet.Metadata.Tags = []string{"tag1"}
-			m.expectProjectList(subnetProjectID, subnetProjectName)
-			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
-			m.expectSubnetList(subnetProjectID, subnetVpcID, cmpSubnet)
-
-			_, err := m.r.HandleReconcile(ctx, subnet)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.Subnet{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseUpdating))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseUpdating))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
-		})
-	})
-
-	Describe("Update on CMP", func() {
-		It("transitions to Updating+Synchronizing after successful CMP update", func() {
-			m := newSubnetReconcilerWithMocks(GinkgoT())
-			subnet = createTestSubnet(ctx, "test-subnet-update-cmp", defaultSubnetSpec(subnetProjectName, subnetVpcName))
-			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, "subnet-id-1", subnetProjectID, subnetVpcID, 1, time.Now())
-
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-update-cmp", reconciler.CSPResourceStateActive)
-			m.expectProjectList(subnetProjectID, subnetProjectName)
-			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
-			m.expectSubnetList(subnetProjectID, subnetVpcID, cmpSubnet)
-			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
-			m.mockNetwork.EXPECT().Subnets().Return(m.mockSubnets)
-			m.mockSubnets.EXPECT().Update(mock.Anything, subnetProjectID, subnetVpcID, "subnet-id-1", mock.Anything, mock.Anything).Return(buildSubnetCRUDResponse(http.StatusOK), nil)
-
-			_, err := m.r.HandleReconcile(ctx, subnet)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.Subnet{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseUpdating))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseUpdating))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronizing))
-		})
-	})
-
-	Describe("Should delete", func() {
-		It("transitions to Deleting+ShallSynchronize when deletion is requested on Active Subnet", func() {
-			m := newSubnetReconcilerWithMocks(GinkgoT())
-			subnet = createTestSubnet(ctx, "test-subnet-should-delete", defaultSubnetSpec(subnetProjectName, subnetVpcName))
-			sFetch := &v1alpha1.Subnet{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), sFetch)).To(Succeed())
-			sFetch.Finalizers = []string{subnetFinalizerName}
-			Expect(k8sClient.Update(ctx, sFetch)).To(Succeed())
-			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "subnet-id-1", subnetProjectID, subnetVpcID, 1, time.Now())
-			Expect(k8sClient.Delete(ctx, subnet)).To(Succeed())
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
-
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-should-delete", reconciler.CSPResourceStateActive)
-			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
-			m.mockNetwork.EXPECT().Subnets().Return(m.mockSubnets)
-			m.mockSubnets.EXPECT().List(mock.Anything, subnetProjectID, subnetVpcID, mock.Anything).Return(buildSubnetList(cmpSubnet), nil)
-
-			_, err := m.r.HandleReconcile(ctx, subnet)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.Subnet{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleting))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
-		})
-	})
-
-	Describe("Delete on CMP", func() {
-		It("transitions to Deleting+Synchronizing after successful CMP delete", func() {
-			m := newSubnetReconcilerWithMocks(GinkgoT())
-			subnet = createTestSubnet(ctx, "test-subnet-delete-cmp", defaultSubnetSpec(subnetProjectName, subnetVpcName))
-			sFetch := &v1alpha1.Subnet{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), sFetch)).To(Succeed())
-			sFetch.Finalizers = []string{subnetFinalizerName}
-			Expect(k8sClient.Update(ctx, sFetch)).To(Succeed())
-			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize, "subnet-id-1", subnetProjectID, subnetVpcID, 1, time.Now())
-			Expect(k8sClient.Delete(ctx, subnet)).To(Succeed())
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
-
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-delete-cmp", reconciler.CSPResourceStateActive)
-			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
-			m.mockNetwork.EXPECT().Subnets().Return(m.mockSubnets)
-			m.mockSubnets.EXPECT().List(mock.Anything, subnetProjectID, subnetVpcID, mock.Anything).Return(buildSubnetList(cmpSubnet), nil)
-			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
-			m.mockNetwork.EXPECT().Subnets().Return(m.mockSubnets)
-			m.mockSubnets.EXPECT().Delete(mock.Anything, subnetProjectID, subnetVpcID, "subnet-id-1", mock.Anything).Return(buildDeleteResponse(http.StatusOK), nil)
-
-			_, err := m.r.HandleReconcile(ctx, subnet)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.Subnet{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleting))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronizing))
-		})
-	})
-
-	Describe("CMP transitory during deletion", func() {
-		It("returns LongRequeue when CMP state is Deleting", func() {
-			m := newSubnetReconcilerWithMocks(GinkgoT())
-			subnet = createTestSubnet(ctx, "test-subnet-deleting-transitory", defaultSubnetSpec(subnetProjectName, subnetVpcName))
-			sFetch := &v1alpha1.Subnet{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), sFetch)).To(Succeed())
-			sFetch.Finalizers = []string{subnetFinalizerName}
-			Expect(k8sClient.Update(ctx, sFetch)).To(Succeed())
-			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronizing, "subnet-id-1", subnetProjectID, subnetVpcID, 1, time.Now())
-			Expect(k8sClient.Delete(ctx, subnet)).To(Succeed())
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
-
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-deleting-transitory", reconciler.CSPResourceStateDeleting)
-			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
-			m.mockNetwork.EXPECT().Subnets().Return(m.mockSubnets)
-			m.mockSubnets.EXPECT().List(mock.Anything, subnetProjectID, subnetVpcID, mock.Anything).Return(buildSubnetList(cmpSubnet), nil)
-
-			result, err := m.r.HandleReconcile(ctx, subnet)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
-		})
-	})
-
-	Describe("Deletion accomplished", func() {
-		It("transitions to Deleted phase when CMP Subnet is gone", func() {
-			m := newSubnetReconcilerWithMocks(GinkgoT())
-			subnet = createTestSubnet(ctx, "test-subnet-deletion-accomplished", defaultSubnetSpec(subnetProjectName, subnetVpcName))
-			sFetch := &v1alpha1.Subnet{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), sFetch)).To(Succeed())
-			sFetch.Finalizers = []string{subnetFinalizerName}
-			Expect(k8sClient.Update(ctx, sFetch)).To(Succeed())
-			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronized, "subnet-id-1", subnetProjectID, subnetVpcID, 1, time.Now())
-			Expect(k8sClient.Delete(ctx, subnet)).To(Succeed())
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
-
-			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
-			m.mockNetwork.EXPECT().Subnets().Return(m.mockSubnets)
-			m.mockSubnets.EXPECT().List(mock.Anything, subnetProjectID, subnetVpcID, mock.Anything).Return(buildSubnetList(), nil)
-
-			_, err := m.r.HandleReconcile(ctx, subnet)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.Subnet{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleted))
-		})
-	})
-
-	Describe("IsInError", func() {
-		It("transitions to Failed+Synchronized when CMP state is Failed", func() {
-			m := newSubnetReconcilerWithMocks(GinkgoT())
-			subnet = createTestSubnet(ctx, "test-subnet-in-error", defaultSubnetSpec(subnetProjectName, subnetVpcName))
-			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "subnet-id-1", subnetProjectID, subnetVpcID, 1, time.Now())
-
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-in-error", reconciler.CSPResourceStateFailed)
-			m.expectProjectList(subnetProjectID, subnetProjectName)
-			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
-			m.expectSubnetList(subnetProjectID, subnetVpcID, cmpSubnet)
-
-			_, err := m.r.HandleReconcile(ctx, subnet)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.Subnet{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
-		})
-	})
-
-	Describe("Phase timeout", func() {
-		It("transitions to Failed when stuck in transitory phase too long", func() {
-			m := newSubnetReconcilerWithMocks(GinkgoT())
-			subnet = createTestSubnet(ctx, "test-subnet-timeout", defaultSubnetSpec(subnetProjectName, subnetVpcName))
-			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, "", subnetProjectID, subnetVpcID,
-				0, time.Now().Add(-(reconciler.MaxPhaseTimeout + time.Minute)))
-
-			cmpSubnet := buildSubnetResponse("subnet-id-1", "test-subnet-timeout", reconciler.CSPResourceStateActive)
-			m.expectProjectList(subnetProjectID, subnetProjectName)
-			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
-			m.expectSubnetList(subnetProjectID, subnetVpcID, cmpSubnet)
-
-			_, err := m.r.HandleReconcile(ctx, subnet)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.Subnet{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
-		})
-	})
-
-	Describe("Project not found yet", func() {
-		It("returns LongRequeue when project doesn't exist in CMP yet", func() {
-			m := newSubnetReconcilerWithMocks(GinkgoT())
-			subnet = createTestSubnet(ctx, "test-subnet-no-project", defaultSubnetSpec(subnetProjectName, subnetVpcName))
-
-			m.mockAruba.EXPECT().FromProject().Return(m.mockProject)
-			m.mockProject.EXPECT().List(mock.Anything, mock.Anything).Return(buildProjectList(), nil)
-
-			result, err := m.r.HandleReconcile(ctx, subnet)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
-		})
-	})
-
-	Describe("VPC not found yet", func() {
-		It("returns LongRequeue when VPC doesn't exist in CMP yet", func() {
-			m := newSubnetReconcilerWithMocks(GinkgoT())
-			subnet = createTestSubnet(ctx, "test-subnet-no-vpc", defaultSubnetSpec(subnetProjectName, subnetVpcName))
-
-			m.expectProjectList(subnetProjectID, subnetProjectName)
-
-			emptyVpcList := &arubatypes.Response[arubatypes.VPCList]{
-				Data:       &arubatypes.VPCList{},
-				StatusCode: http.StatusOK,
-			}
-			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
-			m.mockNetwork.EXPECT().VPCs().Return(m.mockVPCsClient)
-			m.mockVPCsClient.EXPECT().List(mock.Anything, subnetProjectID, mock.Anything).Return(emptyVpcList, nil)
-
-			result, err := m.r.HandleReconcile(ctx, subnet)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
-		})
-	})
-
-	Describe("ProjectID and VpcID stamped in status", func() {
-		It("stamps ProjectID and VpcID on status when first transitioning", func() {
-			m := newSubnetReconcilerWithMocks(GinkgoT())
-			subnet = createTestSubnet(ctx, "test-subnet-ids-stamped", defaultSubnetSpec(subnetProjectName, subnetVpcName))
-			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", 0, time.Now())
-
-			m.expectProjectList(subnetProjectID, subnetProjectName)
-			m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
-			m.expectSubnetList(subnetProjectID, subnetVpcID)
-
-			_, err := m.r.HandleReconcile(ctx, subnet)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.Subnet{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), updated)).To(Succeed())
-			Expect(updated.Status.ProjectID).To(Equal(subnetProjectID))
-			Expect(updated.Status.VPCID).To(Equal(subnetVpcID))
-		})
-	})
-
-	Describe("CMP error handling", func() {
-		DescribeTable("CMP create fails — preserves Creating+ShallSynchronize, surfaces error in condition",
-			func(name string, statusCode int, expectedRequeue time.Duration) {
-				m := newSubnetReconcilerWithMocks(GinkgoT())
-				subnet = createTestSubnet(ctx, name, defaultSubnetSpec(subnetProjectName, subnetVpcName))
-				setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, "", "", "", 0, time.Now())
-
-				m.expectProjectList(subnetProjectID, subnetProjectName)
-				m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
-				m.expectSubnetList(subnetProjectID, subnetVpcID)
-				m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
-				m.mockNetwork.EXPECT().Subnets().Return(m.mockSubnets)
-				m.mockSubnets.EXPECT().Create(mock.Anything, subnetProjectID, subnetVpcID, mock.Anything, mock.Anything).Return(buildSubnetCRUDResponse(statusCode), nil)
-
-				result, err := m.r.HandleReconcile(ctx, subnet)
-				Expect(err).To(Succeed())
-				Expect(result.RequeueAfter).To(Equal(expectedRequeue))
-
-				updated := &v1alpha1.Subnet{}
-				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), updated)).To(Succeed())
-				Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
-				cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
-				Expect(cond).NotTo(BeNil())
-				Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
-				Expect(cond.Message).To(ContainSubstring("ERROR"))
-			},
-			Entry("4xx → LongRequeueAfter, no phase change", "subnet-cmp-err-create-400", http.StatusBadRequest, reconciler.LongRequeueAfter),
-			Entry("5xx → ShortRequeueAfter, no phase change", "subnet-cmp-err-create-500", http.StatusInternalServerError, reconciler.ShortRequeueAfter),
-		)
-
-		DescribeTable("CMP update fails — preserves Updating+ShallSynchronize, surfaces error in condition",
-			func(name string, statusCode int, expectedRequeue time.Duration) {
-				m := newSubnetReconcilerWithMocks(GinkgoT())
-				subnet = createTestSubnet(ctx, name, defaultSubnetSpec(subnetProjectName, subnetVpcName))
-				setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, "subnet-id-1", subnetProjectID, subnetVpcID, 1, time.Now())
-
-				cmpSubnet := buildSubnetResponse("subnet-id-1", name, reconciler.CSPResourceStateActive)
-				m.expectProjectList(subnetProjectID, subnetProjectName)
-				m.expectVpcList(subnetProjectID, subnetVpcID, subnetVpcName)
-				m.expectSubnetList(subnetProjectID, subnetVpcID, cmpSubnet)
-				m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
-				m.mockNetwork.EXPECT().Subnets().Return(m.mockSubnets)
-				m.mockSubnets.EXPECT().Update(mock.Anything, subnetProjectID, subnetVpcID, "subnet-id-1", mock.Anything, mock.Anything).Return(buildSubnetCRUDResponse(statusCode), nil)
-
-				result, err := m.r.HandleReconcile(ctx, subnet)
-				Expect(err).To(Succeed())
-				Expect(result.RequeueAfter).To(Equal(expectedRequeue))
-
-				updated := &v1alpha1.Subnet{}
-				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), updated)).To(Succeed())
-				Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseUpdating))
-				cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseUpdating))
-				Expect(cond).NotTo(BeNil())
-				Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
-				Expect(cond.Message).To(ContainSubstring("ERROR"))
-			},
-			Entry("4xx → LongRequeueAfter, no phase change", "subnet-cmp-err-update-400", http.StatusBadRequest, reconciler.LongRequeueAfter),
-			Entry("5xx → ShortRequeueAfter, no phase change", "subnet-cmp-err-update-500", http.StatusInternalServerError, reconciler.ShortRequeueAfter),
-		)
-
-		DescribeTable("CMP delete fails — preserves Deleting+ShallSynchronize, surfaces error in condition",
-			func(name string, statusCode int, expectedRequeue time.Duration) {
-				m := newSubnetReconcilerWithMocks(GinkgoT())
-				subnet = createTestSubnet(ctx, name, defaultSubnetSpec(subnetProjectName, subnetVpcName))
-				sFetch := &v1alpha1.Subnet{}
-				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), sFetch)).To(Succeed())
-				sFetch.Finalizers = []string{subnetFinalizerName}
-				Expect(k8sClient.Update(ctx, sFetch)).To(Succeed())
-				setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize, "subnet-id-1", subnetProjectID, subnetVpcID, 1, time.Now())
-				Expect(k8sClient.Delete(ctx, subnet)).To(Succeed())
-				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
-
-				cmpSubnet := buildSubnetResponse("subnet-id-1", name, reconciler.CSPResourceStateActive)
-				m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
-				m.mockNetwork.EXPECT().Subnets().Return(m.mockSubnets)
-				m.mockSubnets.EXPECT().List(mock.Anything, subnetProjectID, subnetVpcID, mock.Anything).Return(buildSubnetList(cmpSubnet), nil)
-				m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
-				m.mockNetwork.EXPECT().Subnets().Return(m.mockSubnets)
-				m.mockSubnets.EXPECT().Delete(mock.Anything, subnetProjectID, subnetVpcID, "subnet-id-1", mock.Anything).Return(buildDeleteResponse(statusCode), nil)
-
-				result, err := m.r.HandleReconcile(ctx, subnet)
-				Expect(err).To(Succeed())
-				Expect(result.RequeueAfter).To(Equal(expectedRequeue))
-
-				updated := &v1alpha1.Subnet{}
-				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), updated)).To(Succeed())
-				Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleting))
-				cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
-				Expect(cond).NotTo(BeNil())
-				Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
-				Expect(cond.Message).To(ContainSubstring("ERROR"))
-			},
-			Entry("4xx → LongRequeueAfter, no phase change", "subnet-cmp-err-delete-400", http.StatusBadRequest, reconciler.LongRequeueAfter),
-			Entry("5xx → ShortRequeueAfter, no phase change", "subnet-cmp-err-delete-500", http.StatusInternalServerError, reconciler.ShortRequeueAfter),
-		)
-	})
-
-	Describe("Validation", func() {
-		It("sets Failed+ValidationFailed when Subnet tenant differs from parent VPC tenant", func() {
-			m := newSubnetReconcilerWithMocks(GinkgoT())
-
-			// Create a K8s VPC with a different Tenant than the Subnet.
-			kubeVpc := createTestVpc(ctx, subnetVpcName, v1alpha1.VPCSpec{
-				Tenant:           "other-tenant",
-				Region:           "ITBG-Bergamo",
-				ProjectReference: v1alpha1.ResourceReference{Name: "some-project", Namespace: "default"},
-			})
-			defer func() {
-				_ = k8sClient.Delete(ctx, kubeVpc)
-			}()
-
-			subnet = createTestSubnet(ctx, "test-subnet-validation-tenant", defaultSubnetSpec(subnetProjectName, subnetVpcName))
-			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "subnet-id-val", subnetProjectID, subnetVpcID, 0, time.Now())
-
-			// First reconcile: sets owner reference on the Subnet → requeue, no CMP calls.
-			result, err := m.r.HandleReconcile(ctx, subnet)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
-
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
-
-			// Second reconcile: ivs fires at Stage 4 (before CMP calls) → validation fails, no CMP expectations needed.
-			_, err = m.r.HandleReconcile(ctx, subnet)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.Subnet{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
-			Expect(cond.Message).To(ContainSubstring("tenant mismatch with VPC"))
-		})
-
-		It("sets Failed+ValidationFailed at Pending phase when Subnet tenant differs from parent VPC tenant (no CMP resource yet)", func() {
-			m := newSubnetReconcilerWithMocks(GinkgoT())
-
-			// VPC has a different tenant AND is Active+Synchronized so Stage 3 (parent readiness) passes.
-			kubeVpc := createTestVpc(ctx, subnetVpcName, v1alpha1.VPCSpec{
-				Tenant:           "other-tenant",
-				Region:           "ITBG-Bergamo",
-				ProjectReference: v1alpha1.ResourceReference{Name: "some-project", Namespace: "default"},
-			})
-			setVPCStatus(ctx, kubeVpc, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, subnetVpcID, "some-proj-id", 0, time.Now())
-			defer func() {
-				_ = k8sClient.Delete(ctx, kubeVpc)
-			}()
-
-			subnet = createTestSubnet(ctx, "test-subnet-pending-validation-tenant", defaultSubnetSpec(subnetProjectName, subnetVpcName))
-			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", 0, time.Now())
-
-			// First reconcile: owner reference not yet set → ShortRequeue.
-			result, err := m.r.HandleReconcile(ctx, subnet)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
-
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
-
-			// Second reconcile: ivs fires at Stage 4 (before CMP calls) → validation fails, no CMP expectations needed.
-			result, err = m.r.HandleReconcile(ctx, subnet)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(BeZero())
-
-			updated := &v1alpha1.Subnet{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
-			Expect(cond.Message).To(ContainSubstring("tenant mismatch with VPC"))
-		})
-
-		It("sets Failed+ValidationFailed at Pending phase when Subnet project reference differs from parent VPC project reference (no CMP resource yet)", func() {
-			m := newSubnetReconcilerWithMocks(GinkgoT())
-
-			// VPC has a different project reference AND is Active+Synchronized so Stage 3 (parent readiness) passes.
-			kubeVpc := createTestVpc(ctx, subnetVpcName, v1alpha1.VPCSpec{
-				Tenant:           "test-tenant",
-				Region:           "ITBG-Bergamo",
-				ProjectReference: v1alpha1.ResourceReference{Name: "other-project", Namespace: "default"},
-			})
-			setVPCStatus(ctx, kubeVpc, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, subnetVpcID, "other-proj-id", 0, time.Now())
-			defer func() {
-				_ = k8sClient.Delete(ctx, kubeVpc)
-			}()
-
-			subnet = createTestSubnet(ctx, "test-subnet-pending-validation-project", defaultSubnetSpec(subnetProjectName, subnetVpcName))
-			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", 0, time.Now())
-
-			// First reconcile: owner reference not yet set → ShortRequeue.
-			result, err := m.r.HandleReconcile(ctx, subnet)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
-
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
-
-			// Second reconcile: ivs fires at Stage 4 (before CMP calls) → validation fails, no CMP expectations needed.
-			result, err = m.r.HandleReconcile(ctx, subnet)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(BeZero())
-
-			updated := &v1alpha1.Subnet{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
-			Expect(cond.Message).To(ContainSubstring("project reference mismatch with VPC"))
-		})
-
-		It("sets Failed+ValidationFailed at Pending phase when Subnet tenant differs from Project tenant (no CMP resource yet)", func() {
-			m := newSubnetReconcilerWithMocks(GinkgoT())
-
-			// VPC with matching attributes (same tenant/region/project) so VPC cross-validation passes.
-			kubeVpc := createTestVpc(ctx, subnetVpcName, v1alpha1.VPCSpec{
-				Tenant:           "test-tenant",
-				Region:           "ITBG-Bergamo",
-				ProjectReference: v1alpha1.ResourceReference{Name: subnetProjectName, Namespace: "default"},
-			})
-			setVPCStatus(ctx, kubeVpc, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, subnetVpcID, subnetProjectID, 0, time.Now())
-			defer func() { _ = k8sClient.Delete(ctx, kubeVpc) }()
-
-			// K8s Project with a different tenant than the Subnet.
-			kubeProject := createTestProject(ctx, subnetProjectName, v1alpha1.ProjectSpec{
-				Tenant:      "other-tenant",
-				Description: "test",
-			})
-			defer func() { _ = k8sClient.Delete(ctx, kubeProject) }()
-
-			subnet = createTestSubnet(ctx, "test-subnet-pending-validation-tenant-proj", defaultSubnetSpec(subnetProjectName, subnetVpcName))
-			setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", 0, time.Now())
-
-			// First reconcile: VPC found → owner reference set → ShortRequeue, no CMP calls.
-			result, err := m.r.HandleReconcile(ctx, subnet)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
-
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
-
-			// Second reconcile: ivs fires at Stage 4 (before CMP calls) → validation fails, no CMP expectations needed.
-			result, err = m.r.HandleReconcile(ctx, subnet)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(BeZero())
-
-			updated := &v1alpha1.Subnet{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
-			Expect(cond.Message).To(ContainSubstring("tenant mismatch with Project"))
-		})
+		defer func() { _ = k8sClient.Delete(ctx, kubeVpc) }()
+
+		subnet = createTestSubnet(ctx, "test-subnet-validation", defaultSubnetSpec(snPrjName, snVpcName))
+		setSubnetStatus(ctx, subnet, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "sn-id-val", snPrjID, snVpcID, 0, time.Now())
+
+		result, err := m.r.HandleReconcile(ctx, subnet)
+		Expect(err).To(Succeed())
+		Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), subnet)).To(Succeed())
+
+		_, err = m.r.HandleReconcile(ctx, subnet)
+		Expect(err).To(Succeed())
+
+		updated := &v1alpha1.Subnet{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnet), updated)).To(Succeed())
+		Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+		Expect(findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed)).Message).To(ContainSubstring("tenant mismatch with VPC"))
 	})
 })

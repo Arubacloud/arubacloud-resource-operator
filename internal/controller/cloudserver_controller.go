@@ -1500,8 +1500,6 @@ func cmpCloudServerIsActive(_ *v1alpha1.CloudServer, cmpCS *arubatypes.CloudServ
 	switch *cmpCS.Status.State {
 	case arubatypes.StateActive, arubatypes.StateRunning, arubatypes.StateStopped:
 		return true
-	case arubatypes.StateInCreation, arubatypes.StateCreating, arubatypes.StateUpdating, arubatypes.StateProvisioning, arubatypes.StateDeleting, arubatypes.StateDisabling, arubatypes.StateEnabling, arubatypes.StateNotUsed, arubatypes.StateReserved, arubatypes.StateInUse, arubatypes.StateUsed, arubatypes.StateDeleted, arubatypes.StateFailed, arubatypes.StateError, arubatypes.StateDisabled:
-		return false
 	default:
 		return false
 	}

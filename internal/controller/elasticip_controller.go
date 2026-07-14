@@ -680,8 +680,6 @@ func cmpElasticIpIsActive(_ *v1alpha1.ElasticIP, cmpEip *arubatypes.ElasticIPRes
 	switch *cmpEip.Status.State {
 	case arubatypes.StateActive, arubatypes.StateNotUsed, arubatypes.StateInUse, arubatypes.StateUsed:
 		return true
-	case arubatypes.StateInCreation, arubatypes.StateCreating, arubatypes.StateUpdating, arubatypes.StateProvisioning, arubatypes.StateDeleting, arubatypes.StateDisabling, arubatypes.StateEnabling, arubatypes.StateRunning, arubatypes.StateStopped, arubatypes.StateReserved, arubatypes.StateDeleted, arubatypes.StateFailed, arubatypes.StateError, arubatypes.StateDisabled:
-		return false
 	default:
 		return false
 	}

@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/Arubacloud/sdk-go/pkg/aruba"
@@ -61,19 +62,40 @@ type wireEnvelope[R any] interface {
 
 // objResp converts a single-resource wrapper reply into a wire Response.
 func objResp[R any](w wireEnvelope[R], err error) (*types.Response[R], error) {
+	status, errResp, transport := classify(err)
+	if transport != nil {
+		// Transport failure: the wrapper may be a typed-nil pointer (e.g. a Get
+		// whose Ref failed to parse returns (nil, err)), so it must not be
+		// dereferenced here. Callers discard the response when err != nil.
+		return &types.Response[R]{}, transport
+	}
 	resp := &types.Response[R]{}
 	if w != nil {
 		resp.StatusCode = w.StatusCode()
 		resp.Error = w.RawError()
 		resp.Data = w.Raw()
 	}
-	if status, errResp, transport := classify(err); transport != nil {
-		return resp, transport
-	} else if status != 0 {
+	if status != 0 {
 		resp.StatusCode = status
 		resp.Error = errResp
 	}
 	return resp, nil
+}
+
+// rawList extracts the typed wire payload from an SDK list's JSON-safe raw
+// value. A nil raw is a legitimately empty response (no error). A non-nil raw
+// of the wrong type means the SDK's list payload type drifted from L — a
+// programming bug — so it is surfaced as an error rather than silently dropped.
+func rawList[L any](raw any) (*L, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	data, ok := raw.(*L)
+	if !ok {
+		var zero L
+		return nil, fmt.Errorf("listResp: SDK list payload has type %T, want *%T", raw, zero)
+	}
+	return data, nil
 }
 
 // listResp converts a paginated wrapper list into a wire Response. On success
@@ -84,9 +106,11 @@ func listResp[L any, W aruba.Wrapper](l *aruba.List[W], err error) (*types.Respo
 		resp.StatusCode = l.StatusCode()
 		resp.Error = l.RawError()
 		resp.Headers = l.Headers()
-		if raw, ok := l.Raw().(*L); ok {
-			resp.Data = raw
+		data, rawErr := rawList[L](l.Raw())
+		if rawErr != nil {
+			return resp, rawErr
 		}
+		resp.Data = data
 	}
 	if status, errResp, transport := classify(err); transport != nil {
 		return resp, transport
@@ -326,10 +350,15 @@ func (a securityGroupsAdapter) Delete(ctx context.Context, projectID, vpcID, sec
 
 func applySecurityGroup(w *aruba.SecurityGroup, b types.SecurityGroupRequest) {
 	w.Named(b.Metadata.Name).RetaggedAs(b.Metadata.Tags...)
-	if b.Properties.Default != nil && *b.Properties.Default {
-		w.AsDefault()
-	} else {
-		w.NotDefault()
+	// Skip the setter when Default is unset (mirrors applyVPC), so an update
+	// that omits the field preserves the hydrated CMP value instead of forcing
+	// it to false.
+	if b.Properties.Default != nil {
+		if *b.Properties.Default {
+			w.AsDefault()
+		} else {
+			w.NotDefault()
+		}
 	}
 }
 

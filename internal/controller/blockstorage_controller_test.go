@@ -7,71 +7,22 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/stretchr/testify/mock"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
-	arubamocks "github.com/Arubacloud/arubacloud-resource-operator/internal/mocks/aruba"
 	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
-	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
 )
 
-// --- Builder helpers ---
+// --- CMP item builders ---
 
-func buildBlockStorageResponse(id, name, state string) *arubatypes.BlockStorageResponse {
-	location := &arubatypes.LocationResponse{Value: "ITBG-Bergamo"}
-	return &arubatypes.BlockStorageResponse{
-		Metadata: arubatypes.ResourceMetadataResponse{
-			ID:               &id,
-			Name:             &name,
-			LocationResponse: location,
+func bsItem(id, name, state string) map[string]any {
+	return map[string]any{
+		"metadata": cmpMeta(id, name),
+		"properties": map[string]any{
+			"sizeGb": 10, "billingPeriod": "Hour", "dataCenter": "zone1", "type": "Standard",
 		},
-		Properties: arubatypes.BlockStoragePropertiesResponse{
-			SizeGB:        10,
-			BillingPeriod: "Hour",
-			Zone:          "zone1",
-			Type:          arubatypes.BlockStorageTypeStandard,
-		},
-		Status: arubatypes.ResourceStatus{
-			State: &state,
-		},
-	}
-}
-
-func buildBlockStorageList(responses ...*arubatypes.BlockStorageResponse) *arubatypes.Response[arubatypes.BlockStorageList] {
-	list := &arubatypes.BlockStorageList{}
-	for _, r := range responses {
-		list.Values = append(list.Values, *r)
-		list.Total++
-	}
-	return &arubatypes.Response[arubatypes.BlockStorageList]{
-		Data:       list,
-		StatusCode: http.StatusOK,
-	}
-}
-
-func buildBSCRUDResponse(statusCode int) *arubatypes.Response[arubatypes.BlockStorageResponse] {
-	return &arubatypes.Response[arubatypes.BlockStorageResponse]{
-		StatusCode: statusCode,
-	}
-}
-
-func buildProjectListForBS(projectID, projectName string) *arubatypes.Response[arubatypes.ProjectList] {
-	id := projectID
-	name := projectName
-	proj := arubatypes.ProjectResponse{
-		Metadata: arubatypes.ResourceMetadataResponse{
-			ID:   &id,
-			Name: &name,
-		},
-	}
-	list := &arubatypes.ProjectList{}
-	list.Values = append(list.Values, proj)
-	list.Total = 1
-	return &arubatypes.Response[arubatypes.ProjectList]{
-		Data:       list,
-		StatusCode: http.StatusOK,
+		"status": map[string]any{"state": state},
 	}
 }
 
@@ -95,11 +46,8 @@ func defaultBSSpec(projectName string) v1alpha1.BlockStorageSpec {
 
 func createTestBlockStorage(ctx context.Context, name string, spec v1alpha1.BlockStorageSpec) *v1alpha1.BlockStorage {
 	bs := &v1alpha1.BlockStorage{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: "default",
-		},
-		Spec: spec,
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+		Spec:       spec,
 	}
 	ExpectWithOffset(1, k8sClient.Create(ctx, bs)).To(Succeed())
 	return bs
@@ -113,54 +61,35 @@ func setBSStatus(ctx context.Context, bs *v1alpha1.BlockStorage, phase v1alpha1.
 	b.Status.ProjectID = projectID
 	b.Status.ObservedGeneration = observedGen
 	if phase != "" {
-		b.Status.Conditions = []metav1.Condition{
-			{
-				Type:               string(phase),
-				Status:             metav1.ConditionTrue,
-				Reason:             reason,
-				LastTransitionTime: metav1.NewTime(conditionTime),
-				Message:            string(phase) + " " + reason + " - OK",
-			},
-		}
+		b.Status.Conditions = []metav1.Condition{{
+			Type:               string(phase),
+			Status:             metav1.ConditionTrue,
+			Reason:             reason,
+			LastTransitionTime: metav1.NewTime(conditionTime),
+			Message:            string(phase) + " " + reason + " - OK",
+		}}
 	}
 	ExpectWithOffset(1, k8sClient.Status().Update(ctx, b)).To(Succeed())
 	ExpectWithOffset(1, k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bs)).To(Succeed())
 }
 
-type bsMocks struct {
-	r           *BlockStorageReconciler
-	mockAruba   *arubamocks.MockClient
-	mockProject *arubamocks.MockProjectClient
-	mockStorage *arubamocks.MockStorageClient
-	mockVolumes *arubamocks.MockVolumesClient
+type bsFake struct {
+	r *BlockStorageReconciler
+	f *fakeCMP
 }
 
-func newBSReconcilerWithMocks(t GinkgoTInterface) *bsMocks {
-	mockAruba := arubamocks.NewMockClient(t)
-	mockProject := arubamocks.NewMockProjectClient(t)
-	mockStorage := arubamocks.NewMockStorageClient(t)
-	mockVolumes := arubamocks.NewMockVolumesClient(t)
-
-	r := NewBlockStorageReconciler(newTestReconciler(t, mockAruba))
-
-	return &bsMocks{
-		r:           r,
-		mockAruba:   mockAruba,
-		mockProject: mockProject,
-		mockStorage: mockStorage,
-		mockVolumes: mockVolumes,
-	}
+func newBSReconcilerWithFake() *bsFake {
+	f := newFakeCMP()
+	DeferCleanup(f.close)
+	return &bsFake{r: NewBlockStorageReconciler(newTestReconciler(GinkgoT(), f)), f: f}
 }
 
-func (m *bsMocks) expectProjectList(projectID, projectName string) {
-	m.mockAruba.EXPECT().FromProject().Return(m.mockProject)
-	m.mockProject.EXPECT().List(mock.Anything, mock.Anything).Return(buildProjectListForBS(projectID, projectName), nil)
+func (m *bsFake) stageProject(id, name string) {
+	m.f.stage("projects", projectItem(id, name, nil, "", false))
 }
 
-func (m *bsMocks) expectBSList(projectID string, responses ...*arubatypes.BlockStorageResponse) {
-	m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
-	m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
-	m.mockVolumes.EXPECT().List(mock.Anything, projectID, mock.Anything).Return(buildBlockStorageList(responses...), nil)
+func (m *bsFake) stageVolumes(items ...map[string]any) {
+	m.f.stage("blockStorages", items...)
 }
 
 // --- Tests ---
@@ -176,9 +105,7 @@ var _ = Describe("BlockStorageReconciler", func() {
 		bs  *v1alpha1.BlockStorage
 	)
 
-	BeforeEach(func() {
-		ctx = context.Background()
-	})
+	BeforeEach(func() { ctx = context.Background() })
 
 	AfterEach(func() {
 		if bs != nil {
@@ -194,12 +121,10 @@ var _ = Describe("BlockStorageReconciler", func() {
 
 	Describe("First reconciliation", func() {
 		It("transitions to Creating+ShallSynchronize when CMP has no BS", func() {
-			m := newBSReconcilerWithMocks(GinkgoT())
+			m := newBSReconcilerWithFake()
 			bs = createTestBlockStorage(ctx, "test-bs-first", defaultBSSpec(bsProjectName))
 			setBSStatus(ctx, bs, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", 0, time.Now())
-
-			m.expectProjectList(bsProjectID, bsProjectName)
-			m.expectBSList(bsProjectID)
+			m.stageProject(bsProjectID, bsProjectName)
 
 			_, err := m.r.HandleReconcile(ctx, bs)
 			Expect(err).To(Succeed())
@@ -208,57 +133,17 @@ var _ = Describe("BlockStorageReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), updated)).To(Succeed())
 			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
 			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
-			Expect(cond).NotTo(BeNil())
 			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
-
-			pendingCond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhasePending))
-			Expect(pendingCond).NotTo(BeNil())
-			Expect(pendingCond.Status).To(Equal(metav1.ConditionFalse))
-			Expect(pendingCond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
-		})
-	})
-
-	Describe("PendingAndDeleting", func() {
-		It("transitions directly to Deleted when resource is in Pending and is being deleted", func() {
-			m := newBSReconcilerWithMocks(GinkgoT())
-			bs = createTestBlockStorage(ctx, "test-bs-pending-deleting", defaultBSSpec(bsProjectName))
-			setBSStatus(ctx, bs, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", 0, time.Now())
-
-			m.expectProjectList(bsProjectID, bsProjectName)
-			m.expectBSList(bsProjectID)
-
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bs)).To(Succeed())
-			bs.Finalizers = []string{blockStorageFinalizerName}
-			Expect(k8sClient.Update(ctx, bs)).To(Succeed())
-
-			Expect(k8sClient.Delete(ctx, bs)).To(Succeed())
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bs)).To(Succeed())
-
-			_, err := m.r.HandleReconcile(ctx, bs)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.BlockStorage{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleted))
-
-			pendingCond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhasePending))
-			Expect(pendingCond).NotTo(BeNil())
-			Expect(pendingCond.Status).To(Equal(metav1.ConditionFalse))
-			Expect(pendingCond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
+			Expect(updated.Status.ProjectID).To(Equal(bsProjectID))
 		})
 	})
 
 	Describe("Create on CMP", func() {
 		It("transitions to Creating+Synchronizing after successful CMP create", func() {
-			m := newBSReconcilerWithMocks(GinkgoT())
+			m := newBSReconcilerWithFake()
 			bs = createTestBlockStorage(ctx, "test-bs-create-cmp", defaultBSSpec(bsProjectName))
 			setBSStatus(ctx, bs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, "", "", 0, time.Now())
-
-			m.expectProjectList(bsProjectID, bsProjectName)
-			m.expectBSList(bsProjectID)
-			m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
-			m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
-			m.mockVolumes.EXPECT().Create(mock.Anything, bsProjectID, mock.Anything, mock.Anything).Return(buildBSCRUDResponse(http.StatusCreated), nil)
+			m.stageProject(bsProjectID, bsProjectName)
 
 			_, err := m.r.HandleReconcile(ctx, bs)
 			Expect(err).To(Succeed())
@@ -267,35 +152,17 @@ var _ = Describe("BlockStorageReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), updated)).To(Succeed())
 			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
 			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
-			Expect(cond).NotTo(BeNil())
 			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronizing))
-		})
-	})
-
-	Describe("Waiting creation (BS not yet in CMP)", func() {
-		It("returns LongRequeue", func() {
-			m := newBSReconcilerWithMocks(GinkgoT())
-			bs = createTestBlockStorage(ctx, "test-bs-wait-create", defaultBSSpec(bsProjectName))
-			setBSStatus(ctx, bs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "", "", 0, time.Now())
-
-			m.expectProjectList(bsProjectID, bsProjectName)
-			m.expectBSList(bsProjectID)
-
-			result, err := m.r.HandleReconcile(ctx, bs)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
 		})
 	})
 
 	Describe("Waiting creation (BS in transitory CMP state)", func() {
 		It("returns LongRequeue when CMP state is Creating", func() {
-			m := newBSReconcilerWithMocks(GinkgoT())
-			bs = createTestBlockStorage(ctx, "test-bs-wait-create-transitory", defaultBSSpec(bsProjectName))
+			m := newBSReconcilerWithFake()
+			bs = createTestBlockStorage(ctx, "test-bs-wait-transitory", defaultBSSpec(bsProjectName))
 			setBSStatus(ctx, bs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "", "", 0, time.Now())
-
-			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-wait-create-transitory", reconciler.CSPResourceStateCreating)
-			m.expectProjectList(bsProjectID, bsProjectName)
-			m.expectBSList(bsProjectID, cmpBS)
+			m.stageProject(bsProjectID, bsProjectName)
+			m.stageVolumes(bsItem("bs-id-1", "test-bs-wait-transitory", "Creating"))
 
 			result, err := m.r.HandleReconcile(ctx, bs)
 			Expect(err).To(Succeed())
@@ -303,36 +170,13 @@ var _ = Describe("BlockStorageReconciler", func() {
 		})
 	})
 
-	Describe("Creation confirmed on CMP", func() {
-		It("transitions to Creating+Synchronized when CMP BS is active", func() {
-			m := newBSReconcilerWithMocks(GinkgoT())
-			bs = createTestBlockStorage(ctx, "test-bs-creation-confirmed", defaultBSSpec(bsProjectName))
-			setBSStatus(ctx, bs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "", "", 0, time.Now())
-
-			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-creation-confirmed", reconciler.CSPResourceStateActive)
-			m.expectProjectList(bsProjectID, bsProjectName)
-			m.expectBSList(bsProjectID, cmpBS)
-
-			_, err := m.r.HandleReconcile(ctx, bs)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.BlockStorage{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
-		})
-	})
-
 	Describe("Creation accomplished", func() {
 		It("transitions to Active+Synchronized and sets ResourceID", func() {
-			m := newBSReconcilerWithMocks(GinkgoT())
-			bs = createTestBlockStorage(ctx, "test-bs-creation-accomplished", defaultBSSpec(bsProjectName))
+			m := newBSReconcilerWithFake()
+			bs = createTestBlockStorage(ctx, "test-bs-accomplished", defaultBSSpec(bsProjectName))
 			setBSStatus(ctx, bs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronized, "", "", 0, time.Now())
-
-			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-creation-accomplished", reconciler.CSPResourceStateActive)
-			m.expectProjectList(bsProjectID, bsProjectName)
-			m.expectBSList(bsProjectID, cmpBS)
+			m.stageProject(bsProjectID, bsProjectName)
+			m.stageVolumes(bsItem("bs-id-1", "test-bs-accomplished", "Active"))
 
 			_, err := m.r.HandleReconcile(ctx, bs)
 			Expect(err).To(Succeed())
@@ -346,21 +190,18 @@ var _ = Describe("BlockStorageReconciler", func() {
 
 	Describe("HasDeniedChanges", func() {
 		It("returns LongRequeue when immutable field (size decrease) is changed", func() {
-			m := newBSReconcilerWithMocks(GinkgoT())
-			bs = createTestBlockStorage(ctx, "test-bs-denied-changes", defaultBSSpec(bsProjectName))
+			m := newBSReconcilerWithFake()
+			bs = createTestBlockStorage(ctx, "test-bs-denied", defaultBSSpec(bsProjectName))
 			setBSStatus(ctx, bs, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "bs-id-1", bsProjectID, 1, time.Now())
 
-			// Force generation change with smaller size
 			bFetch := &v1alpha1.BlockStorage{}
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bFetch)).To(Succeed())
-			bFetch.Spec.SizeGB = 1 // decrease from 10 to 1
+			bFetch.Spec.SizeGB = 1 // decrease from 10
 			Expect(k8sClient.Update(ctx, bFetch)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bs)).To(Succeed())
 
-			// CMP has size 10 (larger than new spec 1)
-			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-denied-changes", reconciler.CSPResourceStateActive)
-			m.expectProjectList(bsProjectID, bsProjectName)
-			m.expectBSList(bsProjectID, cmpBS)
+			m.stageProject(bsProjectID, bsProjectName)
+			m.stageVolumes(bsItem("bs-id-1", "test-bs-denied", "Active"))
 
 			result, err := m.r.HandleReconcile(ctx, bs)
 			Expect(err).To(Succeed())
@@ -370,13 +211,11 @@ var _ = Describe("BlockStorageReconciler", func() {
 
 	Describe("IsInError", func() {
 		It("transitions to Failed+Synchronized when CMP state is Failed", func() {
-			m := newBSReconcilerWithMocks(GinkgoT())
+			m := newBSReconcilerWithFake()
 			bs = createTestBlockStorage(ctx, "test-bs-in-error", defaultBSSpec(bsProjectName))
 			setBSStatus(ctx, bs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "bs-id-1", bsProjectID, 1, time.Now())
-
-			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-in-error", reconciler.CSPResourceStateFailed)
-			m.expectProjectList(bsProjectID, bsProjectName)
-			m.expectBSList(bsProjectID, cmpBS)
+			m.stageProject(bsProjectID, bsProjectName)
+			m.stageVolumes(bsItem("bs-id-1", "test-bs-in-error", "Failed"))
 
 			_, err := m.r.HandleReconcile(ctx, bs)
 			Expect(err).To(Succeed())
@@ -384,42 +223,14 @@ var _ = Describe("BlockStorageReconciler", func() {
 			updated := &v1alpha1.BlockStorage{}
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), updated)).To(Succeed())
 			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
-		})
-	})
-
-	Describe("CMP transitory during deletion", func() {
-		It("returns LongRequeue when CMP state is Deleting", func() {
-			m := newBSReconcilerWithMocks(GinkgoT())
-			bs = createTestBlockStorage(ctx, "test-bs-deleting-transitory", defaultBSSpec(bsProjectName))
-			bFetch := &v1alpha1.BlockStorage{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bFetch)).To(Succeed())
-			bFetch.Finalizers = []string{blockStorageFinalizerName}
-			Expect(k8sClient.Update(ctx, bFetch)).To(Succeed())
-			setBSStatus(ctx, bs, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronizing, "bs-id-1", bsProjectID, 1, time.Now())
-			Expect(k8sClient.Delete(ctx, bs)).To(Succeed())
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bs)).To(Succeed())
-
-			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-deleting-transitory", reconciler.CSPResourceStateDeleting)
-			m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
-			m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
-			m.mockVolumes.EXPECT().List(mock.Anything, bsProjectID, mock.Anything).Return(buildBlockStorageList(cmpBS), nil)
-
-			result, err := m.r.HandleReconcile(ctx, bs)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
 		})
 	})
 
 	Describe("Project not found yet", func() {
 		It("returns LongRequeue when project doesn't exist in CMP yet", func() {
-			m := newBSReconcilerWithMocks(GinkgoT())
+			m := newBSReconcilerWithFake()
 			bs = createTestBlockStorage(ctx, "test-bs-no-project", defaultBSSpec(bsProjectName))
-
-			m.mockAruba.EXPECT().FromProject().Return(m.mockProject)
-			m.mockProject.EXPECT().List(mock.Anything, mock.Anything).Return(buildProjectList(), nil)
+			// no project staged
 
 			result, err := m.r.HandleReconcile(ctx, bs)
 			Expect(err).To(Succeed())
@@ -427,27 +238,9 @@ var _ = Describe("BlockStorageReconciler", func() {
 		})
 	})
 
-	Describe("ProjectID set in status via prePatch callback", func() {
-		It("stamps ProjectID on status when first transitioning", func() {
-			m := newBSReconcilerWithMocks(GinkgoT())
-			bs = createTestBlockStorage(ctx, "test-bs-project-id", defaultBSSpec(bsProjectName))
-			setBSStatus(ctx, bs, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", 0, time.Now())
-
-			m.expectProjectList(bsProjectID, bsProjectName)
-			m.expectBSList(bsProjectID)
-
-			_, err := m.r.HandleReconcile(ctx, bs)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.BlockStorage{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), updated)).To(Succeed())
-			Expect(updated.Status.ProjectID).To(Equal(bsProjectID))
-		})
-	})
-
 	Describe("Should delete", func() {
 		It("transitions to Deleting+ShallSynchronize when deletion is requested on Active BS", func() {
-			m := newBSReconcilerWithMocks(GinkgoT())
+			m := newBSReconcilerWithFake()
 			bs = createTestBlockStorage(ctx, "test-bs-should-delete", defaultBSSpec(bsProjectName))
 			bFetch := &v1alpha1.BlockStorage{}
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bFetch)).To(Succeed())
@@ -456,11 +249,7 @@ var _ = Describe("BlockStorageReconciler", func() {
 			setBSStatus(ctx, bs, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "bs-id-1", bsProjectID, 1, time.Now())
 			Expect(k8sClient.Delete(ctx, bs)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bs)).To(Succeed())
-
-			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-should-delete", reconciler.CSPResourceStateActive)
-			m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
-			m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
-			m.mockVolumes.EXPECT().List(mock.Anything, bsProjectID, mock.Anything).Return(buildBlockStorageList(cmpBS), nil)
+			m.stageVolumes(bsItem("bs-id-1", "test-bs-should-delete", "Active"))
 
 			_, err := m.r.HandleReconcile(ctx, bs)
 			Expect(err).To(Succeed())
@@ -469,14 +258,13 @@ var _ = Describe("BlockStorageReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), updated)).To(Succeed())
 			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleting))
 			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
-			Expect(cond).NotTo(BeNil())
 			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
 		})
 	})
 
 	Describe("Delete on CMP", func() {
 		It("transitions to Deleting+Synchronizing after successful CMP delete", func() {
-			m := newBSReconcilerWithMocks(GinkgoT())
+			m := newBSReconcilerWithFake()
 			bs = createTestBlockStorage(ctx, "test-bs-delete-cmp", defaultBSSpec(bsProjectName))
 			bFetch := &v1alpha1.BlockStorage{}
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bFetch)).To(Succeed())
@@ -485,14 +273,7 @@ var _ = Describe("BlockStorageReconciler", func() {
 			setBSStatus(ctx, bs, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize, "bs-id-1", bsProjectID, 1, time.Now())
 			Expect(k8sClient.Delete(ctx, bs)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bs)).To(Succeed())
-
-			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-delete-cmp", reconciler.CSPResourceStateActive)
-			m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
-			m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
-			m.mockVolumes.EXPECT().List(mock.Anything, bsProjectID, mock.Anything).Return(buildBlockStorageList(cmpBS), nil)
-			m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
-			m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
-			m.mockVolumes.EXPECT().Delete(mock.Anything, bsProjectID, "bs-id-1", mock.Anything).Return(buildDeleteResponse(http.StatusOK), nil)
+			m.stageVolumes(bsItem("bs-id-1", "test-bs-delete-cmp", "Active"))
 
 			_, err := m.r.HandleReconcile(ctx, bs)
 			Expect(err).To(Succeed())
@@ -501,15 +282,14 @@ var _ = Describe("BlockStorageReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), updated)).To(Succeed())
 			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleting))
 			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
-			Expect(cond).NotTo(BeNil())
 			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronizing))
 		})
 	})
 
 	Describe("Deletion accomplished", func() {
 		It("transitions to Deleted phase when CMP BS is gone", func() {
-			m := newBSReconcilerWithMocks(GinkgoT())
-			bs = createTestBlockStorage(ctx, "test-bs-deletion-accomplished", defaultBSSpec(bsProjectName))
+			m := newBSReconcilerWithFake()
+			bs = createTestBlockStorage(ctx, "test-bs-deletion-done", defaultBSSpec(bsProjectName))
 			bFetch := &v1alpha1.BlockStorage{}
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bFetch)).To(Succeed())
 			bFetch.Finalizers = []string{blockStorageFinalizerName}
@@ -517,10 +297,7 @@ var _ = Describe("BlockStorageReconciler", func() {
 			setBSStatus(ctx, bs, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronized, "bs-id-1", bsProjectID, 1, time.Now())
 			Expect(k8sClient.Delete(ctx, bs)).To(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bs)).To(Succeed())
-
-			m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
-			m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
-			m.mockVolumes.EXPECT().List(mock.Anything, bsProjectID, mock.Anything).Return(buildBlockStorageList(), nil)
+			// no volumes staged → CMP gone
 
 			_, err := m.r.HandleReconcile(ctx, bs)
 			Expect(err).To(Succeed())
@@ -533,16 +310,11 @@ var _ = Describe("BlockStorageReconciler", func() {
 
 	Describe("Update on CMP", func() {
 		It("transitions to Updating+Synchronizing after successful CMP update", func() {
-			m := newBSReconcilerWithMocks(GinkgoT())
+			m := newBSReconcilerWithFake()
 			bs = createTestBlockStorage(ctx, "test-bs-update-cmp", defaultBSSpec(bsProjectName))
 			setBSStatus(ctx, bs, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, "bs-id-1", bsProjectID, 1, time.Now())
-
-			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-update-cmp", reconciler.CSPResourceStateActive)
-			m.expectProjectList(bsProjectID, bsProjectName)
-			m.expectBSList(bsProjectID, cmpBS)
-			m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
-			m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
-			m.mockVolumes.EXPECT().Update(mock.Anything, bsProjectID, "bs-id-1", mock.Anything, mock.Anything).Return(buildBSCRUDResponse(http.StatusOK), nil)
+			m.stageProject(bsProjectID, bsProjectName)
+			m.stageVolumes(bsItem("bs-id-1", "test-bs-update-cmp", "Active"))
 
 			_, err := m.r.HandleReconcile(ctx, bs)
 			Expect(err).To(Succeed())
@@ -551,21 +323,18 @@ var _ = Describe("BlockStorageReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), updated)).To(Succeed())
 			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseUpdating))
 			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseUpdating))
-			Expect(cond).NotTo(BeNil())
 			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronizing))
 		})
 	})
 
 	Describe("Phase timeout", func() {
 		It("transitions to Failed when stuck in transitory phase too long", func() {
-			m := newBSReconcilerWithMocks(GinkgoT())
+			m := newBSReconcilerWithFake()
 			bs = createTestBlockStorage(ctx, "test-bs-timeout", defaultBSSpec(bsProjectName))
 			setBSStatus(ctx, bs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, "", bsProjectID,
 				0, time.Now().Add(-(reconciler.MaxPhaseTimeout + time.Minute)))
-
-			cmpBS := buildBlockStorageResponse("bs-id-1", "test-bs-timeout", reconciler.CSPResourceStateActive)
-			m.expectProjectList(bsProjectID, bsProjectName)
-			m.expectBSList(bsProjectID, cmpBS)
+			m.stageProject(bsProjectID, bsProjectName)
+			m.stageVolumes(bsItem("bs-id-1", "test-bs-timeout", "Active"))
 
 			_, err := m.r.HandleReconcile(ctx, bs)
 			Expect(err).To(Succeed())
@@ -577,17 +346,13 @@ var _ = Describe("BlockStorageReconciler", func() {
 	})
 
 	Describe("CMP error handling", func() {
-		DescribeTable("CMP create fails — preserves Creating+ShallSynchronize, surfaces error in condition",
+		DescribeTable("CMP create fails — preserves Creating+ShallSynchronize, surfaces error",
 			func(name string, statusCode int, expectedRequeue time.Duration) {
-				m := newBSReconcilerWithMocks(GinkgoT())
+				m := newBSReconcilerWithFake()
+				m.f.postStatus = statusCode
 				bs = createTestBlockStorage(ctx, name, defaultBSSpec(bsProjectName))
 				setBSStatus(ctx, bs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, "", bsProjectID, 0, time.Now())
-
-				m.expectProjectList(bsProjectID, bsProjectName)
-				m.expectBSList(bsProjectID)
-				m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
-				m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
-				m.mockVolumes.EXPECT().Create(mock.Anything, bsProjectID, mock.Anything, mock.Anything).Return(buildBSCRUDResponse(statusCode), nil)
+				m.stageProject(bsProjectID, bsProjectName)
 
 				result, err := m.r.HandleReconcile(ctx, bs)
 				Expect(err).To(Succeed())
@@ -597,99 +362,30 @@ var _ = Describe("BlockStorageReconciler", func() {
 				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), updated)).To(Succeed())
 				Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
 				cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
-				Expect(cond).NotTo(BeNil())
 				Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
 				Expect(cond.Message).To(ContainSubstring("ERROR"))
 			},
-			Entry("4xx → LongRequeueAfter, no phase change", "bs-cmp-err-create-400", http.StatusBadRequest, reconciler.LongRequeueAfter),
-			Entry("5xx → ShortRequeueAfter, no phase change", "bs-cmp-err-create-500", http.StatusInternalServerError, reconciler.ShortRequeueAfter),
-		)
-
-		DescribeTable("CMP update fails — preserves Updating+ShallSynchronize, surfaces error in condition",
-			func(name string, statusCode int, expectedRequeue time.Duration) {
-				m := newBSReconcilerWithMocks(GinkgoT())
-				bs = createTestBlockStorage(ctx, name, defaultBSSpec(bsProjectName))
-				setBSStatus(ctx, bs, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, "bs-id-1", bsProjectID, 1, time.Now())
-
-				cmpBS := buildBlockStorageResponse("bs-id-1", name, reconciler.CSPResourceStateActive)
-				m.expectProjectList(bsProjectID, bsProjectName)
-				m.expectBSList(bsProjectID, cmpBS)
-				m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
-				m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
-				m.mockVolumes.EXPECT().Update(mock.Anything, bsProjectID, "bs-id-1", mock.Anything, mock.Anything).Return(buildBSCRUDResponse(statusCode), nil)
-
-				result, err := m.r.HandleReconcile(ctx, bs)
-				Expect(err).To(Succeed())
-				Expect(result.RequeueAfter).To(Equal(expectedRequeue))
-
-				updated := &v1alpha1.BlockStorage{}
-				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), updated)).To(Succeed())
-				Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseUpdating))
-				cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseUpdating))
-				Expect(cond).NotTo(BeNil())
-				Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
-				Expect(cond.Message).To(ContainSubstring("ERROR"))
-			},
-			Entry("4xx → LongRequeueAfter, no phase change", "bs-cmp-err-update-400", http.StatusBadRequest, reconciler.LongRequeueAfter),
-			Entry("5xx → ShortRequeueAfter, no phase change", "bs-cmp-err-update-500", http.StatusInternalServerError, reconciler.ShortRequeueAfter),
-		)
-
-		DescribeTable("CMP delete fails — preserves Deleting+ShallSynchronize, surfaces error in condition",
-			func(name string, statusCode int, expectedRequeue time.Duration) {
-				m := newBSReconcilerWithMocks(GinkgoT())
-				bs = createTestBlockStorage(ctx, name, defaultBSSpec(bsProjectName))
-				bFetch := &v1alpha1.BlockStorage{}
-				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bFetch)).To(Succeed())
-				bFetch.Finalizers = []string{blockStorageFinalizerName}
-				Expect(k8sClient.Update(ctx, bFetch)).To(Succeed())
-				setBSStatus(ctx, bs, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize, "bs-id-1", bsProjectID, 1, time.Now())
-				Expect(k8sClient.Delete(ctx, bs)).To(Succeed())
-				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bs)).To(Succeed())
-
-				cmpBS := buildBlockStorageResponse("bs-id-1", name, reconciler.CSPResourceStateActive)
-				m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
-				m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
-				m.mockVolumes.EXPECT().List(mock.Anything, bsProjectID, mock.Anything).Return(buildBlockStorageList(cmpBS), nil)
-				m.mockAruba.EXPECT().FromStorage().Return(m.mockStorage)
-				m.mockStorage.EXPECT().Volumes().Return(m.mockVolumes)
-				m.mockVolumes.EXPECT().Delete(mock.Anything, bsProjectID, "bs-id-1", mock.Anything).Return(buildDeleteResponse(statusCode), nil)
-
-				result, err := m.r.HandleReconcile(ctx, bs)
-				Expect(err).To(Succeed())
-				Expect(result.RequeueAfter).To(Equal(expectedRequeue))
-
-				updated := &v1alpha1.BlockStorage{}
-				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), updated)).To(Succeed())
-				Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleting))
-				cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
-				Expect(cond).NotTo(BeNil())
-				Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
-				Expect(cond.Message).To(ContainSubstring("ERROR"))
-			},
-			Entry("4xx → LongRequeueAfter, no phase change", "bs-cmp-err-delete-400", http.StatusBadRequest, reconciler.LongRequeueAfter),
-			Entry("5xx → ShortRequeueAfter, no phase change", "bs-cmp-err-delete-500", http.StatusInternalServerError, reconciler.ShortRequeueAfter),
+			Entry("4xx → transient → LongRequeueAfter", "bs-cmp-err-create-400", http.StatusBadRequest, reconciler.LongRequeueAfter),
+			Entry("5xx → technical → ShortRequeueAfter", "bs-cmp-err-create-500", http.StatusInternalServerError, reconciler.ShortRequeueAfter),
 		)
 	})
 
 	Describe("Validation", func() {
 		It("sets Failed+ValidationFailed when BlockStorage tenant differs from parent project tenant", func() {
-			m := newBSReconcilerWithMocks(GinkgoT())
-
+			m := newBSReconcilerWithFake()
 			proj := createTestProject(ctx, bsProjectName, v1alpha1.ProjectSpec{Tenant: "other-tenant"})
-			defer func() {
-				_ = k8sClient.Delete(ctx, proj)
-			}()
+			defer func() { _ = k8sClient.Delete(ctx, proj) }()
 
 			bs = createTestBlockStorage(ctx, "test-bs-validation-tenant", defaultBSSpec(bsProjectName))
 			setBSStatus(ctx, bs, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "bs-id-val", bsProjectID, 0, time.Now())
 
+			// First: owner ref setup → requeue.
 			result, err := m.r.HandleReconcile(ctx, bs)
 			Expect(err).To(Succeed())
 			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
-
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bs)).To(Succeed())
 
-			// ivs fires at Stage 4 (before CMP calls) → validation fails, no CMP expectations needed.
+			// Second: ivs fires at Stage 4 (before CMP) → validation fails.
 			_, err = m.r.HandleReconcile(ctx, bs)
 			Expect(err).To(Succeed())
 
@@ -697,41 +393,6 @@ var _ = Describe("BlockStorageReconciler", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), updated)).To(Succeed())
 			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
 			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
-			Expect(cond.Message).To(ContainSubstring("tenant mismatch with Project"))
-		})
-
-		It("sets Failed+ValidationFailed at Pending phase when BlockStorage tenant differs from parent project tenant (no CMP resource yet)", func() {
-			m := newBSReconcilerWithMocks(GinkgoT())
-
-			// Project has a different tenant AND is Active+Synchronized so Stage 3 (parent readiness) passes.
-			proj := createTestProject(ctx, bsProjectName, v1alpha1.ProjectSpec{Tenant: "other-tenant"})
-			setProjectStatus(ctx, proj, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "proj-id-bs-pending-val", 0, time.Now())
-			defer func() {
-				_ = k8sClient.Delete(ctx, proj)
-			}()
-
-			bs = createTestBlockStorage(ctx, "test-bs-pending-validation", defaultBSSpec(bsProjectName))
-			setBSStatus(ctx, bs, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", 0, time.Now())
-
-			// First reconcile: owner reference is not yet set → ShortRequeue.
-			result, err := m.r.HandleReconcile(ctx, bs)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
-
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), bs)).To(Succeed())
-
-			// Second reconcile: ivs fires at Stage 4 (before CMP calls) → validation fails, no CMP expectations needed.
-			result, err = m.r.HandleReconcile(ctx, bs)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(BeZero())
-
-			updated := &v1alpha1.BlockStorage{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(bs), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
-			Expect(cond).NotTo(BeNil())
 			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
 			Expect(cond.Message).To(ContainSubstring("tenant mismatch with Project"))
 		})

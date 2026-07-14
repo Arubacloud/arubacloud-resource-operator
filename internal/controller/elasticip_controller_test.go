@@ -16,10 +16,10 @@ import (
 
 func defaultElasticIPSpec(projectName string) v1alpha1.ElasticIPSpec {
 	return v1alpha1.ElasticIPSpec{
-		Tenant:        "test-tenant",
-		Region:        "ITBG-Bergamo",
-		Tags:          []string{"tag1"},
-		BillingPeriod: "Hour",
+		Tenant:           "test-tenant",
+		Region:           "ITBG-Bergamo",
+		Tags:             []string{"tag1"},
+		BillingPeriod:    "Hour",
 		ProjectReference: v1alpha1.ResourceReference{Name: projectName, Namespace: "default"},
 	}
 }
@@ -61,7 +61,9 @@ func newEipReconcilerWithFake() *eipFake {
 	return &eipFake{r: NewElasticIPReconciler(newTestReconciler(GinkgoT(), f)), f: f}
 }
 
-func (m *eipFake) stageProject(id, name string) { m.f.stage("projects", projectItem(id, name, nil, "", false)) }
+func (m *eipFake) stageProject(id, name string) {
+	m.f.stage("projects", projectItem(id, name, nil, "", false))
+}
 func (m *eipFake) stageEIPs(items ...map[string]any) { m.f.stage("elasticIps", items...) }
 
 var _ = Describe("ElasticIPReconciler", func() {

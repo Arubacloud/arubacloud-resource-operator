@@ -30,13 +30,13 @@ func srItem(id, name, state string) map[string]any {
 
 func defaultSecurityRuleSpec(projectName, vpcName, sgName string) v1alpha1.SecurityRuleSpec {
 	return v1alpha1.SecurityRuleSpec{
-		Tenant:    "test-tenant",
-		Tags:      []string{"tag1"},
-		Region:    "ITBG-Bergamo",
-		Protocol:  "TCP",
-		Port:      "80",
-		Direction: "Ingress",
-		Target:    v1alpha1.SecurityRuleTarget{Type: "Ip", Value: "0.0.0.0/0"},
+		Tenant:                 "test-tenant",
+		Tags:                   []string{"tag1"},
+		Region:                 "ITBG-Bergamo",
+		Protocol:               "TCP",
+		Port:                   "80",
+		Direction:              "Ingress",
+		Target:                 v1alpha1.SecurityRuleTarget{Type: "Ip", Value: "0.0.0.0/0"},
 		ProjectReference:       v1alpha1.ResourceReference{Name: projectName, Namespace: "default"},
 		VPCReference:           v1alpha1.ResourceReference{Name: vpcName, Namespace: "default"},
 		SecurityGroupReference: v1alpha1.ResourceReference{Name: sgName, Namespace: "default"},

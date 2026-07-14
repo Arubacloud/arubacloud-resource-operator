@@ -15,9 +15,9 @@ import (
 
 func defaultSecurityGroupSpec(projectName, vpcName string) v1alpha1.SecurityGroupSpec {
 	return v1alpha1.SecurityGroupSpec{
-		Tenant: "test-tenant",
-		Tags:   []string{"tag1"},
-		Region: "ITBG-Bergamo",
+		Tenant:           "test-tenant",
+		Tags:             []string{"tag1"},
+		Region:           "ITBG-Bergamo",
 		ProjectReference: v1alpha1.ResourceReference{Name: projectName, Namespace: "default"},
 		VPCReference:     v1alpha1.ResourceReference{Name: vpcName, Namespace: "default"},
 	}

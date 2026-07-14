@@ -28,10 +28,10 @@ func kpItem(id, name, publicKey string, tags []string) map[string]any {
 
 func defaultKeyPairSpec(projectName string) v1alpha1.KeyPairSpec {
 	return v1alpha1.KeyPairSpec{
-		Tenant: "test-tenant",
-		Region: "ITBG-Bergamo",
-		Tags:   []string{"tag1"},
-		Value:  "ssh-rsa AAAAB3NzaC1 test-key",
+		Tenant:           "test-tenant",
+		Region:           "ITBG-Bergamo",
+		Tags:             []string{"tag1"},
+		Value:            "ssh-rsa AAAAB3NzaC1 test-key",
 		ProjectReference: v1alpha1.ResourceReference{Name: projectName, Namespace: "default"},
 	}
 }
@@ -73,7 +73,9 @@ func newKpReconcilerWithFake() *kpFake {
 	return &kpFake{r: NewKeyPairReconciler(newTestReconciler(GinkgoT(), f)), f: f}
 }
 
-func (m *kpFake) stageProject(id, name string)     { m.f.stage("projects", projectItem(id, name, nil, "", false)) }
+func (m *kpFake) stageProject(id, name string) {
+	m.f.stage("projects", projectItem(id, name, nil, "", false))
+}
 func (m *kpFake) stageKeyPairs(items ...map[string]any) { m.f.stage("keyPairs", items...) }
 
 var _ = Describe("KeyPairReconciler", func() {

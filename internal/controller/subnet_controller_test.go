@@ -27,12 +27,12 @@ func subnetItem(id, name, state string) map[string]any {
 
 func defaultSubnetSpec(projectName, vpcName string) v1alpha1.SubnetSpec {
 	return v1alpha1.SubnetSpec{
-		Tenant: "test-tenant",
-		Tags:   []string{"tag1"},
-		Region: "ITBG-Bergamo",
-		Type:   "Advanced",
-		CIDR:   "192.168.1.0/24",
-		DHCP:   v1alpha1.SubnetDHCP{Enabled: true},
+		Tenant:           "test-tenant",
+		Tags:             []string{"tag1"},
+		Region:           "ITBG-Bergamo",
+		Type:             "Advanced",
+		CIDR:             "192.168.1.0/24",
+		DHCP:             v1alpha1.SubnetDHCP{Enabled: true},
 		ProjectReference: v1alpha1.ResourceReference{Name: projectName, Namespace: "default"},
 		VPCReference:     v1alpha1.ResourceReference{Name: vpcName, Namespace: "default"},
 	}

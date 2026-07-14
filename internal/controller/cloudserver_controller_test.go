@@ -99,17 +99,17 @@ func (m *csFake) stageDeps(prjID, prjName, vpcID, vpcName, bootVolID, bootVolNam
 
 var _ = Describe("CloudServerReconciler", func() {
 	const (
-		csPrjName   = "test-cs-project-ref"
-		csPrjID     = "cs-proj-id-1"
-		csVpcName   = "test-cs-vpc-ref"
-		csVpcID     = "cs-vpc-id-1"
-		csVolName   = "test-cs-bootvol"
-		csVolID     = "cs-vol-id-1"
-		csSubName   = "test-cs-subnet"
-		csSubID     = "cs-sub-id-1"
-		csSGName    = "test-cs-sg"
-		csSGID      = "cs-sg-id-1"
-		csKPID      = "cs-kp-id-1"
+		csPrjName = "test-cs-project-ref"
+		csPrjID   = "cs-proj-id-1"
+		csVpcName = "test-cs-vpc-ref"
+		csVpcID   = "cs-vpc-id-1"
+		csVolName = "test-cs-bootvol"
+		csVolID   = "cs-vol-id-1"
+		csSubName = "test-cs-subnet"
+		csSubID   = "cs-sub-id-1"
+		csSGName  = "test-cs-sg"
+		csSGID    = "cs-sg-id-1"
+		csKPID    = "cs-kp-id-1"
 	)
 
 	var (

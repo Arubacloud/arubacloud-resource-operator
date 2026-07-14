@@ -37,7 +37,7 @@ type fakeCMP struct {
 
 	mu           sync.Mutex
 	collections  map[string][]map[string]any
-	getStatus    int    // 0/200 = success; >=400 makes every list call fail
+	getStatus    int // 0/200 = success; >=400 makes every list call fail
 	postStatus   int
 	putStatus    int
 	deleteStatus int

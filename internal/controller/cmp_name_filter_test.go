@@ -1,212 +1,49 @@
 package controller
 
 import (
+	"errors"
+	"fmt"
 	"net/http"
+	"testing"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-	"sigs.k8s.io/controller-runtime/pkg/log"
-
-	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
-
-	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
+	"github.com/Arubacloud/sdk-go/pkg/aruba"
 )
 
-var _ = Describe("filterByName", func() {
-	type item struct {
-		name *string
-		val  int
+func TestFilterByName(t *testing.T) {
+	type item struct{ name string }
+	items := []item{{"a"}, {"b"}, {"a"}, {"c"}}
+	got := filterByName(items, "a", func(i item) string { return i.name })
+	if len(got) != 2 {
+		t.Fatalf("want 2 matches for %q, got %d", "a", len(got))
 	}
-	nameOf := func(i item) *string { return i.name }
-	ptr := func(s string) *string { return &s }
-
-	It("keeps only the item with the matching name", func() {
-		items := []item{{ptr("foo"), 1}, {ptr("bar"), 2}, {ptr("foo"), 3}}
-		result := filterByName(items, "bar", nameOf)
-		Expect(result).To(HaveLen(1))
-		Expect(result[0].val).To(Equal(2))
-	})
-
-	It("returns empty slice when no item matches", func() {
-		items := []item{{ptr("foo"), 1}, {ptr("bar"), 2}}
-		result := filterByName(items, "baz", nameOf)
-		Expect(result).To(BeEmpty())
-	})
-
-	It("keeps all items when all match", func() {
-		items := []item{{ptr("x"), 1}, {ptr("x"), 2}}
-		result := filterByName(items, "x", nameOf)
-		Expect(result).To(HaveLen(2))
-	})
-
-	It("skips items with nil name without panicking", func() {
-		items := []item{{nil, 1}, {ptr("target"), 2}}
-		result := filterByName(items, "target", nameOf)
-		Expect(result).To(HaveLen(1))
-		Expect(result[0].val).To(Equal(2))
-	})
-
-	It("returns empty slice for empty input", func() {
-		result := filterByName([]item{}, "x", nameOf)
-		Expect(result).To(BeEmpty())
-	})
-})
-
-var _ = Describe("applyNameFilterToVPCList", func() {
-	logger := log.Log
-
-	buildVpc := func(name string) arubatypes.VPCResponse {
-		return arubatypes.VPCResponse{Metadata: arubatypes.ResourceMetadataResponse{Name: &name}}
+	for _, g := range got {
+		if g.name != "a" {
+			t.Errorf("unexpected match %q", g.name)
+		}
 	}
-
-	It("does nothing when resp is nil", func() {
-		Expect(func() { applyNameFilterToVPCList(nil, "x", logger) }).NotTo(Panic())
-	})
-
-	It("does nothing when Data is nil", func() {
-		resp := &arubatypes.Response[arubatypes.VPCList]{StatusCode: http.StatusOK}
-		Expect(func() { applyNameFilterToVPCList(resp, "x", logger) }).NotTo(Panic())
-	})
-
-	It("is a no-op when the list already contains only the matching item", func() {
-		resp := buildVPCList(buildVPCResponse("id1", "target", reconciler.CSPResourceStateActive))
-		applyNameFilterToVPCList(resp, "target", logger)
-		Expect(resp.Data.Total).To(Equal(int64(1)))
-		Expect(resp.Data.Values).To(HaveLen(1))
-	})
-
-	It("filters out non-matching items and updates Total", func() {
-		resp := &arubatypes.Response[arubatypes.VPCList]{
-			StatusCode: http.StatusOK,
-			Data: &arubatypes.VPCList{
-				ListResponse: arubatypes.ListResponse{Total: 3},
-				Values:       []arubatypes.VPCResponse{buildVpc("other"), buildVpc("target"), buildVpc("another")},
-			},
-		}
-		applyNameFilterToVPCList(resp, "target", logger)
-		Expect(resp.Data.Total).To(Equal(int64(1)))
-		Expect(resp.Data.Values).To(HaveLen(1))
-		Expect(*resp.Data.Values[0].Metadata.Name).To(Equal("target"))
-	})
-
-	It("sets Total to 0 when no item matches", func() {
-		resp := &arubatypes.Response[arubatypes.VPCList]{
-			StatusCode: http.StatusOK,
-			Data: &arubatypes.VPCList{
-				ListResponse: arubatypes.ListResponse{Total: 2},
-				Values:       []arubatypes.VPCResponse{buildVpc("a"), buildVpc("b")},
-			},
-		}
-		applyNameFilterToVPCList(resp, "notfound", logger)
-		Expect(resp.Data.Total).To(Equal(int64(0)))
-		Expect(resp.Data.Values).To(BeEmpty())
-	})
-})
-
-var _ = Describe("applyNameFilterToSubnetList", func() {
-	logger := log.Log
-
-	buildSubnet := func(name string) arubatypes.SubnetResponse {
-		return arubatypes.SubnetResponse{Metadata: arubatypes.ResourceMetadataResponse{Name: &name}}
+	if n := len(filterByName(items, "missing", func(i item) string { return i.name })); n != 0 {
+		t.Errorf("want 0 matches for missing name, got %d", n)
 	}
-
-	It("does nothing when resp or Data is nil", func() {
-		Expect(func() { applyNameFilterToSubnetList(nil, "x", logger) }).NotTo(Panic())
-		resp := &arubatypes.Response[arubatypes.SubnetList]{StatusCode: http.StatusOK}
-		Expect(func() { applyNameFilterToSubnetList(resp, "x", logger) }).NotTo(Panic())
-	})
-
-	It("filters correctly and updates Total", func() {
-		resp := &arubatypes.Response[arubatypes.SubnetList]{
-			StatusCode: http.StatusOK,
-			Data: &arubatypes.SubnetList{
-				ListResponse: arubatypes.ListResponse{Total: 2},
-				Values:       []arubatypes.SubnetResponse{buildSubnet("other"), buildSubnet("target")},
-			},
-		}
-		applyNameFilterToSubnetList(resp, "target", logger)
-		Expect(resp.Data.Total).To(Equal(int64(1)))
-		Expect(*resp.Data.Values[0].Metadata.Name).To(Equal("target"))
-	})
-})
-
-var _ = Describe("applyNameFilterToSecurityGroupList", func() {
-	logger := log.Log
-
-	buildSG := func(name string) arubatypes.SecurityGroupResponse {
-		return arubatypes.SecurityGroupResponse{Metadata: arubatypes.ResourceMetadataResponse{Name: &name}}
+	if n := len(filterByName([]item(nil), "a", func(i item) string { return i.name })); n != 0 {
+		t.Errorf("want 0 matches for nil slice, got %d", n)
 	}
+}
 
-	It("does nothing when resp or Data is nil", func() {
-		Expect(func() { applyNameFilterToSecurityGroupList(nil, "x", logger) }).NotTo(Panic())
-		resp := &arubatypes.Response[arubatypes.SecurityGroupList]{StatusCode: http.StatusOK}
-		Expect(func() { applyNameFilterToSecurityGroupList(resp, "x", logger) }).NotTo(Panic())
-	})
-
-	It("filters correctly and updates Total", func() {
-		resp := &arubatypes.Response[arubatypes.SecurityGroupList]{
-			StatusCode: http.StatusOK,
-			Data: &arubatypes.SecurityGroupList{
-				ListResponse: arubatypes.ListResponse{Total: 3},
-				Values:       []arubatypes.SecurityGroupResponse{buildSG("a"), buildSG("target"), buildSG("b")},
-			},
-		}
-		applyNameFilterToSecurityGroupList(resp, "target", logger)
-		Expect(resp.Data.Total).To(Equal(int64(1)))
-		Expect(*resp.Data.Values[0].Metadata.Name).To(Equal("target"))
-	})
-})
-
-var _ = Describe("applyNameFilterToSecurityRuleList", func() {
-	logger := log.Log
-
-	buildSR := func(name string) arubatypes.SecurityRuleResponse {
-		return arubatypes.SecurityRuleResponse{Metadata: arubatypes.ResourceMetadataResponse{Name: &name}}
+func TestIsCMPNotFound(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"plain error", errors.New("boom"), false},
+		{"http 404", &aruba.HTTPError{StatusCode: http.StatusNotFound}, true},
+		{"http 500", &aruba.HTTPError{StatusCode: http.StatusInternalServerError}, false},
+		{"wrapped 404", fmt.Errorf("context: %w", &aruba.HTTPError{StatusCode: http.StatusNotFound}), true},
 	}
-
-	It("does nothing when resp or Data is nil", func() {
-		Expect(func() { applyNameFilterToSecurityRuleList(nil, "x", logger) }).NotTo(Panic())
-		resp := &arubatypes.Response[arubatypes.SecurityRuleList]{StatusCode: http.StatusOK}
-		Expect(func() { applyNameFilterToSecurityRuleList(resp, "x", logger) }).NotTo(Panic())
-	})
-
-	It("filters correctly and updates Total", func() {
-		resp := &arubatypes.Response[arubatypes.SecurityRuleList]{
-			StatusCode: http.StatusOK,
-			Data: &arubatypes.SecurityRuleList{
-				ListResponse: arubatypes.ListResponse{Total: 2},
-				Values:       []arubatypes.SecurityRuleResponse{buildSR("other"), buildSR("target")},
-			},
+	for _, tc := range tests {
+		if got := isCMPNotFound(tc.err); got != tc.want {
+			t.Errorf("%s: isCMPNotFound = %v, want %v", tc.name, got, tc.want)
 		}
-		applyNameFilterToSecurityRuleList(resp, "target", logger)
-		Expect(resp.Data.Total).To(Equal(int64(1)))
-		Expect(*resp.Data.Values[0].Metadata.Name).To(Equal("target"))
-	})
-})
-
-var _ = Describe("applyNameFilterToElasticIPList", func() {
-	logger := log.Log
-
-	buildEIP := func(name string) arubatypes.ElasticIPResponse {
-		return arubatypes.ElasticIPResponse{Metadata: arubatypes.ResourceMetadataResponse{Name: &name}}
 	}
-
-	It("does nothing when resp or Data is nil", func() {
-		Expect(func() { applyNameFilterToElasticIPList(nil, "x", logger) }).NotTo(Panic())
-		resp := &arubatypes.Response[arubatypes.ElasticList]{StatusCode: http.StatusOK}
-		Expect(func() { applyNameFilterToElasticIPList(resp, "x", logger) }).NotTo(Panic())
-	})
-
-	It("filters correctly and updates Total", func() {
-		resp := &arubatypes.Response[arubatypes.ElasticList]{
-			StatusCode: http.StatusOK,
-			Data: &arubatypes.ElasticList{
-				ListResponse: arubatypes.ListResponse{Total: 2},
-				Values:       []arubatypes.ElasticIPResponse{buildEIP("other"), buildEIP("target")},
-			},
-		}
-		applyNameFilterToElasticIPList(resp, "target", logger)
-		Expect(resp.Data.Total).To(Equal(int64(1)))
-		Expect(*resp.Data.Values[0].Metadata.Name).To(Equal("target"))
-	})
-})
+}

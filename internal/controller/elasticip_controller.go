@@ -660,8 +660,9 @@ func cmpElasticIpIsActive(_ *v1alpha1.ElasticIP, cmpEip *aruba.ElasticIP) bool {
 	switch cmpEip.State() {
 	case aruba.StateActive, aruba.StateNotUsed, aruba.StateInUse, aruba.StateUsed:
 		return true
+	default:
+		return false
 	}
-	return false
 }
 
 func cmpElasticIpIsFailed(_ *v1alpha1.ElasticIP, cmpEip *aruba.ElasticIP) bool {

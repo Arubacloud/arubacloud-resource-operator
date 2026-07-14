@@ -72,8 +72,7 @@ func (f *fakeCMP) handle(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		if f.getStatus >= 400 {
-			w.WriteHeader(f.getStatus)
-			_ = json.NewEncoder(w).Encode(map[string]any{"title": "list failed", "status": f.getStatus})
+			writeJSON(w, f.getStatus, map[string]any{"title": "list failed", "status": f.getStatus})
 			return
 		}
 		seg := lastPathSegment(r.URL.Path)
@@ -81,7 +80,7 @@ func (f *fakeCMP) handle(w http.ResponseWriter, r *http.Request) {
 		if items == nil {
 			items = []map[string]any{}
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"values": items, "total": len(items)})
+		writeJSON(w, http.StatusOK, map[string]any{"values": items, "total": len(items)})
 	case http.MethodPost:
 		f.writeCUD(w, f.postStatus)
 	case http.MethodPut:
@@ -101,14 +100,18 @@ func (f *fakeCMP) writeCUD(w http.ResponseWriter, status int) {
 		if f.errKind == "validation" {
 			body["errors"] = []map[string]any{{"field": "spec", "message": "invalid"}}
 		}
-		w.WriteHeader(status)
-		_ = json.NewEncoder(w).Encode(body)
+		writeJSON(w, status, body)
 		return
 	}
-	w.WriteHeader(status)
 	// Success bodies are ignored by the operator's CMP actions, but the SDK
 	// still parses 2xx bodies — emit a minimal valid resource envelope.
-	_ = json.NewEncoder(w).Encode(map[string]any{"metadata": map[string]any{"id": "cmp-generated", "name": "cmp"}})
+	writeJSON(w, status, map[string]any{"metadata": map[string]any{"id": "cmp-generated", "name": "cmp"}})
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.WriteHeader(status)
+	//nolint:errchkjson // test server: response bodies are fixed test fixtures
+	_ = json.NewEncoder(w).Encode(v)
 }
 
 func lastPathSegment(p string) string {

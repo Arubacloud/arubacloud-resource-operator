@@ -1422,8 +1422,9 @@ func cmpCloudServerIsActive(_ *v1alpha1.CloudServer, cmpCS *aruba.CloudServer) b
 	switch cmpCS.State() {
 	case aruba.StateActive, aruba.StateRunning, aruba.StateStopped:
 		return true
+	default:
+		return false
 	}
-	return false
 }
 
 func cmpCloudServerIsFailed(_ *v1alpha1.CloudServer, cmpCS *aruba.CloudServer) bool {

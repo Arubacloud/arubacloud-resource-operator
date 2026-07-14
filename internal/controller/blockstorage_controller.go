@@ -661,8 +661,9 @@ func cmpBlockStorageIsActive(_ *v1alpha1.BlockStorage, cmpBS *aruba.BlockStorage
 	switch cmpBS.State() {
 	case aruba.StateActive, aruba.StateNotUsed, aruba.StateInUse, aruba.StateUsed:
 		return true
+	default:
+		return false
 	}
-	return false
 }
 
 func cmpBlockStorageIsFailed(_ *v1alpha1.BlockStorage, cmpBS *aruba.BlockStorage) bool {

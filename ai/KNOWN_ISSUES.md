@@ -68,11 +68,11 @@ Cross-namespace children participate fully in cascade deletion. No special cases
 
 ## 5. CMP API Does Not Distinguish Dependency Errors from Permanent Errors
 
-**Status**: **Partially resolved** (SDK v0.1.24).
+**Status**: **Partially resolved** (SDK v1.0.4).
 
 **Context**: When the CMP API rejects a deletion because dependent resources still exist (e.g., deleting a Project with active VPCs), it returns a generic HTTP 4xx error. The error response does not use a distinct status code or error code to differentiate "has dependencies" from other semantic errors (invalid request, permission denied, etc.).
 
-**Current state**: The SDK v0.1.24 `ErrorResponse` now includes an `Errors []ValidationError` array for field-level validation failures. The operator uses this to split the former single `CMPErrorCategorySemantic` into two categories:
+**Current state**: The SDK `ErrorResponse` (surfaced through `aruba.HTTPError.ErrResp`) includes an `Errors []ValidationError` array for field-level validation failures. `CMPErrorFromResult` uses this to split the former single `CMPErrorCategorySemantic` into two categories:
 - `CMPErrorCategorySemantic` — 4xx with non-empty `Errors` (true validation failure; moves resource to `Failed+ValidationFailed` during Creating/Updating).
 - `CMPErrorCategoryTransient` — 4xx with empty `Errors` (temporary condition, e.g. dependency in wrong state; surfaces error in condition, long-requeue without phase change).
 

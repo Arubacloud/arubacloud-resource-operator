@@ -14,12 +14,18 @@ import (
     "fmt"
 
     ctrl "sigs.k8s.io/controller-runtime"
-    arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
+    "github.com/Arubacloud/sdk-go/pkg/aruba"
 
     "github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
     "github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
 )
 ```
+
+**Never import `github.com/Arubacloud/sdk-go/pkg/types`.** Use only the high-level
+`pkg/aruba` package: the fluent wrapper types (`*aruba.VPC`, `*aruba.Project`, …),
+their getters (`.ID()`, `.State()`, `.Region()`, `.Tags()`, …), the `Ref`
+constructors (`aruba.VPCRef`, `aruba.URI`, …), `aruba.State*` constants, and
+`aruba.WithFilter`/`WithLimit` call options.
 
 ## Error handling
 
@@ -32,28 +38,21 @@ All errors from CMP interactions use the `CMPError` struct (`internal/reconciler
 - `CMPErrorCategoryTransient` — HTTP 4xx responses with an empty `Errors` array (no field-level validation details). These represent temporary conditions (e.g. a dependency resource in a wrong state). The error message is surfaced in the condition but the phase/reason is not changed; the resource retries with `LongRequeueAfter`.
 - `CMPErrorCategoryTechnical` — HTTP 5xx responses and network/transport errors; transient infrastructure failures that warrant a `ShortRequeueAfter` retry.
 
-**Constructors:**
+**Single categorization entry point** — `CMPErrorFromResult(operation, resource, err, okStatusCodes...)`. The high-level SDK CRUD calls return a plain `error` (an `*aruba.HTTPError` on a non-2xx reply, or a transport/builder error otherwise) instead of a typed `*Response`. `CMPErrorFromResult` turns that into a `*CMPError`:
 ```go
-// For Go-level transport failures (network, timeout, context cancel)
-cmpTransportError("create", resourceName, err) // always Technical
-
-// For non-success HTTP responses:
-//   4xx + non-empty Errors → Semantic
-//   4xx + empty Errors     → Transient
-//   5xx / other            → Technical
-cmpResponseError("delete", resourceName, statusCode, resp.Error)
-```
-
-**Generic response checker** — canonical replacement for the status-code switch in CMP action methods:
-```go
-func (r *XxxReconciler) cmpCreate(ctx context.Context, kubeXxx *v1alpha1.Xxx, _ *arubatypes.XxxResponse) error {
-    resp, err := arubaClient.FromXxx().Create(ctx, ...)
-    if err != nil {
-        return cmpTransportError("create", kubeXxx.Name, err)
-    }
-    return cmpCheckResponse("create", kubeXxx.Name, resp, http.StatusOK, http.StatusCreated)
+func (r *XxxReconciler) cmpCreate(ctx context.Context, kubeXxx *v1alpha1.Xxx, _ *aruba.Xxx) error {
+    arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
+    x := aruba.NewXxx().InProject(aruba.URI("/projects/"+prjID)).Named(kubeXxx.Name).Tagged(kubeXxx.Spec.Tags...)
+    _, err := arubaClient.FromXxx().Xxx().Create(ctx, x)
+    return reconciler.CMPErrorFromResult("create", kubeXxx.Name, err)
 }
 ```
+- `err == nil` → `nil` (success).
+- `*aruba.HTTPError` → categorized by status code (4xx with field errors → Semantic, 4xx without → Transient, else Technical).
+- any other error → Technical (transport/builder).
+- `okStatusCodes` are treated as success — `cmpDelete` passes `http.StatusNotFound` so a 404 (already gone) is not an error.
+
+`cmpUpdate` mutates the fetched wrapper in place (it already carries its ID and immutable fields) and calls `Update(ctx, cmpXxx)`; `cmpDelete` passes the fetched wrapper directly as the `Ref`.
 
 **Inspecting errors** — use `errors.As` or the convenience helpers:
 ```go
@@ -67,8 +66,8 @@ CMPErrorIsTechnical(err) // true for 5xx/transport CMPErrors
 
 **Standard transition wiring** for CMP-facing transitions (`ShouldBeCreatedInCMP`, `ShouldBeUpdatedOnCMP`, `ShouldBeDeletedOnCMP`):
 ```go
-kActionOnAError: kubeSetErrorMessageOnCMPError[*v1alpha1.Xxx, *arubatypes.XxxResponse](r.Client),
-requeueOnError:  SmartRequeueOnError[*v1alpha1.Xxx, *arubatypes.XxxResponse],
+kActionOnAError: kubeSetErrorMessageOnCMPError[*v1alpha1.Xxx, *aruba.Xxx](r.Client),
+requeueOnError:  SmartRequeueOnError[*v1alpha1.Xxx, *aruba.Xxx],
 ```
 
 `SmartRequeueOnError[K, A]` — uses `ShortRequeueAfter` for technical errors, `LongRequeueAfter` for transient errors, and `ctrl.Result{}` (no requeue) for semantic errors — the resource waits for a spec change to trigger recovery. Exception: during the `Deleting` phase, semantic errors always get `LongRequeueAfter` (there is no "wait for spec change" recovery during deletion).
@@ -101,8 +100,7 @@ requeueOnError:  SmartRequeueOnError[*v1alpha1.Xxx, *arubatypes.XxxResponse],
 |---------|-------|---------|
 | `New<Type>Reconciler` | Constructor for a controller | `NewProjectReconciler` |
 | `<resource>FinalizerName` | Finalizer constant | `projectFinalizerName` |
-| `build<Type>Response(...)` | Test helper: build a CMP response | `buildProjectResponse` |
-| `build<Type>List(...)` | Test helper: wrap responses in a list | `buildBlockStorageList` |
+| `<type>Item(id, name, state)` | Test helper: build a CMP wire item (JSON map) for staging on the fake CMP server | `bsItem`, `subnetItem` |
 | `default<Type>Spec(...)` | Test helper: sensible default K8s spec | `defaultBSSpec` |
 | `createTest<Type>(...)` | Test helper: create and persist a K8s resource | `createTestProject` |
 | `set<Type>Status(...)` | Test helper: put resource in a specific phase/reason | `setBSStatus` |
@@ -153,7 +151,7 @@ Always use `retry.RetryOnConflict(retry.DefaultRetry, ...)` with `.Status().Patc
 Every `kubeMarkToCreate` method marks the resource `Creating+ShallSynchronize`. The `Pending` condition is already `Reason=Synchronized, Status=True` from the base reconciler, so `SetPhaseAndCondition` will automatically flip it to `Status=False` when it sets all existing conditions to False before writing the new Creating condition.
 
 ```go
-func (r *XxxReconciler) kubeMarkToCreate(ctx context.Context, kubeXxx *v1alpha1.Xxx, _ *arubatypes.XxxResponse) error {
+func (r *XxxReconciler) kubeMarkToCreate(ctx context.Context, kubeXxx *v1alpha1.Xxx, _ *aruba.Xxx) error {
     return reconciler.SetPhaseAndCondition(r.Client, ctx, kubeXxx,
         v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, nil,
         // resource-specific prePatch (ProjectID, VPCID, etc.) if any
@@ -246,7 +244,7 @@ func init() {
 ### Framework
 
 - **Ginkgo v2 + Gomega** for all tests (BDD style: `Describe` / `It` / `BeforeEach` / `AfterEach`).
-- **Testify mocks** (generated by Mockery) for CMP API client interfaces.
+- **`fakeCMP`** — a real `aruba.Client` bound to an `httptest.Server` — stands in for the CMP API. The SDK client cannot be mocked to return populated wrappers (their ID/State are set only by `fromResponse`, which is unexported), so the fake serves canned JSON and lets the genuine SDK hydrate the wrappers.
 - **`controller-runtime/envtest`** for integration tests with a fake K8s API server.
 
 ### Test file organisation
@@ -254,49 +252,42 @@ func init() {
 | File | Content |
 |------|---------|
 | `suite_test.go` | Global `envtest` setup (`BeforeSuite` / `AfterSuite`), shared `k8sClient` and `testEnv` |
-| `common_test.go` | Tests for shared utilities (`AssessCSPResourceStateNature`) |
+| `common_test.go` | `fakeCMP` server + item builders + `newTestReconciler`, `strPtr`, `findCondition` |
 | `transition_test.go` | Unit tests for the `TransitionSet` state machine |
 | `transition_conditions_test.go` | Unit tests for reusable condition functions |
 | `transition_actions_test.go` | Unit tests for reusable action helpers + `findCondition` utility |
 | `<resource>_controller_test.go` | Integration tests for each controller's full lifecycle |
 
-### Mock setup pattern
+### Fake CMP setup pattern
 
-Group mocks in a struct with an `expect*` method per API call scenario.
-
-The reconciler is constructed using `newTestReconciler` (defined in `common_test.go`), which creates a real `arubamt.Multitenant` cache pre-seeded with the mock client for `"test-tenant"`:
+`newTestReconciler` (defined in `common_test.go`) builds a **real** `aruba.Client` pointed at the fake server (via `WithBaseURL(f.server.URL).WithToken(...)` — a static token means no IDP round-trip) and seeds the multitenant cache for `"test-tenant"`:
 
 ```go
-// common_test.go
-func newTestReconciler(t GinkgoTInterface, mockArubaClient aruba.Client) *reconciler.Reconciler {
+func newTestReconciler(_ GinkgoTInterface, f *fakeCMP) *reconciler.Reconciler {
+    client, _ := aruba.NewClient(aruba.NewOptions().WithBaseURL(f.server.URL).WithToken("test-token"))
     mt := arubamt.New()
-    mt.Add("test-tenant", mockArubaClient)
+    mt.Add("test-tenant", client)
     return reconciler.NewReconcilerForTest(k8sClient, k8sClient.Scheme(), mt)
 }
 ```
 
+Each controller wraps this in `new<Xxx>ReconcilerWithFake()` and stages CMP items per resource collection (keyed by the last URL path segment). The operator only ever LISTs, so every `GET` is a collection listing:
+
 ```go
-type bsMocks struct {
-    r           *BlockStorageReconciler
-    mockAruba   *arubamocks.MockClient
-    mockProject *arubamocks.MockProjectClient
-    // ...
+func newBSReconcilerWithFake() *bsFake {
+    f := newFakeCMP()
+    DeferCleanup(f.close)
+    return &bsFake{r: NewBlockStorageReconciler(newTestReconciler(GinkgoT(), f)), f: f}
 }
 
-func newBSReconcilerWithMocks(t GinkgoTInterface) *bsMocks {
-    mockAruba := arubamocks.NewMockClient(t)
-    // ...
-    r := NewBlockStorageReconciler(newTestReconciler(t, mockAruba))
-    return &bsMocks{r: r, mockAruba: mockAruba, ...}
-}
-
-func (m *bsMocks) expectProjectList(projectID, projectName string) {
-    m.mockAruba.EXPECT().FromProject().Return(m.mockProject)
-    m.mockProject.EXPECT().List(mock.Anything, mock.Anything).Return(...)
-}
+// stage the parent project + the volume the operator should find:
+m.f.stage("projects", projectItem(bsProjectID, bsProjectName, nil, "", false))
+m.f.stage("blockStorages", bsItem("bs-id-1", "test-bs", "Active"))
 ```
 
-All test specs must use `Tenant: "test-tenant"` so that `r.ArubaClient("test-tenant")` hits the pre-seeded cache entry.
+Create/Update/Delete responses are driven by `f.postStatus` / `f.putStatus` / `f.deleteStatus` (and `f.errKind = "validation"` to make a 4xx carry a field-level error → Semantic). All test specs must use `Tenant: "test-tenant"` so `r.ArubaClient("test-tenant")` hits the seeded cache entry.
+
+Multi-reconcile tests must re-fetch the K8s object before each `HandleReconcile` (the production loop does), because the transition engine reads the in-memory object's status.
 
 ### Assertion style
 
@@ -331,9 +322,9 @@ Every controller that references other resources declares two `ValidationSet` fi
 ```go
 type XxxReconciler struct {
     *reconciler.Reconciler
-    ivs *reconciler.ValidationSet[*v1alpha1.Xxx, *arubatypes.XxxResponse, *kubeXxxBundle]
-    vs  *reconciler.ValidationSet[*v1alpha1.Xxx, *arubatypes.XxxResponse, *xxxBundle]
-    ts  *reconciler.TransitionSet[*v1alpha1.Xxx, *arubatypes.XxxResponse]
+    ivs *reconciler.ValidationSet[*v1alpha1.Xxx, *aruba.Xxx, *kubeXxxBundle]
+    vs  *reconciler.ValidationSet[*v1alpha1.Xxx, *aruba.Xxx, *xxxBundle]
+    ts  *reconciler.TransitionSet[*v1alpha1.Xxx, *aruba.Xxx]
 }
 
 type kubeXxxBundle struct {
@@ -341,7 +332,7 @@ type kubeXxxBundle struct {
 }
 
 type cmpXxxBundle struct {
-    CMPParent *arubatypes.ParentResponse // from fetchCMPDependencies
+    CMPParent *aruba.Parent // from fetchCMPDependencies
 }
 
 type xxxBundle struct {
@@ -369,7 +360,7 @@ func NewXxxReconciler(...) *XxxReconciler {
 **1. `FieldMustMatch` — simple pair comparison (vs only, dependency guaranteed non-nil):**
 ```go
 // vs (xxxBundle, dependency guaranteed present at Stage 7):
-vs.Add("TenantMustMatchVPC", reconciler.FieldMustMatch[*v1alpha1.Subnet, *arubatypes.SubnetResponse, *subnetBundle](
+vs.Add("TenantMustMatchVPC", reconciler.FieldMustMatch[*v1alpha1.Subnet, *aruba.Subnet, *subnetBundle](
     "tenant",
     func(k *v1alpha1.Subnet) string { return k.Spec.Tenant },
     func(b *subnetBundle) string { return b.KubeVpc.Spec.Tenant },
@@ -380,7 +371,7 @@ vs.Add("TenantMustMatchVPC", reconciler.FieldMustMatch[*v1alpha1.Subnet, *arubat
 **2. Inline lambda with nil-guard — all ivs rules that access bundle fields; vs rules where dependency may be nil:**
 ```go
 // ivs: nil-guard because KubeProject may be absent when empty-bundle fallback is used
-ivs.Add("TenantMustMatchProject", func(k *v1alpha1.Subnet, _ *arubatypes.SubnetResponse, b *kubeSubnetBundle) error {
+ivs.Add("TenantMustMatchProject", func(k *v1alpha1.Subnet, _ *aruba.Subnet, b *kubeSubnetBundle) error {
     if b.KubeProject == nil {
         return nil
     }
@@ -394,7 +385,7 @@ All reference-presence rules (`ProjectReferenceRequired`, etc.) access only `k`,
 
 **3. Inline lambda with slice iteration — collection dependencies (both ivs and vs):**
 ```go
-ivs.Add("ProjectMustMatchAllSubnets", func(k *v1alpha1.CloudServer, _ *arubatypes.CloudServerResponse, b *kubeCloudServerBundle) error {
+ivs.Add("ProjectMustMatchAllSubnets", func(k *v1alpha1.CloudServer, _ *aruba.CloudServer, b *kubeCloudServerBundle) error {
     var msgs []string
     for _, s := range b.KubeSubnets {
         if k.Spec.ProjectReference.Name != s.Spec.ProjectReference.Name {
@@ -526,15 +517,15 @@ func (r *XxxReconciler) fetchKubeDependencies(
 ### Validation test pattern
 
 **ivs tests** (Stage 4 — fires before CMP calls) follow the **two-reconcile pattern**:
-1. **First reconcile** — `ensureOwnerReference` returns `(requeue=true, nil)` before any CMP calls → returns `ShortRequeueAfter`. No mock expectations needed.
-2. **Second reconcile** — owner reference is already set; ivs fires at Stage 4, before CMP. **No CMP mock expectations needed** — the reconcile returns before reaching Stage 6.
+1. **First reconcile** — `ensureOwnerReference` returns `(requeue=true, nil)` before any CMP calls → returns `ShortRequeueAfter`. No CMP items need staging.
+2. **Second reconcile** — owner reference is already set; ivs fires at Stage 4, before CMP. **No CMP items need staging** — the reconcile returns before reaching Stage 6.
 
 ```go
 It("sets Failed+ValidationFailed when tenant does not match", func() {
     kubeParent := createTestParent(ctx, parentName, v1alpha1.ParentSpec{Tenant: "other-tenant", ...})
     defer func() { _ = k8sClient.Delete(ctx, kubeParent) }()
 
-    m := newXxxReconcilerWithMocks(GinkgoT())
+    m := newXxxReconcilerWithFake()
     xxx = createTestXxx(ctx, "test-validation", defaultXxxSpec(parentName, ...))
 
     // First: owner ref setup → requeue
@@ -543,7 +534,7 @@ It("sets Failed+ValidationFailed when tenant does not match", func() {
     Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
     Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(xxx), xxx)).To(Succeed())
 
-    // Second: ivs fires at Stage 4 — no CMP mocks needed
+    // Second: ivs fires at Stage 4 — nothing to stage on the fake CMP
     _, err = m.r.HandleReconcile(ctx, xxx)
     Expect(err).To(Succeed())
 
@@ -556,7 +547,7 @@ It("sets Failed+ValidationFailed when tenant does not match", func() {
 })
 ```
 
-**vs tests** (Stage 7 — fires after CMP calls) still require CMP mock expectations on the second reconcile, since Stage 6 (`fetchCMPDependencies`) runs before Stage 7.
+**vs tests** (Stage 7 — fires after CMP calls) still require the CMP parent + resource to be staged on the fake, since Stage 6 (`fetchCMPDependencies`) runs before Stage 7.
 
 ### Error message format
 
@@ -621,7 +612,7 @@ type kubeXxxBundle struct {
 
 // CMP-only fields — used by vs (drift validation, runs after CMP resource exists)
 type cmpXxxBundle struct {
-    CMPParent *arubatypes.ParentResponse
+    CMPParent *aruba.Parent
     // ... other CMP dependency responses
 }
 

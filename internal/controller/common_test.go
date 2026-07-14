@@ -72,7 +72,12 @@ func (f *fakeCMP) handle(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		if f.getStatus >= 400 {
+<<<<<<< HEAD
 			writeJSON(w, f.getStatus, map[string]any{"title": "list failed", "status": f.getStatus})
+=======
+			w.WriteHeader(f.getStatus)
+			_ = json.NewEncoder(w).Encode(map[string]any{"title": "list failed", "status": f.getStatus})
+>>>>>>> e3aaeb4 (test: httptest-backed real-client harness + project controller tests)
 			return
 		}
 		seg := lastPathSegment(r.URL.Path)
@@ -80,7 +85,11 @@ func (f *fakeCMP) handle(w http.ResponseWriter, r *http.Request) {
 		if items == nil {
 			items = []map[string]any{}
 		}
+<<<<<<< HEAD
 		writeJSON(w, http.StatusOK, map[string]any{"values": items, "total": len(items)})
+=======
+		_ = json.NewEncoder(w).Encode(map[string]any{"values": items, "total": len(items)})
+>>>>>>> e3aaeb4 (test: httptest-backed real-client harness + project controller tests)
 	case http.MethodPost:
 		f.writeCUD(w, f.postStatus)
 	case http.MethodPut:
@@ -100,6 +109,7 @@ func (f *fakeCMP) writeCUD(w http.ResponseWriter, status int) {
 		if f.errKind == "validation" {
 			body["errors"] = []map[string]any{{"field": "spec", "message": "invalid"}}
 		}
+<<<<<<< HEAD
 		writeJSON(w, status, body)
 		return
 	}
@@ -112,6 +122,16 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.WriteHeader(status)
 	//nolint:errchkjson // test server: response bodies are fixed test fixtures
 	_ = json.NewEncoder(w).Encode(v)
+=======
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(body)
+		return
+	}
+	w.WriteHeader(status)
+	// Success bodies are ignored by the operator's CMP actions, but the SDK
+	// still parses 2xx bodies — emit a minimal valid resource envelope.
+	_ = json.NewEncoder(w).Encode(map[string]any{"metadata": map[string]any{"id": "cmp-generated", "name": "cmp"}})
+>>>>>>> e3aaeb4 (test: httptest-backed real-client harness + project controller tests)
 }
 
 func lastPathSegment(p string) string {

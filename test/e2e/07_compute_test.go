@@ -191,8 +191,8 @@ var _ = Describe("07-Compute", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(output).NotTo(BeEmpty())
 
-		By("verifying CloudServer has elasticIpID")
-		cmd = exec.Command("kubectl", "get", "cloudserver", name, "-n", namespace, "-o", "jsonpath={.status.elasticIpID}")
+		By("verifying CloudServer has elasticIPID")
+		cmd = exec.Command("kubectl", "get", "cloudserver", name, "-n", namespace, "-o", "jsonpath={.status.elasticIPID}")
 		output, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(output).NotTo(BeEmpty())

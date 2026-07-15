@@ -946,11 +946,24 @@ func (r *SecurityGroupReconciler) cmpCreate(ctx context.Context, kubeSG *v1alpha
 // Other helpers
 // ---------------------------------------------------------------------------
 
-// checkSecurityGroupDeniedChanges reports immutable-field violations. A Security
-// Group carries no operator-managed immutable field the SDK exposes at the
-// high level (region is inherited from the parent VPC and not part of the
-// request body), so this is currently always nil.
-func checkSecurityGroupDeniedChanges(_ *v1alpha1.SecurityGroup, _ *aruba.SecurityGroup) error {
+// checkSecurityGroupDeniedChanges reports immutable-field violations — for a Security
+// Group, only the region.
+//
+// Unlike the other resources, aruba.SecurityGroup has no regionalMixin and therefore no
+// Region() accessor (the region is inherited from the parent VPC and is not part of the
+// request body), so the region is read off the raw response instead. This is the same
+// field the SDK's own regionalMixin is hydrated from for VPC and Subnet.
+func checkSecurityGroupDeniedChanges(kubeSG *v1alpha1.SecurityGroup, cmpSG *aruba.SecurityGroup) error {
+	if cmpSG == nil || cmpSG.Raw() == nil {
+		return nil
+	}
+	loc := cmpSG.Raw().Metadata.LocationResponse
+	if loc == nil || loc.Value == "" {
+		return nil
+	}
+	if kubeSG.Spec.Region != string(loc.Value) {
+		return fmt.Errorf("%w: %w", reconciler.ErrNotAllowedChanges, errors.New("change the 'location' is not allowed"))
+	}
 	return nil
 }
 

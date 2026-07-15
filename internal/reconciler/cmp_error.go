@@ -93,6 +93,41 @@ func sanitizeCMPString(s string) string {
 	return strings.TrimSpace(s)
 }
 
+// cmpValidationError is a local, nameable copy of one field-level validation entry
+// from a CMP error body. The SDK carries these on aruba.HTTPError.ErrResp as
+// pkg/types values, which this repo does not import (see ai/CONVENTIONS.md) — so
+// they are copied here to give appendValidationDetail a testable signature.
+type cmpValidationError struct {
+	Field   string
+	Message string
+}
+
+// appendValidationDetail renders field-level validation entries as "field: message"
+// pairs joined by "; ", prefixes them with "Validation: ", and merges the result into
+// detail. Entries carrying neither field nor message are skipped; detail is returned
+// unchanged when nothing renders.
+func appendValidationDetail(detail string, errs []cmpValidationError) string {
+	parts := make([]string, 0, len(errs))
+	for _, ve := range errs {
+		switch {
+		case ve.Field != "" && ve.Message != "":
+			parts = append(parts, ve.Field+": "+ve.Message)
+		case ve.Message != "":
+			parts = append(parts, ve.Message)
+		case ve.Field != "":
+			parts = append(parts, ve.Field+": invalid")
+		}
+	}
+	if len(parts) == 0 {
+		return detail
+	}
+	validationDetail := sanitizeCMPString(strings.Join(parts, "; "))
+	if detail != "" {
+		return detail + " | Validation: " + validationDetail
+	}
+	return "Validation: " + validationDetail
+}
+
 // CMPErrorFromResult classifies the error returned by a high-level SDK call
 // (Create/Update/Delete on an aruba resource client) into a *CMPError, or
 // returns nil when err is nil. It is the single categorization entry point that
@@ -156,25 +191,11 @@ func cmpResponseError(operation, resource string, httpErr *aruba.HTTPError) *CMP
 			instance = sanitizeCMPString(*errResp.Instance)
 		}
 		if len(errResp.Errors) > 0 {
-			parts := make([]string, 0, len(errResp.Errors))
+			ves := make([]cmpValidationError, 0, len(errResp.Errors))
 			for _, ve := range errResp.Errors {
-				switch {
-				case ve.Field != "" && ve.Message != "":
-					parts = append(parts, ve.Field+": "+ve.Message)
-				case ve.Message != "":
-					parts = append(parts, ve.Message)
-				case ve.Field != "":
-					parts = append(parts, ve.Field+": invalid")
-				}
+				ves = append(ves, cmpValidationError{Field: ve.Field, Message: ve.Message})
 			}
-			if len(parts) > 0 {
-				validationDetail := sanitizeCMPString(strings.Join(parts, "; "))
-				if detail != "" {
-					detail = detail + " | Validation: " + validationDetail
-				} else {
-					detail = "Validation: " + validationDetail
-				}
-			}
+			detail = appendValidationDetail(detail, ves)
 		}
 	}
 

@@ -64,6 +64,55 @@ var _ = Describe("CMPError", func() {
 	})
 })
 
+var _ = Describe("sanitizeCMPString", func() {
+	DescribeTable("collapses whitespace noise",
+		func(in, expected string) {
+			Expect(sanitizeCMPString(in)).To(Equal(expected))
+		},
+		Entry("empty", "", ""),
+		Entry("unchanged", "already clean", "already clean"),
+		Entry("tabs → space", "a\tb", "a b"),
+		Entry("newlines → space", "a\nb", "a b"),
+		Entry("collapses runs of spaces", "a     b", "a b"),
+		Entry("collapses mixed whitespace runs", "a \t\n  b", "a b"),
+		Entry("trims leading/trailing", "  \n a b \t ", "a b"),
+		Entry("multi-line message", "line one\nline two\nline three", "line one line two line three"),
+	)
+})
+
+var _ = Describe("appendValidationDetail", func() {
+	DescribeTable("renders entries and merges into detail",
+		func(detail string, errs []cmpValidationError, expected string) {
+			Expect(appendValidationDetail(detail, errs)).To(Equal(expected))
+		},
+		Entry("no entries → detail unchanged", "existing", nil, "existing"),
+		Entry("field + message", "",
+			[]cmpValidationError{{Field: "spec.region", Message: "unknown region"}},
+			"Validation: spec.region: unknown region"),
+		Entry("message only", "",
+			[]cmpValidationError{{Message: "quota exceeded"}},
+			"Validation: quota exceeded"),
+		Entry("field only → 'invalid'", "",
+			[]cmpValidationError{{Field: "spec.cidr"}},
+			"Validation: spec.cidr: invalid"),
+		Entry("multiple entries joined by '; '", "",
+			[]cmpValidationError{{Field: "a", Message: "bad"}, {Field: "b", Message: "worse"}},
+			"Validation: a: bad; b: worse"),
+		Entry("appends to existing detail", "boom",
+			[]cmpValidationError{{Field: "a", Message: "bad"}},
+			"boom | Validation: a: bad"),
+		Entry("skips fully empty entries", "",
+			[]cmpValidationError{{}, {Field: "a", Message: "bad"}, {}},
+			"Validation: a: bad"),
+		Entry("all entries empty → detail unchanged", "boom",
+			[]cmpValidationError{{}, {}},
+			"boom"),
+		Entry("sanitizes rendered output", "",
+			[]cmpValidationError{{Field: "a", Message: "line one\nline two"}},
+			"Validation: a: line one line two"),
+	)
+})
+
 var _ = Describe("CMPErrorFromResult", func() {
 	It("returns nil when err is nil", func() {
 		Expect(CMPErrorFromResult("create", "res", nil)).To(BeNil())

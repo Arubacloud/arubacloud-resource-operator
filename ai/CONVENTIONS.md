@@ -27,6 +27,23 @@ their getters (`.ID()`, `.State()`, `.Region()`, `.Tags()`, …), the `Ref`
 constructors (`aruba.VPCRef`, `aruba.URI`, …), `aruba.State*` constants, and
 `aruba.WithFilter`/`WithLimit` call options.
 
+Two places reach through a `pkg/aruba` value into a `pkg/types` struct because the
+SDK exposes no high-level accessor for the field. This compiles without the import
+(Go does not require importing a package to read exported fields of a value it hands
+you), but the coupling is real and invisible — a field rename upstream breaks these
+with no import line to grep for. **Do not add a third without checking the wrapper
+first.** Both are annotated in place:
+
+| Site | Reads | Why no accessor |
+|------|-------|-----------------|
+| `cmpResponseError` (`internal/reconciler/cmp_error.go`) | `aruba.HTTPError.ErrResp` → `types.ErrorResponse` fields | `HTTPError` exposes the RFC 7807 body as a bare `pkg/types` struct |
+| `checkSecurityGroupDeniedChanges` (`internal/controller/securitygroup_controller.go`) | `sg.Raw().Metadata.LocationResponse.Value` | `aruba.SecurityGroup` has no `regionalMixin`, so no `Region()` |
+
+When a reach-through feeds non-trivial logic, copy the fields into a local, nameable
+struct at the boundary and put the logic behind that (see `cmpValidationError` and
+`appendValidationDetail`). The reach-through then shrinks to a field copy, and the
+logic keeps a unit test that does not need an HTTP server to construct its input.
+
 ## Error handling
 
 ### CMP (Aruba API) errors

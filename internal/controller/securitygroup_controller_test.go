@@ -146,6 +146,26 @@ var _ = Describe("SecurityGroupReconciler", func() {
 		Expect(findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting)).Reason).To(Equal(v1alpha1.ConditionReasonSynchronizing))
 	})
 
+	Describe("HasDeniedChanges", func() {
+		It("returns LongRequeue when the CMP region differs from spec.region", func() {
+			m := newSGReconcilerWithFake()
+			sg = createTestSecurityGroup(ctx, "test-sg-denied", defaultSecurityGroupSpec(sgPrjName, sgVpcName))
+			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "sg-id-1", sgPrjID, sgVpcID, 1, time.Now())
+			m.stageParents(sgPrjID, sgPrjName, sgVpcID, sgVpcName)
+
+			// aruba.SecurityGroup has no Region() accessor, so the operator reads the
+			// region off the raw response metadata — stage a location that drifts from
+			// spec.Region ("ITBG-Bergamo").
+			denied := cmpItem("sg-id-1", "test-sg-denied", "Active")
+			denied["metadata"].(map[string]any)["location"] = map[string]any{"value": "ITRM-Roma"}
+			m.stageSGs(denied)
+
+			result, err := m.r.HandleReconcile(ctx, sg)
+			Expect(err).To(Succeed())
+			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
+		})
+	})
+
 	It("sets Failed+ValidationFailed when SG tenant differs from parent VPC tenant", func() {
 		m := newSGReconcilerWithFake()
 		kubeVpc := createTestVpc(ctx, sgVpcName, v1alpha1.VPCSpec{

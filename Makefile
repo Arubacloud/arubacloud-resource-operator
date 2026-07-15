@@ -84,6 +84,12 @@ test: manifests generate fmt vet $(ENVTEST) ## Run tests.
 KIND_CLUSTER ?= aruba-test-e2e
 FOCUS ?=
 E2E_TIMEOUT ?= 60m
+# Dedicated kubeconfig for the e2e run. The suite shells out to bare `kubectl` with no
+# --context, so without this it silently follows the ambient context: create a Kind
+# cluster in another terminal mid-run and the tests start driving THAT cluster. Pinning
+# KUBECONFIG isolates the run (kubectl and the make install/deploy sub-invocations all
+# inherit it) and leaves the developer's own kubeconfig untouched.
+E2E_KUBECONFIG ?= $(LOCALBIN)/e2e-$(KIND_CLUSTER).kubeconfig
 
 .PHONY: setup-test-e2e
 setup-test-e2e: cleanup-test-e2e ## Set up a Kind cluster for e2e tests
@@ -95,13 +101,15 @@ setup-test-e2e: cleanup-test-e2e ## Set up a Kind cluster for e2e tests
 
 .PHONY: test-e2e
 test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind. Use FOCUS="test-name" to run specific tests.
-	$(KUSTOMIZE) build $(CRD_DIR) | $(KUBECTL) apply -f -
+	@mkdir -p $(LOCALBIN)
+	$(KIND) export kubeconfig --name $(KIND_CLUSTER) --kubeconfig $(E2E_KUBECONFIG)
+	KUBECONFIG=$(E2E_KUBECONFIG) $(KUSTOMIZE) build $(CRD_DIR) | KUBECONFIG=$(E2E_KUBECONFIG) $(KUBECTL) apply -f -
 	@# The full suite provisions real CMP resources and runs well past go test's 10m default.
 	@# Both timeouts are needed and are enforced independently: -timeout is go test's, while
 	@# -ginkgo.timeout is Ginkgo's own suite timeout (default 1h). Raising only the former
 	@# still lets Ginkgo abort the run at 1h with the remaining suites unstarted.
 	@# Override E2E_TIMEOUT to change both.
-	KIND_CLUSTER=$(KIND_CLUSTER) go test ./test/e2e/ -v -ginkgo.v -timeout $(E2E_TIMEOUT) -ginkgo.timeout $(E2E_TIMEOUT) $(if $(FOCUS),-ginkgo.focus="$(FOCUS)")
+	KUBECONFIG=$(E2E_KUBECONFIG) KIND_CLUSTER=$(KIND_CLUSTER) go test ./test/e2e/ -v -ginkgo.v -timeout $(E2E_TIMEOUT) -ginkgo.timeout $(E2E_TIMEOUT) $(if $(FOCUS),-ginkgo.focus="$(FOCUS)")
 	$(MAKE) cleanup-test-e2e
 
 .PHONY: cleanup-test-e2e

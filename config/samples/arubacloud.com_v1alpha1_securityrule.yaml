@@ -7,8 +7,8 @@ metadata:
 spec:
   tenant: __TENANT__
   tags:
-    - tag-1
-    - tag-2
+    - aruba-operator
+    - sample
   region: ITBG-Bergamo
   protocol: TCP
   port: '80-90'
@@ -34,8 +34,8 @@ metadata:
 spec:
   tenant: __TENANT__
   tags:
-    - tag-1
-    - tag-2
+    - aruba-operator
+    - sample
   region: ITBG-Bergamo
   protocol: TCP
   port: '80-90'

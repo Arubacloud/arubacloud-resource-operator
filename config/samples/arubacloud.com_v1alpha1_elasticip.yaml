@@ -6,9 +6,8 @@ metadata:
 spec:
   tenant: __TENANT__
   tags:
+    - aruba-operator
     - sample
-    - elastic-ip
-    - test
   region: ITBG-Bergamo
   billingPeriod: Hour
   projectReference:

@@ -6,7 +6,9 @@ metadata:
 spec:
   tenant: __TENANT__
   tags:
-    - tag-1
+    - aruba-operator
+    - sample
+    - data-volume
   region: ITBG-Bergamo
   sizeGB: 40
   billingPeriod: Hour

@@ -5,7 +5,8 @@ metadata:
   namespace: __NAMESPACE__
 spec:
   tags:
-    - e2e-test
+    - aruba-operator
+    - sample
     - boot-disk
   region: ITBG-Bergamo
   sizeGB: 40

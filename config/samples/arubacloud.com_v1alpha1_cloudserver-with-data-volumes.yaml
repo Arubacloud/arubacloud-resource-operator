@@ -5,7 +5,9 @@ metadata:
   namespace: __NAMESPACE__
 spec:
   tags:
-    - sample-tag
+    - aruba-operator
+    - sample
+    - data-volume
   region: ITBG-Bergamo
   zone: ITBG-1
   vpcReference:

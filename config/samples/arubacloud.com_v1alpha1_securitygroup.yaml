@@ -6,8 +6,8 @@ metadata:
 spec:
   tenant: __TENANT__
   tags:
-    - tag-1
-    - tag-2
+    - aruba-operator
+    - sample
   region: ITBG-Bergamo
   vpcReference:
     name: __NAME__

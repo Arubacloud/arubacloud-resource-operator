@@ -84,7 +84,7 @@ var _ = Describe("06-NetworkComplete", Ordered, func() {
 					"-o", "jsonpath={.status.phase}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("Created"))
+				g.Expect(output).To(Equal("Active"))
 			}, testTimeout, 5*time.Second).Should(Succeed())
 
 			By("applying the VPC manifest")
@@ -105,7 +105,7 @@ var _ = Describe("06-NetworkComplete", Ordered, func() {
 					"-o", "jsonpath={.status.phase}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("Created"))
+				g.Expect(output).To(Equal("Active"))
 			}, testTimeout, 5*time.Second).Should(Succeed())
 
 			By("applying the SecurityGroup manifest")
@@ -126,7 +126,7 @@ var _ = Describe("06-NetworkComplete", Ordered, func() {
 					"-o", "jsonpath={.status.phase}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("Created"))
+				g.Expect(output).To(Equal("Active"))
 			}, testTimeout, 5*time.Second).Should(Succeed())
 
 			By("applying the SecurityRule manifest")
@@ -147,7 +147,7 @@ var _ = Describe("06-NetworkComplete", Ordered, func() {
 					"-o", "jsonpath={.status.phase}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("Created"))
+				g.Expect(output).To(Equal("Active"))
 			}, testTimeout, 5*time.Second).Should(Succeed())
 
 			By("applying the Subnet manifest")
@@ -168,7 +168,7 @@ var _ = Describe("06-NetworkComplete", Ordered, func() {
 					"-o", "jsonpath={.status.phase}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("Created"))
+				g.Expect(output).To(Equal("Active"))
 			}, testTimeout, 5*time.Second).Should(Succeed())
 
 			By("applying the ElasticIP manifest")
@@ -189,7 +189,7 @@ var _ = Describe("06-NetworkComplete", Ordered, func() {
 					"-o", "jsonpath={.status.phase}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("Created"))
+				g.Expect(output).To(Equal("Active"))
 			}, testTimeout, 5*time.Second).Should(Succeed())
 
 			By("verifying ElasticIP has a public IP address")

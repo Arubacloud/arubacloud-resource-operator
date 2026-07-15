@@ -73,7 +73,9 @@ func NewProjectReconciler(baseReconciler *reconciler.Reconciler) *ProjectReconci
 // +kubebuilder:rbac:groups=arubacloud.com,resources=blockstorages,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=arubacloud.com,resources=blockstorages/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=arubacloud.com,resources=blockstorages/finalizers,verbs=update
-// +kubebuilder:rbac:groups=arubacloud.com,resources=projects,verbs=get;list;watch
+// +kubebuilder:rbac:groups=arubacloud.com,resources=projects,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=arubacloud.com,resources=projects/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=arubacloud.com,resources=projects/finalizers,verbs=update
 // +kubebuilder:rbac:groups=arubacloud.com,resources=vpcs,verbs=get;list;watch;delete
 // +kubebuilder:rbac:groups=arubacloud.com,resources=cloudservers,verbs=get;list;watch;delete
 // +kubebuilder:rbac:groups=arubacloud.com,resources=keypairs,verbs=get;list;watch;delete

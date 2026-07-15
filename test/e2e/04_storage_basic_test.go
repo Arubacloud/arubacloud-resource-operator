@@ -76,7 +76,7 @@ var _ = Describe("04-StorageBasic", Ordered, func() {
 					"-o", "jsonpath={.status.phase}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("Created"))
+				g.Expect(output).To(Equal("Active"))
 			}, testTimeout, 5*time.Second).Should(Succeed())
 
 			By("applying the BlockStorage manifest")
@@ -97,7 +97,7 @@ var _ = Describe("04-StorageBasic", Ordered, func() {
 					"-o", "jsonpath={.status.phase}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("Created"))
+				g.Expect(output).To(Equal("Active"))
 			}, testTimeout, 5*time.Second).Should(Succeed())
 
 			By("verifying BlockStorage has a volume ID")

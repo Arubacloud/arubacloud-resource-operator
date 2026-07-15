@@ -72,23 +72,13 @@ var _ = Describe("00-Manager", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
 	})
 
-	// After all tests have been executed, clean up by undeploying the controller, uninstalling CRDs,
-	// and deleting the namespace.
+	// Clean up only what this suite created. Undeploying the controller, uninstalling the
+	// CRDs and deleting the namespace is AfterSuite's job (see e2e_suite_test.go): those are
+	// shared by every suite, and Ginkgo randomizes suite order, so tearing them down here
+	// left every suite that happened to run after this one failing in BeforeAll.
 	AfterAll(func() {
 		By("cleaning up the curl pod for metrics")
-		cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics", "-n", namespace)
-		_, _ = utils.Run(cmd)
-
-		By("undeploying the controller-manager")
-		cmd = exec.Command("make", "undeploy")
-		_, _ = utils.Run(cmd)
-
-		By("uninstalling CRDs")
-		cmd = exec.Command("make", "uninstall")
-		_, _ = utils.Run(cmd)
-
-		By("removing manager namespace")
-		cmd = exec.Command("kubectl", "delete", "ns", namespace)
+		cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics", "-n", namespace, "--ignore-not-found=true")
 		_, _ = utils.Run(cmd)
 	})
 
@@ -195,7 +185,9 @@ var _ = Describe("00-Manager", Ordered, func() {
 				cmd := exec.Command("kubectl", "get", "endpoints", metricsServiceName, "-n", namespace)
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(ContainSubstring("8443"), "Metrics endpoint is not ready")
+				// This operator serves metrics over plain HTTP on :9080 (see
+				// config/default/manager_metrics_patch.yaml), not the scaffold's HTTPS :8443.
+				g.Expect(output).To(ContainSubstring("9080"), "Metrics endpoint is not ready")
 			}
 			Eventually(verifyMetricsEndpointReady).Should(Succeed())
 
@@ -204,7 +196,9 @@ var _ = Describe("00-Manager", Ordered, func() {
 				cmd := exec.Command("kubectl", "logs", controllerPodName, "-n", namespace)
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(ContainSubstring("controller-runtime.metrics\tServing metrics server"),
+				// The manager logs JSON, so the logger name and message are separate fields and
+				// never appear tab-joined as the console encoder would render them.
+				g.Expect(output).To(ContainSubstring("Serving metrics server"),
 					"Metrics server not yet started")
 			}
 			Eventually(verifyMetricsServerStarted).Should(Succeed())
@@ -220,7 +214,7 @@ var _ = Describe("00-Manager", Ordered, func() {
 							"name": "curl",
 							"image": "curlimages/curl:latest",
 							"command": ["/bin/sh", "-c"],
-							"args": ["curl -v -k -H 'Authorization: Bearer %s' https://%s.%s.svc.cluster.local:8443/metrics"],
+							"args": ["curl -v -H 'Authorization: Bearer %s' http://%s.%s.svc.cluster.local:9080/metrics"],
 							"securityContext": {
 								"allowPrivilegeEscalation": false,
 								"capabilities": {

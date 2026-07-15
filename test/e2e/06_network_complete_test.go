@@ -35,6 +35,11 @@ var _ = Describe("06-NetworkComplete", Ordered, func() {
 		subnetName        = "aruba-test-network-cmplt"
 		elasticIPName     = "aruba-test-network-cmplt"
 		testTimeout       = 20 * time.Minute
+
+		// The securityrule sample holds two documents and names them by prefixing
+		// __NAME__, so applying it creates these two rules — not securityRuleName.
+		egressRuleName  = "egress-" + securityRuleName
+		ingressRuleName = "ingress-" + securityRuleName
 	)
 
 	BeforeAll(func() {
@@ -52,7 +57,8 @@ var _ = Describe("06-NetworkComplete", Ordered, func() {
 		}{
 			{"elasticip", elasticIPName},
 			{"subnet", subnetName},
-			{"securityrule", securityRuleName},
+			{"securityrule", egressRuleName},
+			{"securityrule", ingressRuleName},
 			{"securitygroup", securityGroupName},
 			{"vpc", vpcName},
 			{"project", projectName},
@@ -141,14 +147,16 @@ var _ = Describe("06-NetworkComplete", Ordered, func() {
 			_, err = utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("waiting for SecurityRule to be created")
-			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "securityrule", securityRuleName, "-n", namespace,
-					"-o", "jsonpath={.status.phase}")
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("Active"))
-			}, testTimeout, 5*time.Second).Should(Succeed())
+			By("waiting for both SecurityRules to be created")
+			for _, ruleName := range []string{egressRuleName, ingressRuleName} {
+				Eventually(func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", "securityrule", ruleName, "-n", namespace,
+						"-o", "jsonpath={.status.phase}")
+					output, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(output).To(Equal("Active"))
+				}, testTimeout, 5*time.Second).Should(Succeed())
+			}
 
 			By("applying the Subnet manifest")
 			subnetManifest, err := utils.LoadSampleManifest("arubacloud.com_v1alpha1_subnet.yaml", map[string]string{

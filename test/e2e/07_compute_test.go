@@ -63,9 +63,13 @@ var _ = Describe("07-Compute", Ordered, func() {
 		cmd = exec.Command("kubectl", "delete", "subnet", name, "-n", namespace, "--ignore-not-found")
 		_, _ = utils.Run(cmd)
 
-		By("deleting SecurityRule")
-		cmd = exec.Command("kubectl", "delete", "securityrule", name, "-n", namespace, "--ignore-not-found")
-		_, _ = utils.Run(cmd)
+		By("deleting SecurityRules")
+		// The securityrule sample prefixes __NAME__, so the applied rules are
+		// egress-/ingress-<name>; deleting the bare name removed neither.
+		for _, ruleName := range []string{"egress-" + name, "ingress-" + name} {
+			cmd = exec.Command("kubectl", "delete", "securityrule", ruleName, "-n", namespace, "--ignore-not-found")
+			_, _ = utils.Run(cmd)
+		}
 
 		By("deleting SecurityGroup")
 		cmd = exec.Command("kubectl", "delete", "securitygroup", name, "-n", namespace, "--ignore-not-found")

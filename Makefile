@@ -96,9 +96,12 @@ setup-test-e2e: cleanup-test-e2e ## Set up a Kind cluster for e2e tests
 .PHONY: test-e2e
 test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind. Use FOCUS="test-name" to run specific tests.
 	$(KUSTOMIZE) build $(CRD_DIR) | $(KUBECTL) apply -f -
-	@# -timeout: the full suite provisions real CMP resources and runs ~38min end to end,
-	@# well past go test's 10m default. Override with E2E_TIMEOUT if a run needs longer.
-	KIND_CLUSTER=$(KIND_CLUSTER) go test ./test/e2e/ -v -ginkgo.v -timeout $(E2E_TIMEOUT) $(if $(FOCUS),-ginkgo.focus="$(FOCUS)")
+	@# The full suite provisions real CMP resources and runs well past go test's 10m default.
+	@# Both timeouts are needed and are enforced independently: -timeout is go test's, while
+	@# -ginkgo.timeout is Ginkgo's own suite timeout (default 1h). Raising only the former
+	@# still lets Ginkgo abort the run at 1h with the remaining suites unstarted.
+	@# Override E2E_TIMEOUT to change both.
+	KIND_CLUSTER=$(KIND_CLUSTER) go test ./test/e2e/ -v -ginkgo.v -timeout $(E2E_TIMEOUT) -ginkgo.timeout $(E2E_TIMEOUT) $(if $(FOCUS),-ginkgo.focus="$(FOCUS)")
 	$(MAKE) cleanup-test-e2e
 
 .PHONY: cleanup-test-e2e

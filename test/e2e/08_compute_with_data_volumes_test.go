@@ -177,7 +177,7 @@ var _ = Describe("08-ComputeWithDataVolumes", Ordered, func() {
 			cmd := exec.Command("kubectl", "get", "cloudserver", name, "-n", namespace, "-o", "jsonpath={.status.phase}")
 			output, _ := utils.Run(cmd)
 			return output
-		}, testTimeout, 10*time.Second).Should(Equal("Created"))
+		}, testTimeout, 10*time.Second).Should(Equal("Active"))
 
 		By("verifying CloudServer has resourceID")
 		cmd = exec.Command("kubectl", "get", "cloudserver", name, "-n", namespace, "-o", "jsonpath={.status.resourceID}")

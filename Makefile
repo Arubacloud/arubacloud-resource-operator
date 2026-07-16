@@ -15,7 +15,6 @@ MANAGER_DIR := config/manager
 CFG_ENV_DYNAMIC := $(MANAGER_DIR)/dynamic-config.env
 SEC_ENV_DYNAMIC := $(MANAGER_DIR)/dynamic-secret.env
 
-MOCKS_DIR := internal/mocks
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
 GOBIN=$(shell go env GOPATH)/bin
@@ -61,9 +60,8 @@ manifests: $(CONTROLLER_GEN) ## Generate WebhookConfiguration, ClusterRole and C
 	$(CONTROLLER_GEN) rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
 
 .PHONY: generate
-generate: $(CONTROLLER_GEN) $(MOCKERY) ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
+generate: $(CONTROLLER_GEN) ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./..."
-	$(MOCKERY)
 
 .PHONY: fmt
 fmt: ## Run go fmt against code.
@@ -213,11 +211,6 @@ undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.
 clean-installer:
 	@rm -f dist/install.yaml "$(CFG_ENV_DYNAMIC)" "$(SEC_ENV_DYNAMIC)"
 
-# Clean the generated files
-clean:
-	@echo "Cleaning generated files..."
-	@rm -f $(MOCKS_DIR)/*.go
-
 ##@ Deployment
 
 ifndef ignore-not-found
@@ -238,7 +231,6 @@ KUSTOMIZE ?= $(LOCALBIN)/kustomize
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
-MOCKERY ?= $(LOCALBIN)/mockery
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.6.0
@@ -248,7 +240,6 @@ ENVTEST_VERSION ?= $(shell go list -m -f "{{ .Version }}" sigs.k8s.io/controller
 #ENVTEST_K8S_VERSION is the version of Kubernetes to use for setting up ENVTEST binaries (i.e. 1.31)
 ENVTEST_K8S_VERSION ?= $(shell go list -m -f "{{ .Version }}" k8s.io/api | awk -F'[v.]' '{printf "1.%d", $$3}')
 GOLANGCI_LINT_VERSION ?= v2.1.6
-MOCKERY_VERSION ?= v2.53.5
 HELMIFY_VERSION ?= v0.4.19
 
 # go-install-all-tools installs all development tools to $(LOCALBIN) using 'go install'.
@@ -257,7 +248,6 @@ HELMIFY_VERSION ?= v0.4.19
 .PHONY: go-install-all-tools
 go-install-all-tools: $(LOCALBIN) ## Install all development tools to $(LOCALBIN) via go install.
 	$(call go-install-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen,$(CONTROLLER_TOOLS_VERSION))
-	$(call go-install-tool,$(MOCKERY),github.com/vektra/mockery/v2,$(MOCKERY_VERSION))
 	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
 	$(call go-install-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5,$(KUSTOMIZE_VERSION))
 	$(call go-install-tool,$(HELMIFY),github.com/arttor/helmify/cmd/helmify,$(HELMIFY_VERSION))
@@ -291,11 +281,6 @@ $(ENVTEST): $(LOCALBIN)
 golangci-lint: $(GOLANGCI_LINT) ## Install golangci-lint to $(LOCALBIN).
 $(GOLANGCI_LINT): $(LOCALBIN)
 	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
-
-.PHONY: mockery
-mockery: $(MOCKERY) ## Install mockery to $(LOCALBIN).
-$(MOCKERY): $(LOCALBIN)
-	$(call go-install-tool,$(MOCKERY),github.com/vektra/mockery/v2,$(MOCKERY_VERSION))
 
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
 # $1 - target path with name of binary

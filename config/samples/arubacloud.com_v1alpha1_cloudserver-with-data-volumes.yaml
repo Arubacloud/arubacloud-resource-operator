@@ -4,6 +4,7 @@ metadata:
   name: __NAME__
   namespace: __NAMESPACE__
 spec:
+  tenant: __TENANT__
   tags:
     - aruba-operator
     - sample

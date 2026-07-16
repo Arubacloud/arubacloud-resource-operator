@@ -114,3 +114,15 @@ This means dependency-related 4xx errors are now correctly classified as Transie
 **Potential future solutions**:
 - Skip the parent K8s `Get` call if the child's annotation already contains an entry for the expected parent UID (check locally before fetching). This trades consistency (won't detect parent UID changes after delete/recreate) for performance.
 - Move ownership setup to a one-time init step (e.g., only during `Creating` phase) instead of every reconciliation. This loses the self-healing property but eliminates ongoing overhead.
+
+---
+
+## 8. CloudServer Data-Volume Attachment Is Unimplemented
+
+**Context**: `api/v1alpha1/cloudserver_types.go` declares `Spec.DataVolumeReferences` (input) and `Status.DataVolumeIDs` (output), but **no controller code reads or populates either** — `grep -rn DataVolume internal/` returns nothing, on this branch and on `main`. The CloudServer controller silently ignores `spec.dataVolumeReferences` and never sets `status.dataVolumeIDs`. Only the boot volume (`Spec.BootVolumeReference` → `Status.BootVolumeID`) is wired up.
+
+**Impact**: A CloudServer referencing data volumes still reaches `Active`, but the volumes are not attached and the status field stays empty. The e2e suite's `08-ComputeWithDataVolumes` asserts `status.dataVolumeIDs` is non-empty, so it fails at that step; the assertion is currently disabled with a TODO pointing here. (This is a pre-existing feature gap, not a regression from the SDK v1.0.4 migration.)
+
+**Potential future solutions**:
+- Implement attachment in the CloudServer controller: resolve `DataVolumeReferences` to CMP volume IDs, attach each to the server via the SDK, and populate `Status.DataVolumeIDs` on success. Re-enable the `08` assertion once it lands.
+- If data volumes are out of scope, drop the two CRD fields and the `08` assertion rather than leaving dead API surface.

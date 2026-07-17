@@ -1,19 +1,12 @@
 # Image URL to use all building/pushing image targets
 IMG ?= controller:latest
 
-# Dynamic inputs you pass on the CLI:
-# make build-installer CLIENT_ID=... CLIENT_SECRET=...
-CLIENT_ID     ?=
-CLIENT_SECRET ?=
-
-# Paths
-CRD_DIR     := config/crd        # <- contains kustomization.yaml for CRDs
+# Paths (kustomization roots).
+# NOTE: keep comments on their own line — make keeps whitespace between a value
+# and an inline comment, so `X := config/crd   # note` puts trailing spaces in X.
+CRD_DIR     := config/crd
 OVERLAY     := config/default
 MANAGER_DIR := config/manager
-
-# Generated env files (must match kustomization.yaml `envs:` entries)
-CFG_ENV_DYNAMIC := $(MANAGER_DIR)/dynamic-config.env
-SEC_ENV_DYNAMIC := $(MANAGER_DIR)/dynamic-secret.env
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -55,12 +48,17 @@ help: ## Display this help.
 
 ##@ Development
 
+# NOTE: tool prerequisites below use the phony install-target names (controller-gen,
+# kustomize, …), never $(TOOL) variables. Make expands prerequisite lists at parse
+# time, and the tool variables are defined further down — a `$(CONTROLLER_GEN)`
+# prerequisite here silently expands to nothing and the auto-install never runs.
+
 .PHONY: manifests
-manifests: $(CONTROLLER_GEN) ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
+manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
 	$(CONTROLLER_GEN) rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
 
 .PHONY: generate
-generate: $(CONTROLLER_GEN) ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
+generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./..."
 
 .PHONY: fmt
@@ -72,7 +70,7 @@ vet: ## Run go vet against code.
 	go vet ./...
 
 .PHONY: test
-test: manifests generate fmt vet $(ENVTEST) ## Run tests.
+test: manifests generate fmt vet setup-envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
 # TODO(user): To use a different vendor for e2e tests, modify the setup under 'tests/e2e'.
@@ -95,10 +93,16 @@ setup-test-e2e: cleanup-test-e2e ## Set up a Kind cluster for e2e tests
 		echo "Kind is not installed. Please install Kind manually."; \
 		exit 1; \
 	}
+	@command -v $(KUBECTL) >/dev/null 2>&1 || { \
+		echo "kubectl is not installed. Please install kubectl manually."; \
+		exit 1; \
+	}
 	$(KIND) create cluster --name $(KIND_CLUSTER)
 
 .PHONY: test-e2e
-test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind. Use FOCUS="test-name" to run specific tests.
+# Code checks and tool installs run BEFORE setup-test-e2e so a failure there
+# doesn't leave an orphaned Kind cluster behind.
+test-e2e: manifests generate fmt vet kustomize setup-test-e2e ## Run the e2e tests. Expected an isolated environment using Kind. Use FOCUS="test-name" to run specific tests.
 	@mkdir -p $(LOCALBIN)
 	$(KIND) export kubeconfig --name $(KIND_CLUSTER) --kubeconfig $(E2E_KUBECONFIG)
 	KUBECONFIG=$(E2E_KUBECONFIG) $(KUSTOMIZE) build $(CRD_DIR) | KUBECONFIG=$(E2E_KUBECONFIG) $(KUBECTL) apply -f -
@@ -107,23 +111,28 @@ test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expect
 	@# -ginkgo.timeout is Ginkgo's own suite timeout (default 1h). Raising only the former
 	@# still lets Ginkgo abort the run at 1h with the remaining suites unstarted.
 	@# Override E2E_TIMEOUT to change both.
-	KUBECONFIG=$(E2E_KUBECONFIG) KIND_CLUSTER=$(KIND_CLUSTER) go test ./test/e2e/ -v -ginkgo.v -timeout $(E2E_TIMEOUT) -ginkgo.timeout $(E2E_TIMEOUT) $(if $(FOCUS),-ginkgo.focus="$(FOCUS)")
+	@# On failure the cluster is deliberately kept: the suite drives real CMP resources,
+	@# and tearing down the cluster mid-cleanup can orphan them with no way to inspect what
+	@# is left. Tear down manually with `make cleanup-test-e2e` when done debugging.
+	KUBECONFIG=$(E2E_KUBECONFIG) KIND_CLUSTER=$(KIND_CLUSTER) go test ./test/e2e/ -v -ginkgo.v -timeout $(E2E_TIMEOUT) -ginkgo.timeout $(E2E_TIMEOUT) $(if $(FOCUS),-ginkgo.focus="$(FOCUS)") \
+		|| { echo "e2e FAILED — Kind cluster '$(KIND_CLUSTER)' kept for debugging; run 'make cleanup-test-e2e' when done"; exit 1; }
 	$(MAKE) cleanup-test-e2e
 
 .PHONY: cleanup-test-e2e
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
 	@$(KIND) delete cluster --name $(KIND_CLUSTER) 2>/dev/null || true
+	@rm -f $(E2E_KUBECONFIG)
 
 .PHONY: lint
-lint: $(GOLANGCI_LINT) ## Run golangci-lint linter
+lint: golangci-lint ## Run golangci-lint linter
 	$(GOLANGCI_LINT) run
 
 .PHONY: lint-fix
-lint-fix: ## Run golangci-lint linter and perform fixes
+lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 	$(GOLANGCI_LINT) run --fix
 
 .PHONY: lint-config
-lint-config: ## Verify golangci-lint linter configuration
+lint-config: golangci-lint ## Verify golangci-lint linter configuration
 	$(GOLANGCI_LINT) config verify
 
 ##@ Build
@@ -160,33 +169,28 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile > Dockerfile.cross
 	- $(CONTAINER_TOOL) buildx create --name aruba-builder
 	$(CONTAINER_TOOL) buildx use aruba-builder
-	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} -f Dockerfile.cross .
+	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} -f Dockerfile.cross .
 	- $(CONTAINER_TOOL) buildx rm aruba-builder
 	rm Dockerfile.cross
 
-HELMIFY ?= $(LOCALBIN)/helmify
-
-.PHONY: helmify
-helmify: $(HELMIFY) ## Download helmify locally if necessary.
-$(HELMIFY): $(LOCALBIN)
-	$(call go-install-tool,$(HELMIFY),github.com/arttor/helmify/cmd/helmify,$(HELMIFY_VERSION))
-
-helm-operator: manifests $(KUSTOMIZE) $(HELMIFY)
+.PHONY: helm-operator
+helm-operator: manifests kustomize helmify
 	$(KUSTOMIZE) build config/default | $(HELMIFY) config/charts/arubacloud-resource-operator
 
-helm-crd: manifests $(KUSTOMIZE) $(HELMIFY)
+.PHONY: helm-crd
+helm-crd: manifests kustomize helmify
 	$(KUSTOMIZE) build config/crd | $(HELMIFY) config/charts/arubacloud-resource-operator-crd
 
-.PHONY: _ensure_dynamic_env
-_ensure_dynamic_env:
-	@mkdir -p "$(MANAGER_DIR)"
-	@printf "client-id=%s\n" "$${CLIENT_ID:-dummy}"         >  "$(CFG_ENV_DYNAMIC)"
-	@printf "client-secret=%s\n" "$${CLIENT_SECRET:-dummy}" >  "$(SEC_ENV_DYNAMIC)"
+##@ Deployment
+
+ifndef ignore-not-found
+  ignore-not-found = false
+endif
 
 .PHONY: install uninstall deploy undeploy
 
 install: manifests kustomize ## Install CRDs into the K8s cluster specified in ~/.kube/config.
-	$(KUSTOMIZE) build $(CRD_DIR) | $(KUBECTL) apply --namespace=aruba-system -f -
+	$(KUSTOMIZE) build $(CRD_DIR) | $(KUBECTL) apply -f -
 
 uninstall: manifests kustomize ## Uninstall CRDs. Call with ignore-not-found=true to ignore resource not found errors during deletion.
 	$(KUSTOMIZE) build $(CRD_DIR) | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
@@ -198,24 +202,13 @@ deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in
 	# Apply overlay
 	$(KUSTOMIZE) build $(OVERLAY) | $(KUBECTL) apply -f -
 
-.PHONY: undeploy
+	@# kustomize edit mutates $(MANAGER_DIR)/kustomization.yaml in place; restore it so
+	@# every deploy doesn't leave the tree dirty. Commit the edit deliberately if you
+	@# want a different image pinned in git.
+	@git checkout --quiet -- $(MANAGER_DIR)/kustomization.yaml 2>/dev/null || true
+
 undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
-	@# ensure files exist so kustomize can build, even if vars aren't set now
-	@$(MAKE) --no-print-directory _ensure_dynamic_env
-
 	$(KUSTOMIZE) build $(OVERLAY) | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
-
-	@# cleanup
-	@rm -f "$(CFG_ENV_DYNAMIC)" "$(SEC_ENV_DYNAMIC)"
-
-clean-installer:
-	@rm -f dist/install.yaml "$(CFG_ENV_DYNAMIC)" "$(SEC_ENV_DYNAMIC)"
-
-##@ Deployment
-
-ifndef ignore-not-found
-  ignore-not-found = false
-endif
 
 ##@ Dependencies
 
@@ -230,7 +223,8 @@ KIND ?= kind
 KUSTOMIZE ?= $(LOCALBIN)/kustomize
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
-GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
+GOLANGCI_LINT ?= $(LOCALBIN)/golangci-lint
+HELMIFY ?= $(LOCALBIN)/helmify
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.6.0
@@ -246,14 +240,9 @@ HELMIFY_VERSION ?= v0.4.19
 # Run this once to set up a host development environment.
 # In the containerized workflow (make <target>-ctzd) tools are pre-installed in the image.
 .PHONY: go-install-all-tools
-go-install-all-tools: $(LOCALBIN) ## Install all development tools to $(LOCALBIN) via go install.
-	$(call go-install-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen,$(CONTROLLER_TOOLS_VERSION))
-	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
-	$(call go-install-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5,$(KUSTOMIZE_VERSION))
-	$(call go-install-tool,$(HELMIFY),github.com/arttor/helmify/cmd/helmify,$(HELMIFY_VERSION))
-	$(call go-install-tool,$(ENVTEST),sigs.k8s.io/controller-runtime/tools/setup-envtest,$(ENVTEST_VERSION))
+go-install-all-tools: controller-gen golangci-lint kustomize helmify envtest ## Install all development tools to $(LOCALBIN) via go install.
 
-# Individual tool install targets (kept for convenience; also called by go-install-all-tools).
+# Individual tool install targets.
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Install kustomize to $(LOCALBIN).
 $(KUSTOMIZE): $(LOCALBIN)
@@ -281,6 +270,11 @@ $(ENVTEST): $(LOCALBIN)
 golangci-lint: $(GOLANGCI_LINT) ## Install golangci-lint to $(LOCALBIN).
 $(GOLANGCI_LINT): $(LOCALBIN)
 	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
+
+.PHONY: helmify
+helmify: $(HELMIFY) ## Install helmify to $(LOCALBIN).
+$(HELMIFY): $(LOCALBIN)
+	$(call go-install-tool,$(HELMIFY),github.com/arttor/helmify/cmd/helmify,$(HELMIFY_VERSION))
 
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
 # $1 - target path with name of binary
@@ -358,9 +352,11 @@ sh: ## Open an interactive shell (use as: make sh-ctzd).
 
 # Documentation targets
 .PHONY: docs-install
-docs-install: ## Install documentation dependencies
-	@echo "Installing documentation dependencies..."
-	@cd docs/website && npm install
+docs-install: ## Install documentation dependencies (skipped when node_modules exists; rerun after package.json changes with `rm -rf docs/website/node_modules`)
+	@[ -d docs/website/node_modules ] || { \
+		echo "Installing documentation dependencies..."; \
+		cd docs/website && npm install; \
+	}
 
 .PHONY: docs-serve
 docs-serve: docs-install ## Start documentation development server (English locale)
@@ -405,14 +401,14 @@ run-dev: install ## Run controller in development mode
 
 .PHONY: logs
 logs: ## Show controller logs (if running in cluster)
-	kubectl logs -f deployment/aruba-operator-controller-manager -n aruba-operator-system -c manager
+	$(KUBECTL) logs -f deployment/aruba-controller-manager -n aruba-system -c manager
 
 .PHONY: debug-project
-debug-project: ## Debug specific ArubaProject
+debug-project: ## Debug a specific Project resource
 	@read -p "Enter project name: " name; \
-	kubectl describe arubaproject $$name; \
+	$(KUBECTL) describe project $$name; \
 	echo "--- Project YAML ---"; \
-	kubectl get arubaproject $$name -o yaml
+	$(KUBECTL) get project $$name -o yaml
 
 ##@ Helm Charts Release
 

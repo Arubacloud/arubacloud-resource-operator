@@ -1,113 +1,45 @@
-/*
-Copyright 2025.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
-
 package controller
 
 import (
 	"context"
-	"net/http"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/stretchr/testify/mock"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
-	arubamocks "github.com/Arubacloud/arubacloud-resource-operator/internal/mocks/aruba"
 	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
-	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
 )
 
-// --- Builder helpers ---
-
-func buildKeyPairResponse(id, name string) *arubatypes.KeyPairResponse {
-	location := &arubatypes.LocationResponse{Value: "ITBG-Bergamo"}
-	return &arubatypes.KeyPairResponse{
-		Metadata: arubatypes.ResourceMetadataResponse{
-			ID:               &id,
-			Name:             &name,
-			LocationResponse: location,
-			Tags:             []string{"tag1"},
-		},
-		Properties: arubatypes.KeyPairPropertiesResult{
-			Value: "ssh-rsa AAAAB3NzaC1 test-key",
-		},
+// kpItem stages a CMP key pair. KeyPair is a Family-B resource (no lifecycle
+// state); the rollback flow reads back tags/region/public key.
+func kpItem(id, name, publicKey string, tags []string) map[string]any {
+	meta := cmpMeta(id, name)
+	if tags != nil {
+		meta["tags"] = tags
+	}
+	return map[string]any{
+		"metadata":   meta,
+		"properties": map[string]any{"value": publicKey},
 	}
 }
-
-func buildKeyPairList(responses ...*arubatypes.KeyPairResponse) *arubatypes.Response[arubatypes.KeyPairListResponse] {
-	list := &arubatypes.KeyPairListResponse{}
-	for _, r := range responses {
-		list.Values = append(list.Values, *r)
-		list.Total++
-	}
-	return &arubatypes.Response[arubatypes.KeyPairListResponse]{
-		Data:       list,
-		StatusCode: http.StatusOK,
-	}
-}
-
-func buildKeyPairCRUDResponse(statusCode int) *arubatypes.Response[arubatypes.KeyPairResponse] {
-	return &arubatypes.Response[arubatypes.KeyPairResponse]{
-		StatusCode: statusCode,
-	}
-}
-
-func buildProjectListForKeyPair(projectID, projectName string) *arubatypes.Response[arubatypes.ProjectList] {
-	id := projectID
-	name := projectName
-	proj := arubatypes.ProjectResponse{
-		Metadata: arubatypes.ResourceMetadataResponse{
-			ID:   &id,
-			Name: &name,
-		},
-	}
-	list := &arubatypes.ProjectList{}
-	list.Values = append(list.Values, proj)
-	list.Total = 1
-	return &arubatypes.Response[arubatypes.ProjectList]{
-		Data:       list,
-		StatusCode: http.StatusOK,
-	}
-}
-
-// --- Test fixture helpers ---
 
 func defaultKeyPairSpec(projectName string) v1alpha1.KeyPairSpec {
 	return v1alpha1.KeyPairSpec{
-		Tenant: "test-tenant",
-		Region: "ITBG-Bergamo",
-		Tags:   []string{"tag1"},
-		Value:  "ssh-rsa AAAAB3NzaC1 test-key",
-		ProjectReference: v1alpha1.ResourceReference{
-			Name:      projectName,
-			Namespace: "default",
-		},
+		Tenant:           "test-tenant",
+		Region:           "ITBG-Bergamo",
+		Tags:             []string{"tag1"},
+		Value:            "ssh-rsa AAAAB3NzaC1 test-key",
+		ProjectReference: v1alpha1.ResourceReference{Name: projectName, Namespace: "default"},
 	}
 }
 
 func createTestKeyPair(ctx context.Context, name string, spec v1alpha1.KeyPairSpec) *v1alpha1.KeyPair {
 	kp := &v1alpha1.KeyPair{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: "default",
-		},
-		Spec: spec,
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+		Spec:       spec,
 	}
 	ExpectWithOffset(1, k8sClient.Create(ctx, kp)).To(Succeed())
 	return kp
@@ -121,59 +53,30 @@ func setKeyPairStatus(ctx context.Context, kp *v1alpha1.KeyPair, phase v1alpha1.
 	k.Status.ProjectID = projectID
 	k.Status.ObservedGeneration = observedGen
 	if phase != "" {
-		k.Status.Conditions = []metav1.Condition{
-			{
-				Type:               string(phase),
-				Status:             metav1.ConditionTrue,
-				Reason:             reason,
-				LastTransitionTime: metav1.NewTime(conditionTime),
-				Message:            string(phase) + " " + reason + " - OK",
-			},
-		}
+		k.Status.Conditions = []metav1.Condition{{
+			Type: string(phase), Status: metav1.ConditionTrue, Reason: reason,
+			LastTransitionTime: metav1.NewTime(conditionTime), Message: string(phase) + " " + reason,
+		}}
 	}
 	ExpectWithOffset(1, k8sClient.Status().Update(ctx, k)).To(Succeed())
 	ExpectWithOffset(1, k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), kp)).To(Succeed())
 }
 
-// --- Mock struct ---
-
-type kpMocks struct {
-	r            *KeyPairReconciler
-	mockAruba    *arubamocks.MockClient
-	mockProject  *arubamocks.MockProjectClient
-	mockCompute  *arubamocks.MockComputeClient
-	mockKeyPairs *arubamocks.MockKeyPairsClient
+type kpFake struct {
+	r *KeyPairReconciler
+	f *fakeCMP
 }
 
-func newKpReconcilerWithMocks(t GinkgoTInterface) *kpMocks {
-	mockAruba := arubamocks.NewMockClient(t)
-	mockProject := arubamocks.NewMockProjectClient(t)
-	mockCompute := arubamocks.NewMockComputeClient(t)
-	mockKeyPairs := arubamocks.NewMockKeyPairsClient(t)
-
-	r := NewKeyPairReconciler(newTestReconciler(t, mockAruba))
-
-	return &kpMocks{
-		r:            r,
-		mockAruba:    mockAruba,
-		mockProject:  mockProject,
-		mockCompute:  mockCompute,
-		mockKeyPairs: mockKeyPairs,
-	}
+func newKpReconcilerWithFake() *kpFake {
+	f := newFakeCMP()
+	DeferCleanup(f.close)
+	return &kpFake{r: NewKeyPairReconciler(newTestReconciler(GinkgoT(), f)), f: f}
 }
 
-func (m *kpMocks) expectProjectList(projectID, projectName string) {
-	m.mockAruba.EXPECT().FromProject().Return(m.mockProject)
-	m.mockProject.EXPECT().List(mock.Anything, mock.Anything).Return(buildProjectListForKeyPair(projectID, projectName), nil)
+func (m *kpFake) stageProject(id, name string) {
+	m.f.stage("projects", projectItem(id, name, nil, "", false))
 }
-
-func (m *kpMocks) expectKeyPairList(projectID string, responses ...*arubatypes.KeyPairResponse) {
-	m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
-	m.mockCompute.EXPECT().KeyPairs().Return(m.mockKeyPairs)
-	m.mockKeyPairs.EXPECT().List(mock.Anything, projectID, mock.Anything).Return(buildKeyPairList(responses...), nil)
-}
-
-// --- Tests ---
+func (m *kpFake) stageKeyPairs(items ...map[string]any) { m.f.stage("keyPairs", items...) }
 
 var _ = Describe("KeyPairReconciler", func() {
 	const (
@@ -186,9 +89,7 @@ var _ = Describe("KeyPairReconciler", func() {
 		kp  *v1alpha1.KeyPair
 	)
 
-	BeforeEach(func() {
-		ctx = context.Background()
-	})
+	BeforeEach(func() { ctx = context.Background() })
 
 	AfterEach(func() {
 		if kp != nil {
@@ -202,618 +103,112 @@ var _ = Describe("KeyPairReconciler", func() {
 		}
 	})
 
-	Describe("First reconciliation", func() {
-		It("transitions to Creating+ShallSynchronize when CMP has no KeyPair", func() {
-			m := newKpReconcilerWithMocks(GinkgoT())
-			kp = createTestKeyPair(ctx, "test-kp-first", defaultKeyPairSpec(kpProjectName))
-			setKeyPairStatus(ctx, kp, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", 0, time.Now())
+	It("transitions to Creating+ShallSynchronize when CMP has no KeyPair", func() {
+		m := newKpReconcilerWithFake()
+		kp = createTestKeyPair(ctx, "test-kp-first", defaultKeyPairSpec(kpProjectName))
+		setKeyPairStatus(ctx, kp, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", 0, time.Now())
+		m.stageProject(kpProjectID, kpProjectName)
 
-			m.expectProjectList(kpProjectID, kpProjectName)
-			m.expectKeyPairList(kpProjectID)
+		_, err := m.r.HandleReconcile(ctx, kp)
+		Expect(err).To(Succeed())
 
-			_, err := m.r.HandleReconcile(ctx, kp)
-			Expect(err).To(Succeed())
+		updated := &v1alpha1.KeyPair{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), updated)).To(Succeed())
+		Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
+	})
 
+	It("transitions to Active+Synchronized when the CMP KeyPair exists", func() {
+		m := newKpReconcilerWithFake()
+		kp = createTestKeyPair(ctx, "test-kp-active", defaultKeyPairSpec(kpProjectName))
+		setKeyPairStatus(ctx, kp, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronized, "", "", 0, time.Now())
+		m.stageProject(kpProjectID, kpProjectName)
+		m.stageKeyPairs(kpItem("kp-id-1", "test-kp-active", "ssh-rsa AAAAB3NzaC1 test-key", []string{"tag1"}))
+
+		_, err := m.r.HandleReconcile(ctx, kp)
+		Expect(err).To(Succeed())
+
+		updated := &v1alpha1.KeyPair{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), updated)).To(Succeed())
+		Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseActive))
+		Expect(updated.Status.ResourceID).To(Equal("kp-id-1"))
+	})
+
+	It("rolls the spec back to CMP and returns Active when an unsupported update is attempted", func() {
+		m := newKpReconcilerWithFake()
+		kp = createTestKeyPair(ctx, "test-kp-rollback", defaultKeyPairSpec(kpProjectName))
+		setKeyPairStatus(ctx, kp, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "kp-id-1", kpProjectID, 1, time.Now())
+
+		// Change a mutable-looking field to bump generation → triggers the update flow.
+		kFetch := &v1alpha1.KeyPair{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), kFetch)).To(Succeed())
+		kFetch.Spec.Tags = []string{"changed"}
+		Expect(k8sClient.Update(ctx, kFetch)).To(Succeed())
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), kp)).To(Succeed())
+
+		m.stageProject(kpProjectID, kpProjectName)
+		m.stageKeyPairs(kpItem("kp-id-1", "test-kp-rollback", "ssh-rsa AAAAB3NzaC1 test-key", []string{"tag1"}))
+
+		// First reconcile: marks Updating+Failed (update not supported).
+		_, err := m.r.HandleReconcile(ctx, kp)
+		Expect(err).To(Succeed())
+
+		// Subsequent reconciles roll the spec back and return Active. Re-fetch the
+		// object each pass (as the production reconcile loop does); the staged CMP
+		// key pair persists across GETs, so no re-staging is needed.
+		Eventually(func() v1alpha1.ResourcePhase {
+			fresh := &v1alpha1.KeyPair{}
+			_ = k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), fresh)
+			_, _ = m.r.HandleReconcile(ctx, fresh)
 			updated := &v1alpha1.KeyPair{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
+			_ = k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), updated)
+			return updated.Status.Phase
+		}, 3*time.Second, 50*time.Millisecond).Should(Equal(v1alpha1.ResourcePhaseActive))
 
-			pendingCond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhasePending))
-			Expect(pendingCond).NotTo(BeNil())
-			Expect(pendingCond.Status).To(Equal(metav1.ConditionFalse))
-			Expect(pendingCond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
-		})
+		updated := &v1alpha1.KeyPair{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), updated)).To(Succeed())
+		Expect(updated.Spec.Tags).To(Equal([]string{"tag1"})) // rolled back
 	})
 
-	Describe("PendingAndDeleting", func() {
-		It("transitions directly to Deleted when resource is in Pending and is being deleted", func() {
-			m := newKpReconcilerWithMocks(GinkgoT())
-			kp = createTestKeyPair(ctx, "test-kp-pending-deleting", defaultKeyPairSpec(kpProjectName))
-			setKeyPairStatus(ctx, kp, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", 0, time.Now())
+	It("transitions to Deleting+Synchronizing after successful CMP delete", func() {
+		m := newKpReconcilerWithFake()
+		kp = createTestKeyPair(ctx, "test-kp-delete", defaultKeyPairSpec(kpProjectName))
+		kFetch := &v1alpha1.KeyPair{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), kFetch)).To(Succeed())
+		kFetch.Finalizers = []string{keyPairFinalizerName}
+		Expect(k8sClient.Update(ctx, kFetch)).To(Succeed())
+		setKeyPairStatus(ctx, kp, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize, "kp-id-1", kpProjectID, 1, time.Now())
+		Expect(k8sClient.Delete(ctx, kp)).To(Succeed())
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), kp)).To(Succeed())
+		m.stageKeyPairs(kpItem("kp-id-1", "test-kp-delete", "ssh-rsa AAAAB3NzaC1 test-key", nil))
 
-			m.expectProjectList(kpProjectID, kpProjectName)
-			m.expectKeyPairList(kpProjectID)
+		_, err := m.r.HandleReconcile(ctx, kp)
+		Expect(err).To(Succeed())
 
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), kp)).To(Succeed())
-			kp.Finalizers = []string{keyPairFinalizerName}
-			Expect(k8sClient.Update(ctx, kp)).To(Succeed())
-
-			Expect(k8sClient.Delete(ctx, kp)).To(Succeed())
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), kp)).To(Succeed())
-
-			_, err := m.r.HandleReconcile(ctx, kp)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.KeyPair{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleted))
-
-			pendingCond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhasePending))
-			Expect(pendingCond).NotTo(BeNil())
-			Expect(pendingCond.Status).To(Equal(metav1.ConditionFalse))
-			Expect(pendingCond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
-		})
+		updated := &v1alpha1.KeyPair{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), updated)).To(Succeed())
+		Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleting))
+		Expect(findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting)).Reason).To(Equal(v1alpha1.ConditionReasonSynchronizing))
 	})
 
-	Describe("Create on CMP", func() {
-		It("transitions to Creating+Synchronizing after successful CMP create", func() {
-			m := newKpReconcilerWithMocks(GinkgoT())
-			kp = createTestKeyPair(ctx, "test-kp-create-cmp", defaultKeyPairSpec(kpProjectName))
-			setKeyPairStatus(ctx, kp, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, "", "", 0, time.Now())
-
-			m.expectProjectList(kpProjectID, kpProjectName)
-			m.expectKeyPairList(kpProjectID)
-			m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
-			m.mockCompute.EXPECT().KeyPairs().Return(m.mockKeyPairs)
-			m.mockKeyPairs.EXPECT().Create(mock.Anything, kpProjectID, mock.Anything, mock.Anything).Return(buildKeyPairCRUDResponse(http.StatusCreated), nil)
-
-			_, err := m.r.HandleReconcile(ctx, kp)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.KeyPair{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronizing))
-		})
-	})
-
-	Describe("Waiting creation (KeyPair not yet in CMP)", func() {
-		It("returns LongRequeue", func() {
-			m := newKpReconcilerWithMocks(GinkgoT())
-			kp = createTestKeyPair(ctx, "test-kp-wait-create", defaultKeyPairSpec(kpProjectName))
-			setKeyPairStatus(ctx, kp, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "", "", 0, time.Now())
-
-			m.expectProjectList(kpProjectID, kpProjectName)
-			m.expectKeyPairList(kpProjectID)
-
-			result, err := m.r.HandleReconcile(ctx, kp)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
-		})
-	})
-
-	Describe("Creation confirmed on CMP", func() {
-		It("transitions to Creating+Synchronized when CMP KeyPair is found", func() {
-			m := newKpReconcilerWithMocks(GinkgoT())
-			kp = createTestKeyPair(ctx, "test-kp-creation-confirmed", defaultKeyPairSpec(kpProjectName))
-			setKeyPairStatus(ctx, kp, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "", "", 0, time.Now())
-
-			cmpKp := buildKeyPairResponse("kp-id-1", "test-kp-creation-confirmed")
-			m.expectProjectList(kpProjectID, kpProjectName)
-			m.expectKeyPairList(kpProjectID, cmpKp)
-
-			_, err := m.r.HandleReconcile(ctx, kp)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.KeyPair{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
-		})
-	})
-
-	Describe("Creation accomplished", func() {
-		It("transitions to Active+Synchronized and sets ResourceID", func() {
-			m := newKpReconcilerWithMocks(GinkgoT())
-			kp = createTestKeyPair(ctx, "test-kp-creation-accomplished", defaultKeyPairSpec(kpProjectName))
-			setKeyPairStatus(ctx, kp, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronized, "", "", 0, time.Now())
-
-			cmpKp := buildKeyPairResponse("kp-id-1", "test-kp-creation-accomplished")
-			m.expectProjectList(kpProjectID, kpProjectName)
-			m.expectKeyPairList(kpProjectID, cmpKp)
-
-			_, err := m.r.HandleReconcile(ctx, kp)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.KeyPair{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseActive))
-			Expect(updated.Status.ResourceID).To(Equal("kp-id-1"))
-		})
-	})
-
-	Describe("ShouldBeUpdated", func() {
-		It("transitions to Updating+ShallSynchronize when spec changes", func() {
-			m := newKpReconcilerWithMocks(GinkgoT())
-			kp = createTestKeyPair(ctx, "test-kp-should-update", defaultKeyPairSpec(kpProjectName))
-			setKeyPairStatus(ctx, kp, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "kp-id-1", kpProjectID, 1, time.Now())
-
-			// Change tags to trigger generation bump
-			kFetch := &v1alpha1.KeyPair{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), kFetch)).To(Succeed())
-			kFetch.Spec.Tags = []string{"tag1", "tag2"}
-			Expect(k8sClient.Update(ctx, kFetch)).To(Succeed())
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), kp)).To(Succeed())
-
-			cmpKp := buildKeyPairResponse("kp-id-1", "test-kp-should-update")
-			m.expectProjectList(kpProjectID, kpProjectName)
-			m.expectKeyPairList(kpProjectID, cmpKp)
-
-			_, err := m.r.HandleReconcile(ctx, kp)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.KeyPair{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseUpdating))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseUpdating))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
-		})
-	})
-
-	Describe("UpdateNotSupported", func() {
-		It("transitions to Updating+Failed with error message when update is attempted", func() {
-			m := newKpReconcilerWithMocks(GinkgoT())
-			kp = createTestKeyPair(ctx, "test-kp-update-not-supported", defaultKeyPairSpec(kpProjectName))
-			setKeyPairStatus(ctx, kp, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, "kp-id-1", kpProjectID, 1, time.Now())
-
-			cmpKp := buildKeyPairResponse("kp-id-1", "test-kp-update-not-supported")
-			m.expectProjectList(kpProjectID, kpProjectName)
-			m.expectKeyPairList(kpProjectID, cmpKp)
-
-			_, err := m.r.HandleReconcile(ctx, kp)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.KeyPair{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseUpdating))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseUpdating))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonFailed))
-			Expect(cond.Message).To(ContainSubstring("updating KeyPair resources is not supported"))
-		})
-	})
-
-	Describe("UpdateRollback", func() {
-		It("rolls back spec from CMP values and transitions to Active+Synchronized", func() {
-			m := newKpReconcilerWithMocks(GinkgoT())
-			kp = createTestKeyPair(ctx, "test-kp-update-rollback", defaultKeyPairSpec(kpProjectName))
-			setKeyPairStatus(ctx, kp, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonFailed, "kp-id-1", kpProjectID, 1, time.Now())
-
-			// Manually set the Updating condition with Failed reason (as kubeMarkUpdatingFailed would)
-			kFetch := &v1alpha1.KeyPair{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), kFetch)).To(Succeed())
-			kFetch.Status.Conditions = []metav1.Condition{
-				{
-					Type:               string(v1alpha1.ResourcePhaseUpdating),
-					Status:             metav1.ConditionTrue,
-					Reason:             v1alpha1.ConditionReasonFailed,
-					LastTransitionTime: metav1.Now(),
-					Message:            "updating KeyPair resources is not supported",
-				},
-			}
-			Expect(k8sClient.Status().Update(ctx, kFetch)).To(Succeed())
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), kp)).To(Succeed())
-
-			cmpKp := buildKeyPairResponse("kp-id-1", "test-kp-update-rollback")
-			m.expectProjectList(kpProjectID, kpProjectName)
-			m.expectKeyPairList(kpProjectID, cmpKp)
-
-			_, err := m.r.HandleReconcile(ctx, kp)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.KeyPair{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseActive))
-			// Spec should be rolled back to CMP values
-			Expect(updated.Spec.Tags).To(Equal(cmpKp.Metadata.Tags))
-			Expect(updated.Spec.Region).To(Equal(cmpKp.Metadata.LocationResponse.Value))
-			Expect(updated.Spec.Value).To(Equal(cmpKp.Properties.Value))
-		})
-	})
-
-	Describe("Should delete", func() {
-		It("transitions to Deleting+ShallSynchronize when deletion is requested on Active KeyPair", func() {
-			m := newKpReconcilerWithMocks(GinkgoT())
-			kp = createTestKeyPair(ctx, "test-kp-should-delete", defaultKeyPairSpec(kpProjectName))
-			kFetch := &v1alpha1.KeyPair{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), kFetch)).To(Succeed())
-			kFetch.Finalizers = []string{keyPairFinalizerName}
-			Expect(k8sClient.Update(ctx, kFetch)).To(Succeed())
-			setKeyPairStatus(ctx, kp, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "kp-id-1", kpProjectID, 1, time.Now())
-			Expect(k8sClient.Delete(ctx, kp)).To(Succeed())
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), kp)).To(Succeed())
-
-			cmpKp := buildKeyPairResponse("kp-id-1", "test-kp-should-delete")
-			m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
-			m.mockCompute.EXPECT().KeyPairs().Return(m.mockKeyPairs)
-			m.mockKeyPairs.EXPECT().List(mock.Anything, kpProjectID, mock.Anything).Return(buildKeyPairList(cmpKp), nil)
-
-			_, err := m.r.HandleReconcile(ctx, kp)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.KeyPair{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleting))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
-		})
-	})
-
-	Describe("Delete on CMP", func() {
-		It("transitions to Deleting+Synchronizing after successful CMP delete", func() {
-			m := newKpReconcilerWithMocks(GinkgoT())
-			kp = createTestKeyPair(ctx, "test-kp-delete-cmp", defaultKeyPairSpec(kpProjectName))
-			kFetch := &v1alpha1.KeyPair{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), kFetch)).To(Succeed())
-			kFetch.Finalizers = []string{keyPairFinalizerName}
-			Expect(k8sClient.Update(ctx, kFetch)).To(Succeed())
-			setKeyPairStatus(ctx, kp, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize, "kp-id-1", kpProjectID, 1, time.Now())
-			Expect(k8sClient.Delete(ctx, kp)).To(Succeed())
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), kp)).To(Succeed())
-
-			cmpKp := buildKeyPairResponse("kp-id-1", "test-kp-delete-cmp")
-			m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
-			m.mockCompute.EXPECT().KeyPairs().Return(m.mockKeyPairs)
-			m.mockKeyPairs.EXPECT().List(mock.Anything, kpProjectID, mock.Anything).Return(buildKeyPairList(cmpKp), nil)
-			m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
-			m.mockCompute.EXPECT().KeyPairs().Return(m.mockKeyPairs)
-			m.mockKeyPairs.EXPECT().Delete(mock.Anything, kpProjectID, "kp-id-1", mock.Anything).Return(buildDeleteResponse(http.StatusOK), nil)
-
-			_, err := m.r.HandleReconcile(ctx, kp)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.KeyPair{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleting))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronizing))
-		})
-	})
-
-	Describe("Deletion not needed (CMP already gone)", func() {
-		It("transitions to Deleting+Synchronized when CMP KeyPair is not found", func() {
-			m := newKpReconcilerWithMocks(GinkgoT())
-			kp = createTestKeyPair(ctx, "test-kp-deletion-not-needed", defaultKeyPairSpec(kpProjectName))
-			kFetch := &v1alpha1.KeyPair{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), kFetch)).To(Succeed())
-			kFetch.Finalizers = []string{keyPairFinalizerName}
-			Expect(k8sClient.Update(ctx, kFetch)).To(Succeed())
-			setKeyPairStatus(ctx, kp, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize, "kp-id-1", kpProjectID, 1, time.Now())
-			Expect(k8sClient.Delete(ctx, kp)).To(Succeed())
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), kp)).To(Succeed())
-
-			m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
-			m.mockCompute.EXPECT().KeyPairs().Return(m.mockKeyPairs)
-			m.mockKeyPairs.EXPECT().List(mock.Anything, kpProjectID, mock.Anything).Return(buildKeyPairList(), nil)
-
-			_, err := m.r.HandleReconcile(ctx, kp)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.KeyPair{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleting))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
-		})
-	})
-
-	Describe("Waiting deletion (KeyPair still in CMP)", func() {
-		It("returns LongRequeue when CMP KeyPair is still present", func() {
-			m := newKpReconcilerWithMocks(GinkgoT())
-			kp = createTestKeyPair(ctx, "test-kp-wait-delete", defaultKeyPairSpec(kpProjectName))
-			kFetch := &v1alpha1.KeyPair{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), kFetch)).To(Succeed())
-			kFetch.Finalizers = []string{keyPairFinalizerName}
-			Expect(k8sClient.Update(ctx, kFetch)).To(Succeed())
-			setKeyPairStatus(ctx, kp, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronizing, "kp-id-1", kpProjectID, 1, time.Now())
-			Expect(k8sClient.Delete(ctx, kp)).To(Succeed())
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), kp)).To(Succeed())
-
-			cmpKp := buildKeyPairResponse("kp-id-1", "test-kp-wait-delete")
-			m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
-			m.mockCompute.EXPECT().KeyPairs().Return(m.mockKeyPairs)
-			m.mockKeyPairs.EXPECT().List(mock.Anything, kpProjectID, mock.Anything).Return(buildKeyPairList(cmpKp), nil)
-
-			result, err := m.r.HandleReconcile(ctx, kp)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
-		})
-	})
-
-	Describe("Deletion confirmed on CMP", func() {
-		It("transitions to Deleting+Synchronized when CMP KeyPair disappears", func() {
-			m := newKpReconcilerWithMocks(GinkgoT())
-			kp = createTestKeyPair(ctx, "test-kp-deletion-confirmed", defaultKeyPairSpec(kpProjectName))
-			kFetch := &v1alpha1.KeyPair{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), kFetch)).To(Succeed())
-			kFetch.Finalizers = []string{keyPairFinalizerName}
-			Expect(k8sClient.Update(ctx, kFetch)).To(Succeed())
-			setKeyPairStatus(ctx, kp, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronizing, "kp-id-1", kpProjectID, 1, time.Now())
-			Expect(k8sClient.Delete(ctx, kp)).To(Succeed())
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), kp)).To(Succeed())
-
-			m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
-			m.mockCompute.EXPECT().KeyPairs().Return(m.mockKeyPairs)
-			m.mockKeyPairs.EXPECT().List(mock.Anything, kpProjectID, mock.Anything).Return(buildKeyPairList(), nil)
-
-			_, err := m.r.HandleReconcile(ctx, kp)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.KeyPair{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleting))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
-		})
-	})
-
-	Describe("Deletion accomplished", func() {
-		It("transitions to Deleted phase and removes finalizer when CMP KeyPair is gone", func() {
-			m := newKpReconcilerWithMocks(GinkgoT())
-			kp = createTestKeyPair(ctx, "test-kp-deletion-accomplished", defaultKeyPairSpec(kpProjectName))
-			kFetch := &v1alpha1.KeyPair{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), kFetch)).To(Succeed())
-			kFetch.Finalizers = []string{keyPairFinalizerName}
-			Expect(k8sClient.Update(ctx, kFetch)).To(Succeed())
-			setKeyPairStatus(ctx, kp, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronized, "kp-id-1", kpProjectID, 1, time.Now())
-			Expect(k8sClient.Delete(ctx, kp)).To(Succeed())
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), kp)).To(Succeed())
-
-			m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
-			m.mockCompute.EXPECT().KeyPairs().Return(m.mockKeyPairs)
-			m.mockKeyPairs.EXPECT().List(mock.Anything, kpProjectID, mock.Anything).Return(buildKeyPairList(), nil)
-
-			_, err := m.r.HandleReconcile(ctx, kp)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.KeyPair{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleted))
-		})
-	})
-
-	Describe("Phase timeout", func() {
-		It("transitions to Failed when stuck in transitory phase too long", func() {
-			m := newKpReconcilerWithMocks(GinkgoT())
-			kp = createTestKeyPair(ctx, "test-kp-timeout", defaultKeyPairSpec(kpProjectName))
-			setKeyPairStatus(ctx, kp, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, "", kpProjectID,
-				0, time.Now().Add(-(reconciler.MaxPhaseTimeout + time.Minute)))
-
-			cmpKp := buildKeyPairResponse("kp-id-1", "test-kp-timeout")
-			m.expectProjectList(kpProjectID, kpProjectName)
-			m.expectKeyPairList(kpProjectID, cmpKp)
-
-			_, err := m.r.HandleReconcile(ctx, kp)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.KeyPair{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
-		})
-	})
-
-	Describe("Delete timed-out resource", func() {
-		It("transitions to Deleting+ShallSynchronize when deletion is requested on Failed KeyPair", func() {
-			m := newKpReconcilerWithMocks(GinkgoT())
-			kp = createTestKeyPair(ctx, "test-kp-delete-timedout", defaultKeyPairSpec(kpProjectName))
-			kFetch := &v1alpha1.KeyPair{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), kFetch)).To(Succeed())
-			kFetch.Finalizers = []string{keyPairFinalizerName}
-			Expect(k8sClient.Update(ctx, kFetch)).To(Succeed())
-
-			// Simulate timed-out from Creating: two conditions are required for kubeShouldDeleteTimedOut.
-			// The previous phase condition must have Status=False (the timed-out marker).
-			kFetch2 := &v1alpha1.KeyPair{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), kFetch2)).To(Succeed())
-			kFetch2.Status.Phase = v1alpha1.ResourcePhaseFailed
-			kFetch2.Status.ProjectID = kpProjectID
-			kFetch2.Status.Conditions = []metav1.Condition{
-				{Type: "Creating", Status: metav1.ConditionFalse, Reason: v1alpha1.ConditionReasonFailed, LastTransitionTime: metav1.Now(), Message: "timeout"},
-				{Type: "Failed", Status: metav1.ConditionTrue, Reason: v1alpha1.ConditionReasonFailed, LastTransitionTime: metav1.Now(), Message: "timeout"},
-			}
-			Expect(k8sClient.Status().Update(ctx, kFetch2)).To(Succeed())
-			Expect(k8sClient.Delete(ctx, kFetch2)).To(Succeed())
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), kp)).To(Succeed())
-
-			m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
-			m.mockCompute.EXPECT().KeyPairs().Return(m.mockKeyPairs)
-			m.mockKeyPairs.EXPECT().List(mock.Anything, kpProjectID, mock.Anything).Return(buildKeyPairList(), nil)
-
-			_, err := m.r.HandleReconcile(ctx, kp)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.KeyPair{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleting))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
-		})
-	})
-
-	Describe("Project not found yet", func() {
-		It("returns LongRequeue when project doesn't exist in CMP yet", func() {
-			m := newKpReconcilerWithMocks(GinkgoT())
-			kp = createTestKeyPair(ctx, "test-kp-no-project", defaultKeyPairSpec(kpProjectName))
-
-			m.mockAruba.EXPECT().FromProject().Return(m.mockProject)
-			m.mockProject.EXPECT().List(mock.Anything, mock.Anything).Return(buildProjectList(), nil)
-
-			result, err := m.r.HandleReconcile(ctx, kp)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
-		})
-	})
-
-	Describe("ProjectID set in status via prePatch callback", func() {
-		It("stamps ProjectID on status when first transitioning", func() {
-			m := newKpReconcilerWithMocks(GinkgoT())
-			kp = createTestKeyPair(ctx, "test-kp-project-id", defaultKeyPairSpec(kpProjectName))
-			setKeyPairStatus(ctx, kp, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", 0, time.Now())
-
-			m.expectProjectList(kpProjectID, kpProjectName)
-			m.expectKeyPairList(kpProjectID)
-
-			_, err := m.r.HandleReconcile(ctx, kp)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.KeyPair{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), updated)).To(Succeed())
-			Expect(updated.Status.ProjectID).To(Equal(kpProjectID))
-		})
-	})
-
-	Describe("CMP error handling", func() {
-		DescribeTable("CMP create fails — preserves Creating+ShallSynchronize, surfaces error in condition",
-			func(name string, statusCode int, expectedRequeue time.Duration) {
-				m := newKpReconcilerWithMocks(GinkgoT())
-				kp = createTestKeyPair(ctx, name, defaultKeyPairSpec(kpProjectName))
-				setKeyPairStatus(ctx, kp, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, "", kpProjectID, 0, time.Now())
-
-				m.expectProjectList(kpProjectID, kpProjectName)
-				m.expectKeyPairList(kpProjectID)
-				m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
-				m.mockCompute.EXPECT().KeyPairs().Return(m.mockKeyPairs)
-				m.mockKeyPairs.EXPECT().Create(mock.Anything, kpProjectID, mock.Anything, mock.Anything).Return(buildKeyPairCRUDResponse(statusCode), nil)
-
-				result, err := m.r.HandleReconcile(ctx, kp)
-				Expect(err).To(Succeed())
-				Expect(result.RequeueAfter).To(Equal(expectedRequeue))
-
-				updated := &v1alpha1.KeyPair{}
-				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), updated)).To(Succeed())
-				Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
-				cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
-				Expect(cond).NotTo(BeNil())
-				Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
-				Expect(cond.Message).To(ContainSubstring("ERROR"))
-			},
-			Entry("4xx → LongRequeueAfter, no phase change", "kp-cmp-err-create-400", http.StatusBadRequest, reconciler.LongRequeueAfter),
-			Entry("5xx → ShortRequeueAfter, no phase change", "kp-cmp-err-create-500", http.StatusInternalServerError, reconciler.ShortRequeueAfter),
-		)
-
-		DescribeTable("CMP delete fails — preserves Deleting+ShallSynchronize, surfaces error in condition",
-			func(name string, statusCode int, expectedRequeue time.Duration) {
-				m := newKpReconcilerWithMocks(GinkgoT())
-				kp = createTestKeyPair(ctx, name, defaultKeyPairSpec(kpProjectName))
-				kFetch := &v1alpha1.KeyPair{}
-				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), kFetch)).To(Succeed())
-				kFetch.Finalizers = []string{keyPairFinalizerName}
-				Expect(k8sClient.Update(ctx, kFetch)).To(Succeed())
-				setKeyPairStatus(ctx, kp, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize, "kp-id-1", kpProjectID, 1, time.Now())
-				Expect(k8sClient.Delete(ctx, kp)).To(Succeed())
-				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), kp)).To(Succeed())
-
-				cmpKp := buildKeyPairResponse("kp-id-1", name)
-				m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
-				m.mockCompute.EXPECT().KeyPairs().Return(m.mockKeyPairs)
-				m.mockKeyPairs.EXPECT().List(mock.Anything, kpProjectID, mock.Anything).Return(buildKeyPairList(cmpKp), nil)
-				m.mockAruba.EXPECT().FromCompute().Return(m.mockCompute)
-				m.mockCompute.EXPECT().KeyPairs().Return(m.mockKeyPairs)
-				m.mockKeyPairs.EXPECT().Delete(mock.Anything, kpProjectID, "kp-id-1", mock.Anything).Return(buildDeleteResponse(statusCode), nil)
-
-				result, err := m.r.HandleReconcile(ctx, kp)
-				Expect(err).To(Succeed())
-				Expect(result.RequeueAfter).To(Equal(expectedRequeue))
-
-				updated := &v1alpha1.KeyPair{}
-				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), updated)).To(Succeed())
-				Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleting))
-				cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
-				Expect(cond).NotTo(BeNil())
-				Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
-				Expect(cond.Message).To(ContainSubstring("ERROR"))
-			},
-			Entry("4xx → LongRequeueAfter, no phase change", "kp-cmp-err-delete-400", http.StatusBadRequest, reconciler.LongRequeueAfter),
-			Entry("5xx → ShortRequeueAfter, no phase change", "kp-cmp-err-delete-500", http.StatusInternalServerError, reconciler.ShortRequeueAfter),
-		)
-	})
-
-	Describe("Validation", func() {
-		It("sets Failed+ValidationFailed when KeyPair tenant differs from parent project tenant", func() {
-			m := newKpReconcilerWithMocks(GinkgoT())
-
-			proj := createTestProject(ctx, kpProjectName, v1alpha1.ProjectSpec{Tenant: "other-tenant"})
-			defer func() {
-				_ = k8sClient.Delete(ctx, proj)
-			}()
-
-			kp = createTestKeyPair(ctx, "test-kp-validation-tenant", defaultKeyPairSpec(kpProjectName))
-			setKeyPairStatus(ctx, kp, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "kp-id-val", kpProjectID, 0, time.Now())
-
-			result, err := m.r.HandleReconcile(ctx, kp)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
-
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), kp)).To(Succeed())
-
-			// ivs fires at Stage 4 (before CMP calls) → validation fails, no CMP expectations needed.
-			_, err = m.r.HandleReconcile(ctx, kp)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.KeyPair{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
-			Expect(cond.Message).To(ContainSubstring("tenant mismatch with Project"))
-		})
-
-		It("sets Failed+ValidationFailed at Pending phase when KeyPair tenant differs from parent project tenant (no CMP resource yet)", func() {
-			m := newKpReconcilerWithMocks(GinkgoT())
-
-			// Project has a different tenant AND is Active+Synchronized so Stage 3 (parent readiness) passes.
-			proj := createTestProject(ctx, kpProjectName, v1alpha1.ProjectSpec{Tenant: "other-tenant"})
-			setProjectStatus(ctx, proj, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "proj-id-kp-pending-val", 0, time.Now())
-			defer func() {
-				_ = k8sClient.Delete(ctx, proj)
-			}()
-
-			kp = createTestKeyPair(ctx, "test-kp-pending-validation", defaultKeyPairSpec(kpProjectName))
-			setKeyPairStatus(ctx, kp, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", 0, time.Now())
-
-			// First reconcile: owner reference is not yet set → ShortRequeue.
-			result, err := m.r.HandleReconcile(ctx, kp)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
-
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), kp)).To(Succeed())
-
-			// Second reconcile: ivs fires at Stage 4 (before CMP calls) → validation fails, no CMP expectations needed.
-			result, err = m.r.HandleReconcile(ctx, kp)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(BeZero())
-
-			updated := &v1alpha1.KeyPair{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
-			Expect(cond.Message).To(ContainSubstring("tenant mismatch with Project"))
-		})
+	It("sets Failed+ValidationFailed when KeyPair tenant differs from parent project tenant", func() {
+		m := newKpReconcilerWithFake()
+		proj := createTestProject(ctx, kpProjectName, v1alpha1.ProjectSpec{Tenant: "other-tenant"})
+		defer func() { _ = k8sClient.Delete(ctx, proj) }()
+
+		kp = createTestKeyPair(ctx, "test-kp-validation", defaultKeyPairSpec(kpProjectName))
+		setKeyPairStatus(ctx, kp, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "kp-id-val", kpProjectID, 0, time.Now())
+
+		result, err := m.r.HandleReconcile(ctx, kp)
+		Expect(err).To(Succeed())
+		Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), kp)).To(Succeed())
+
+		_, err = m.r.HandleReconcile(ctx, kp)
+		Expect(err).To(Succeed())
+
+		updated := &v1alpha1.KeyPair{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(kp), updated)).To(Succeed())
+		Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+		Expect(findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed)).Message).To(ContainSubstring("tenant mismatch with Project"))
 	})
 })

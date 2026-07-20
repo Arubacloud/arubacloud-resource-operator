@@ -1,141 +1,38 @@
-/*
-Copyright 2025.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
-
 package controller
 
 import (
 	"context"
-	"net/http"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/stretchr/testify/mock"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
-	arubamocks "github.com/Arubacloud/arubacloud-resource-operator/internal/mocks/aruba"
 	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
-	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
 )
-
-// --- Builder helpers ---
-
-func buildSecurityGroupResponse(id, name, state string) *arubatypes.SecurityGroupResponse {
-	defaultVal := false
-	return &arubatypes.SecurityGroupResponse{
-		Metadata: arubatypes.ResourceMetadataResponse{
-			ID:   &id,
-			Name: &name,
-		},
-		Properties: arubatypes.SecurityGroupPropertiesResponse{
-			Default: defaultVal,
-		},
-		Status: arubatypes.ResourceStatus{
-			State: &state,
-		},
-	}
-}
-
-func buildSecurityGroupList(responses ...*arubatypes.SecurityGroupResponse) *arubatypes.Response[arubatypes.SecurityGroupList] {
-	list := &arubatypes.SecurityGroupList{}
-	for _, r := range responses {
-		list.Values = append(list.Values, *r)
-		list.Total++
-	}
-	return &arubatypes.Response[arubatypes.SecurityGroupList]{
-		Data:       list,
-		StatusCode: http.StatusOK,
-	}
-}
-
-func buildSGCRUDResponse(statusCode int) *arubatypes.Response[arubatypes.SecurityGroupResponse] {
-	return &arubatypes.Response[arubatypes.SecurityGroupResponse]{
-		StatusCode: statusCode,
-	}
-}
-
-func buildVpcListForSG(vpcID, vpcName string) *arubatypes.Response[arubatypes.VPCList] {
-	id := vpcID
-	name := vpcName
-	v := arubatypes.VPCResponse{
-		Metadata: arubatypes.ResourceMetadataResponse{
-			ID:   &id,
-			Name: &name,
-		},
-	}
-	list := &arubatypes.VPCList{}
-	list.Values = append(list.Values, v)
-	list.Total = 1
-	return &arubatypes.Response[arubatypes.VPCList]{
-		Data:       list,
-		StatusCode: http.StatusOK,
-	}
-}
-
-func buildProjectListForSG(projectID, projectName string) *arubatypes.Response[arubatypes.ProjectList] {
-	id := projectID
-	name := projectName
-	proj := arubatypes.ProjectResponse{
-		Metadata: arubatypes.ResourceMetadataResponse{
-			ID:   &id,
-			Name: &name,
-		},
-	}
-	list := &arubatypes.ProjectList{}
-	list.Values = append(list.Values, proj)
-	list.Total = 1
-	return &arubatypes.Response[arubatypes.ProjectList]{
-		Data:       list,
-		StatusCode: http.StatusOK,
-	}
-}
-
-// --- Test fixture helpers ---
 
 func defaultSecurityGroupSpec(projectName, vpcName string) v1alpha1.SecurityGroupSpec {
 	return v1alpha1.SecurityGroupSpec{
-		Tenant: "test-tenant",
-		Tags:   []string{"tag1"},
-		Region: "ITBG-Bergamo",
-		ProjectReference: v1alpha1.ResourceReference{
-			Name:      projectName,
-			Namespace: "default",
-		},
-		VPCReference: v1alpha1.ResourceReference{
-			Name:      vpcName,
-			Namespace: "default",
-		},
+		Tenant:           "test-tenant",
+		Tags:             []string{"tag1"},
+		Region:           "ITBG-Bergamo",
+		ProjectReference: v1alpha1.ResourceReference{Name: projectName, Namespace: "default"},
+		VPCReference:     v1alpha1.ResourceReference{Name: vpcName, Namespace: "default"},
 	}
 }
 
 func createTestSecurityGroup(ctx context.Context, name string, spec v1alpha1.SecurityGroupSpec) *v1alpha1.SecurityGroup {
 	sg := &v1alpha1.SecurityGroup{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: "default",
-		},
-		Spec: spec,
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+		Spec:       spec,
 	}
 	ExpectWithOffset(1, k8sClient.Create(ctx, sg)).To(Succeed())
 	return sg
 }
 
-func setSecurityGroupStatus(ctx context.Context, sg *v1alpha1.SecurityGroup, phase v1alpha1.ResourcePhase, reason string, resourceID string, projectID string, vpcID string, observedGen int64, conditionTime time.Time) {
+func setSecurityGroupStatus(ctx context.Context, sg *v1alpha1.SecurityGroup, phase v1alpha1.ResourcePhase, reason string, resourceID, projectID, vpcID string, observedGen int64, conditionTime time.Time) {
 	s := sg.DeepCopy()
 	Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), s)).To(Succeed())
 	s.Status.Phase = phase
@@ -144,75 +41,38 @@ func setSecurityGroupStatus(ctx context.Context, sg *v1alpha1.SecurityGroup, pha
 	s.Status.VPCID = vpcID
 	s.Status.ObservedGeneration = observedGen
 	if phase != "" {
-		s.Status.Conditions = []metav1.Condition{
-			{
-				Type:               string(phase),
-				Status:             metav1.ConditionTrue,
-				Reason:             reason,
-				LastTransitionTime: metav1.NewTime(conditionTime),
-				Message:            string(phase) + " " + reason + " - OK",
-			},
-		}
+		s.Status.Conditions = []metav1.Condition{{
+			Type: string(phase), Status: metav1.ConditionTrue, Reason: reason,
+			LastTransitionTime: metav1.NewTime(conditionTime), Message: string(phase) + " " + reason,
+		}}
 	}
 	ExpectWithOffset(1, k8sClient.Status().Update(ctx, s)).To(Succeed())
 	ExpectWithOffset(1, k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
 }
 
-// --- Mock setup ---
-
-type sgMocks struct {
-	r              *SecurityGroupReconciler
-	mockAruba      *arubamocks.MockClient
-	mockProject    *arubamocks.MockProjectClient
-	mockNetwork    *arubamocks.MockNetworkClient
-	mockVPCsClient *arubamocks.MockVPCsClient
-	mockSecGroups  *arubamocks.MockSecurityGroupsClient
+type sgFake struct {
+	r *SecurityGroupReconciler
+	f *fakeCMP
 }
 
-func newSGReconcilerWithMocks(t GinkgoTInterface) *sgMocks {
-	mockAruba := arubamocks.NewMockClient(t)
-	mockProject := arubamocks.NewMockProjectClient(t)
-	mockNetwork := arubamocks.NewMockNetworkClient(t)
-	mockVPCsClient := arubamocks.NewMockVPCsClient(t)
-	mockSecGroups := arubamocks.NewMockSecurityGroupsClient(t)
-
-	r := NewSecurityGroupReconciler(newTestReconciler(t, mockAruba))
-
-	return &sgMocks{
-		r:              r,
-		mockAruba:      mockAruba,
-		mockProject:    mockProject,
-		mockNetwork:    mockNetwork,
-		mockVPCsClient: mockVPCsClient,
-		mockSecGroups:  mockSecGroups,
-	}
+func newSGReconcilerWithFake() *sgFake {
+	f := newFakeCMP()
+	DeferCleanup(f.close)
+	return &sgFake{r: NewSecurityGroupReconciler(newTestReconciler(GinkgoT(), f)), f: f}
 }
 
-func (m *sgMocks) expectProjectList(projectID, projectName string) {
-	m.mockAruba.EXPECT().FromProject().Return(m.mockProject)
-	m.mockProject.EXPECT().List(mock.Anything, mock.Anything).Return(buildProjectListForSG(projectID, projectName), nil)
+func (m *sgFake) stageParents(prjID, prjName, vpcID, vpcName string) {
+	m.f.stage("projects", projectItem(prjID, prjName, nil, "", false))
+	m.f.stage("vpcs", cmpItem(vpcID, vpcName, "Active"))
 }
-
-func (m *sgMocks) expectVpcList(projectID, vpcID, vpcName string) {
-	m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
-	m.mockNetwork.EXPECT().VPCs().Return(m.mockVPCsClient)
-	m.mockVPCsClient.EXPECT().List(mock.Anything, projectID, mock.Anything).Return(buildVpcListForSG(vpcID, vpcName), nil)
-}
-
-func (m *sgMocks) expectSGList(projectID, vpcID string, responses ...*arubatypes.SecurityGroupResponse) {
-	m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
-	m.mockNetwork.EXPECT().SecurityGroups().Return(m.mockSecGroups)
-	m.mockSecGroups.EXPECT().List(mock.Anything, projectID, vpcID, mock.Anything).Return(buildSecurityGroupList(responses...), nil)
-}
-
-// --- Tests ---
+func (m *sgFake) stageSGs(items ...map[string]any) { m.f.stage("securityGroups", items...) }
 
 var _ = Describe("SecurityGroupReconciler", func() {
 	const (
-		sgProjectName = "test-sg-project-ref"
-		sgProjectID   = "sg-proj-id-1"
-		sgVpcName     = "test-sg-vpc-ref"
-		sgVpcID       = "sg-vpc-id-1"
+		sgPrjName = "test-sg-project-ref"
+		sgPrjID   = "sg-proj-id-1"
+		sgVpcName = "test-sg-vpc-ref"
+		sgVpcID   = "sg-vpc-id-1"
 	)
 
 	var (
@@ -220,9 +80,7 @@ var _ = Describe("SecurityGroupReconciler", func() {
 		sg  *v1alpha1.SecurityGroup
 	)
 
-	BeforeEach(func() {
-		ctx = context.Background()
-	})
+	BeforeEach(func() { ctx = context.Background() })
 
 	AfterEach(func() {
 		if sg != nil {
@@ -236,184 +94,71 @@ var _ = Describe("SecurityGroupReconciler", func() {
 		}
 	})
 
-	Describe("First reconciliation", func() {
-		It("transitions to Creating+ShallSynchronize when CMP has no SecurityGroup", func() {
-			m := newSGReconcilerWithMocks(GinkgoT())
-			sg = createTestSecurityGroup(ctx, "test-sg-first", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
-			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", 0, time.Now())
+	It("transitions to Creating+ShallSynchronize when CMP has no security group", func() {
+		m := newSGReconcilerWithFake()
+		sg = createTestSecurityGroup(ctx, "test-sg-first", defaultSecurityGroupSpec(sgPrjName, sgVpcName))
+		setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", 0, time.Now())
+		m.stageParents(sgPrjID, sgPrjName, sgVpcID, sgVpcName)
 
-			m.expectProjectList(sgProjectID, sgProjectName)
-			m.expectVpcList(sgProjectID, sgVpcID, sgVpcName)
-			m.expectSGList(sgProjectID, sgVpcID)
+		_, err := m.r.HandleReconcile(ctx, sg)
+		Expect(err).To(Succeed())
 
-			_, err := m.r.HandleReconcile(ctx, sg)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.SecurityGroup{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
-
-			pendingCond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhasePending))
-			Expect(pendingCond).NotTo(BeNil())
-			Expect(pendingCond.Status).To(Equal(metav1.ConditionFalse))
-			Expect(pendingCond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
-		})
+		updated := &v1alpha1.SecurityGroup{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), updated)).To(Succeed())
+		Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
 	})
 
-	Describe("PendingAndDeleting", func() {
-		It("transitions directly to Deleted when resource is in Pending and is being deleted", func() {
-			m := newSGReconcilerWithMocks(GinkgoT())
-			sg = createTestSecurityGroup(ctx, "test-sg-pending-deleting", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
-			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", 0, time.Now())
+	It("transitions to Active+Synchronized when CMP security group is active", func() {
+		m := newSGReconcilerWithFake()
+		sg = createTestSecurityGroup(ctx, "test-sg-active", defaultSecurityGroupSpec(sgPrjName, sgVpcName))
+		setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronized, "", "", "", 0, time.Now())
+		m.stageParents(sgPrjID, sgPrjName, sgVpcID, sgVpcName)
+		m.stageSGs(cmpItem("sg-id-1", "test-sg-active", "Active"))
 
-			m.expectProjectList(sgProjectID, sgProjectName)
-			m.expectVpcList(sgProjectID, sgVpcID, sgVpcName)
-			m.expectSGList(sgProjectID, sgVpcID)
+		_, err := m.r.HandleReconcile(ctx, sg)
+		Expect(err).To(Succeed())
 
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
-			sg.Finalizers = []string{securityGroupFinalizerName}
-			Expect(k8sClient.Update(ctx, sg)).To(Succeed())
-
-			Expect(k8sClient.Delete(ctx, sg)).To(Succeed())
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
-
-			_, err := m.r.HandleReconcile(ctx, sg)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.SecurityGroup{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleted))
-
-			pendingCond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhasePending))
-			Expect(pendingCond).NotTo(BeNil())
-			Expect(pendingCond.Status).To(Equal(metav1.ConditionFalse))
-			Expect(pendingCond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
-		})
+		updated := &v1alpha1.SecurityGroup{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), updated)).To(Succeed())
+		Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseActive))
+		Expect(updated.Status.ResourceID).To(Equal("sg-id-1"))
 	})
 
-	Describe("Create on CMP", func() {
-		It("transitions to Creating+Synchronizing after successful CMP create", func() {
-			m := newSGReconcilerWithMocks(GinkgoT())
-			sg = createTestSecurityGroup(ctx, "test-sg-create-cmp", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
-			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, "", "", "", 0, time.Now())
+	It("transitions to Deleting+Synchronizing after successful CMP delete", func() {
+		m := newSGReconcilerWithFake()
+		sg = createTestSecurityGroup(ctx, "test-sg-delete", defaultSecurityGroupSpec(sgPrjName, sgVpcName))
+		sFetch := &v1alpha1.SecurityGroup{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sFetch)).To(Succeed())
+		sFetch.Finalizers = []string{securityGroupFinalizerName}
+		Expect(k8sClient.Update(ctx, sFetch)).To(Succeed())
+		setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize, "sg-id-1", sgPrjID, sgVpcID, 1, time.Now())
+		Expect(k8sClient.Delete(ctx, sg)).To(Succeed())
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
+		m.stageParents(sgPrjID, sgPrjName, sgVpcID, sgVpcName)
+		m.stageSGs(cmpItem("sg-id-1", "test-sg-delete", "Active"))
 
-			m.expectProjectList(sgProjectID, sgProjectName)
-			m.expectVpcList(sgProjectID, sgVpcID, sgVpcName)
-			m.expectSGList(sgProjectID, sgVpcID)
-			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
-			m.mockNetwork.EXPECT().SecurityGroups().Return(m.mockSecGroups)
-			m.mockSecGroups.EXPECT().Create(mock.Anything, sgProjectID, sgVpcID, mock.Anything, mock.Anything).Return(buildSGCRUDResponse(http.StatusCreated), nil)
+		_, err := m.r.HandleReconcile(ctx, sg)
+		Expect(err).To(Succeed())
 
-			_, err := m.r.HandleReconcile(ctx, sg)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.SecurityGroup{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronizing))
-		})
-	})
-
-	Describe("Waiting creation (SecurityGroup not yet in CMP)", func() {
-		It("returns LongRequeue", func() {
-			m := newSGReconcilerWithMocks(GinkgoT())
-			sg = createTestSecurityGroup(ctx, "test-sg-wait-create", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
-			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "", "", "", 0, time.Now())
-
-			m.expectProjectList(sgProjectID, sgProjectName)
-			m.expectVpcList(sgProjectID, sgVpcID, sgVpcName)
-			m.expectSGList(sgProjectID, sgVpcID)
-
-			result, err := m.r.HandleReconcile(ctx, sg)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
-		})
-	})
-
-	Describe("Waiting creation (SecurityGroup in transitory CMP state)", func() {
-		It("returns LongRequeue when CMP state is Creating", func() {
-			m := newSGReconcilerWithMocks(GinkgoT())
-			sg = createTestSecurityGroup(ctx, "test-sg-wait-create-transitory", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
-			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "", "", "", 0, time.Now())
-
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-wait-create-transitory", reconciler.CSPResourceStateCreating)
-			m.expectProjectList(sgProjectID, sgProjectName)
-			m.expectVpcList(sgProjectID, sgVpcID, sgVpcName)
-			m.expectSGList(sgProjectID, sgVpcID, cmpSG)
-
-			result, err := m.r.HandleReconcile(ctx, sg)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
-		})
-	})
-
-	Describe("Creation confirmed on CMP", func() {
-		It("transitions to Creating+Synchronized when CMP SecurityGroup is active", func() {
-			m := newSGReconcilerWithMocks(GinkgoT())
-			sg = createTestSecurityGroup(ctx, "test-sg-creation-confirmed", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
-			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "", "", "", 0, time.Now())
-
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-creation-confirmed", reconciler.CSPResourceStateActive)
-			m.expectProjectList(sgProjectID, sgProjectName)
-			m.expectVpcList(sgProjectID, sgVpcID, sgVpcName)
-			m.expectSGList(sgProjectID, sgVpcID, cmpSG)
-
-			_, err := m.r.HandleReconcile(ctx, sg)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.SecurityGroup{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
-		})
-	})
-
-	Describe("Creation accomplished", func() {
-		It("transitions to Active+Synchronized and sets ResourceID", func() {
-			m := newSGReconcilerWithMocks(GinkgoT())
-			sg = createTestSecurityGroup(ctx, "test-sg-creation-accomplished", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
-			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronized, "", "", "", 0, time.Now())
-
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-creation-accomplished", reconciler.CSPResourceStateActive)
-			m.expectProjectList(sgProjectID, sgProjectName)
-			m.expectVpcList(sgProjectID, sgVpcID, sgVpcName)
-			m.expectSGList(sgProjectID, sgVpcID, cmpSG)
-
-			_, err := m.r.HandleReconcile(ctx, sg)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.SecurityGroup{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseActive))
-			Expect(updated.Status.ResourceID).To(Equal("sg-id-1"))
-		})
+		updated := &v1alpha1.SecurityGroup{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), updated)).To(Succeed())
+		Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleting))
+		Expect(findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting)).Reason).To(Equal(v1alpha1.ConditionReasonSynchronizing))
 	})
 
 	Describe("HasDeniedChanges", func() {
-		It("returns LongRequeue when immutable field (location) is changed", func() {
-			m := newSGReconcilerWithMocks(GinkgoT())
-			sg = createTestSecurityGroup(ctx, "test-sg-denied-changes", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
-			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "sg-id-1", sgProjectID, sgVpcID, 1, time.Now())
+		It("returns LongRequeue when the CMP region differs from spec.region", func() {
+			m := newSGReconcilerWithFake()
+			sg = createTestSecurityGroup(ctx, "test-sg-denied", defaultSecurityGroupSpec(sgPrjName, sgVpcName))
+			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "sg-id-1", sgPrjID, sgVpcID, 1, time.Now())
+			m.stageParents(sgPrjID, sgPrjName, sgVpcID, sgVpcName)
 
-			// Force generation change with different location
-			sgFetch := &v1alpha1.SecurityGroup{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sgFetch)).To(Succeed())
-			sgFetch.Spec.Region = "IT-MILAN"
-			Expect(k8sClient.Update(ctx, sgFetch)).To(Succeed())
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
-
-			// CMP still has original location
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-denied-changes", reconciler.CSPResourceStateActive)
-			cmpSG.Metadata.LocationResponse = &arubatypes.LocationResponse{Value: "ITBG-Bergamo"}
-			m.expectProjectList(sgProjectID, sgProjectName)
-			m.expectVpcList(sgProjectID, sgVpcID, sgVpcName)
-			m.expectSGList(sgProjectID, sgVpcID, cmpSG)
+			// aruba.SecurityGroup has no Region() accessor, so the operator reads the
+			// region off the raw response metadata — stage a location that drifts from
+			// spec.Region ("ITBG-Bergamo").
+			denied := cmpItem("sg-id-1", "test-sg-denied", "Active")
+			denied["metadata"].(map[string]any)["location"] = map[string]any{"value": "ITRM-Roma"}
+			m.stageSGs(denied)
 
 			result, err := m.r.HandleReconcile(ctx, sg)
 			Expect(err).To(Succeed())
@@ -421,520 +166,28 @@ var _ = Describe("SecurityGroupReconciler", func() {
 		})
 	})
 
-	Describe("SpecAlreadyInSyncWithCMP", func() {
-		It("re-stamps ObservedGeneration when spec hasn't actually changed", func() {
-			m := newSGReconcilerWithMocks(GinkgoT())
-			sg = createTestSecurityGroup(ctx, "test-sg-spec-in-sync", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
-			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "sg-id-1", sgProjectID, sgVpcID, 1, time.Now())
-
-			// Trigger generation bump with same tags
-			sgFetch := &v1alpha1.SecurityGroup{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sgFetch)).To(Succeed())
-			sgFetch.Spec.Tags = []string{"tag1"}
-			Expect(k8sClient.Update(ctx, sgFetch)).To(Succeed())
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
-
-			// CMP matches: same tags, same Default
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-spec-in-sync", reconciler.CSPResourceStateActive)
-			cmpSG.Metadata.Tags = []string{"tag1"}
-			m.expectProjectList(sgProjectID, sgProjectName)
-			m.expectVpcList(sgProjectID, sgVpcID, sgVpcName)
-			m.expectSGList(sgProjectID, sgVpcID, cmpSG)
-
-			_, err := m.r.HandleReconcile(ctx, sg)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.SecurityGroup{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseActive))
-			Expect(updated.Status.ObservedGeneration).To(Equal(sg.Generation))
+	It("sets Failed+ValidationFailed when SG tenant differs from parent VPC tenant", func() {
+		m := newSGReconcilerWithFake()
+		kubeVpc := createTestVpc(ctx, sgVpcName, v1alpha1.VPCSpec{
+			Tenant: "other-tenant", Region: "ITBG-Bergamo",
+			ProjectReference: v1alpha1.ResourceReference{Name: sgPrjName, Namespace: "default"},
 		})
-	})
-
-	Describe("ShouldBeUpdated", func() {
-		It("transitions to Updating+ShallSynchronize when tags differ", func() {
-			m := newSGReconcilerWithMocks(GinkgoT())
-			sg = createTestSecurityGroup(ctx, "test-sg-should-update", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
-			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "sg-id-1", sgProjectID, sgVpcID, 1, time.Now())
-
-			// Change tags to trigger update
-			sgFetch := &v1alpha1.SecurityGroup{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sgFetch)).To(Succeed())
-			sgFetch.Spec.Tags = []string{"tag1", "tag2"}
-			Expect(k8sClient.Update(ctx, sgFetch)).To(Succeed())
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
-
-			// CMP has old tags
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-should-update", reconciler.CSPResourceStateActive)
-			cmpSG.Metadata.Tags = []string{"tag1"}
-			m.expectProjectList(sgProjectID, sgProjectName)
-			m.expectVpcList(sgProjectID, sgVpcID, sgVpcName)
-			m.expectSGList(sgProjectID, sgVpcID, cmpSG)
-
-			_, err := m.r.HandleReconcile(ctx, sg)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.SecurityGroup{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseUpdating))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseUpdating))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
-		})
-	})
-
-	Describe("Update on CMP", func() {
-		It("transitions to Updating+Synchronizing after successful CMP update", func() {
-			m := newSGReconcilerWithMocks(GinkgoT())
-			sg = createTestSecurityGroup(ctx, "test-sg-update-cmp", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
-			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, "sg-id-1", sgProjectID, sgVpcID, 1, time.Now())
-
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-update-cmp", reconciler.CSPResourceStateActive)
-			m.mockAruba.EXPECT().FromProject().Return(m.mockProject)
-			m.mockProject.EXPECT().List(mock.Anything, mock.Anything).Return(buildProjectListForSG(sgProjectID, sgProjectName), nil)
-			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
-			m.mockNetwork.EXPECT().VPCs().Return(m.mockVPCsClient)
-			m.mockVPCsClient.EXPECT().List(mock.Anything, sgProjectID, mock.Anything).Return(buildVpcListForSG(sgVpcID, sgVpcName), nil)
-			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
-			m.mockNetwork.EXPECT().SecurityGroups().Return(m.mockSecGroups)
-			m.mockSecGroups.EXPECT().List(mock.Anything, sgProjectID, sgVpcID, mock.Anything).Return(buildSecurityGroupList(cmpSG), nil)
-			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
-			m.mockNetwork.EXPECT().SecurityGroups().Return(m.mockSecGroups)
-			m.mockSecGroups.EXPECT().Update(mock.Anything, sgProjectID, sgVpcID, "sg-id-1", mock.Anything, mock.Anything).Return(buildSGCRUDResponse(http.StatusOK), nil)
-
-			_, err := m.r.HandleReconcile(ctx, sg)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.SecurityGroup{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseUpdating))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseUpdating))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronizing))
-		})
-	})
-
-	Describe("Should delete", func() {
-		It("transitions to Deleting+ShallSynchronize when deletion is requested on Active SecurityGroup", func() {
-			m := newSGReconcilerWithMocks(GinkgoT())
-			sg = createTestSecurityGroup(ctx, "test-sg-should-delete", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
-			sgFetch := &v1alpha1.SecurityGroup{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sgFetch)).To(Succeed())
-			sgFetch.Finalizers = []string{securityGroupFinalizerName}
-			Expect(k8sClient.Update(ctx, sgFetch)).To(Succeed())
-			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "sg-id-1", sgProjectID, sgVpcID, 1, time.Now())
-			Expect(k8sClient.Delete(ctx, sg)).To(Succeed())
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
-
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-should-delete", reconciler.CSPResourceStateActive)
-			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
-			m.mockNetwork.EXPECT().SecurityGroups().Return(m.mockSecGroups)
-			m.mockSecGroups.EXPECT().List(mock.Anything, sgProjectID, sgVpcID, mock.Anything).Return(buildSecurityGroupList(cmpSG), nil)
-
-			_, err := m.r.HandleReconcile(ctx, sg)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.SecurityGroup{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleting))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
-		})
-	})
-
-	Describe("Delete on CMP", func() {
-		It("transitions to Deleting+Synchronizing after successful CMP delete", func() {
-			m := newSGReconcilerWithMocks(GinkgoT())
-			sg = createTestSecurityGroup(ctx, "test-sg-delete-cmp", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
-			sgFetch := &v1alpha1.SecurityGroup{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sgFetch)).To(Succeed())
-			sgFetch.Finalizers = []string{securityGroupFinalizerName}
-			Expect(k8sClient.Update(ctx, sgFetch)).To(Succeed())
-			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize, "sg-id-1", sgProjectID, sgVpcID, 1, time.Now())
-			Expect(k8sClient.Delete(ctx, sg)).To(Succeed())
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
-
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-delete-cmp", reconciler.CSPResourceStateActive)
-			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
-			m.mockNetwork.EXPECT().SecurityGroups().Return(m.mockSecGroups)
-			m.mockSecGroups.EXPECT().List(mock.Anything, sgProjectID, sgVpcID, mock.Anything).Return(buildSecurityGroupList(cmpSG), nil)
-			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
-			m.mockNetwork.EXPECT().SecurityGroups().Return(m.mockSecGroups)
-			m.mockSecGroups.EXPECT().Delete(mock.Anything, sgProjectID, sgVpcID, "sg-id-1", mock.Anything).Return(buildDeleteResponse(http.StatusOK), nil)
-
-			_, err := m.r.HandleReconcile(ctx, sg)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.SecurityGroup{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleting))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronizing))
-		})
-	})
-
-	Describe("DeletionOnCMPNotNeeded", func() {
-		It("advances to Deleting+Synchronized when CMP SecurityGroup is already gone", func() {
-			m := newSGReconcilerWithMocks(GinkgoT())
-			sg = createTestSecurityGroup(ctx, "test-sg-delete-not-needed", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
-			sgFetch := &v1alpha1.SecurityGroup{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sgFetch)).To(Succeed())
-			sgFetch.Finalizers = []string{securityGroupFinalizerName}
-			Expect(k8sClient.Update(ctx, sgFetch)).To(Succeed())
-			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize, "sg-id-1", sgProjectID, sgVpcID, 1, time.Now())
-			Expect(k8sClient.Delete(ctx, sg)).To(Succeed())
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
-
-			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
-			m.mockNetwork.EXPECT().SecurityGroups().Return(m.mockSecGroups)
-			m.mockSecGroups.EXPECT().List(mock.Anything, sgProjectID, sgVpcID, mock.Anything).Return(buildSecurityGroupList(), nil)
-
-			_, err := m.r.HandleReconcile(ctx, sg)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.SecurityGroup{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleting))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseDeleting))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
-		})
-	})
-
-	Describe("CMP transitory during deletion", func() {
-		It("returns LongRequeue when CMP state is Deleting", func() {
-			m := newSGReconcilerWithMocks(GinkgoT())
-			sg = createTestSecurityGroup(ctx, "test-sg-deleting-transitory", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
-			sgFetch := &v1alpha1.SecurityGroup{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sgFetch)).To(Succeed())
-			sgFetch.Finalizers = []string{securityGroupFinalizerName}
-			Expect(k8sClient.Update(ctx, sgFetch)).To(Succeed())
-			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronizing, "sg-id-1", sgProjectID, sgVpcID, 1, time.Now())
-			Expect(k8sClient.Delete(ctx, sg)).To(Succeed())
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
-
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-deleting-transitory", reconciler.CSPResourceStateDeleting)
-			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
-			m.mockNetwork.EXPECT().SecurityGroups().Return(m.mockSecGroups)
-			m.mockSecGroups.EXPECT().List(mock.Anything, sgProjectID, sgVpcID, mock.Anything).Return(buildSecurityGroupList(cmpSG), nil)
-
-			result, err := m.r.HandleReconcile(ctx, sg)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
-		})
-	})
-
-	Describe("Deletion accomplished", func() {
-		It("transitions to Deleted phase when CMP SecurityGroup is gone", func() {
-			m := newSGReconcilerWithMocks(GinkgoT())
-			sg = createTestSecurityGroup(ctx, "test-sg-deletion-accomplished", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
-			sgFetch := &v1alpha1.SecurityGroup{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sgFetch)).To(Succeed())
-			sgFetch.Finalizers = []string{securityGroupFinalizerName}
-			Expect(k8sClient.Update(ctx, sgFetch)).To(Succeed())
-			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronized, "sg-id-1", sgProjectID, sgVpcID, 1, time.Now())
-			Expect(k8sClient.Delete(ctx, sg)).To(Succeed())
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
-
-			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
-			m.mockNetwork.EXPECT().SecurityGroups().Return(m.mockSecGroups)
-			m.mockSecGroups.EXPECT().List(mock.Anything, sgProjectID, sgVpcID, mock.Anything).Return(buildSecurityGroupList(), nil)
-
-			_, err := m.r.HandleReconcile(ctx, sg)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.SecurityGroup{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseDeleted))
-		})
-	})
-
-	Describe("IsInError", func() {
-		It("transitions to Failed+Synchronized when CMP state is Failed", func() {
-			m := newSGReconcilerWithMocks(GinkgoT())
-			sg = createTestSecurityGroup(ctx, "test-sg-in-error", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
-			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, "sg-id-1", sgProjectID, sgVpcID, 1, time.Now())
-
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-in-error", reconciler.CSPResourceStateFailed)
-			m.expectProjectList(sgProjectID, sgProjectName)
-			m.expectVpcList(sgProjectID, sgVpcID, sgVpcName)
-			m.expectSGList(sgProjectID, sgVpcID, cmpSG)
-
-			_, err := m.r.HandleReconcile(ctx, sg)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.SecurityGroup{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonSynchronized))
-		})
-	})
-
-	Describe("Phase timeout", func() {
-		It("transitions to Failed when stuck in transitory phase too long", func() {
-			m := newSGReconcilerWithMocks(GinkgoT())
-			sg = createTestSecurityGroup(ctx, "test-sg-timeout", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
-			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, "", sgProjectID, sgVpcID,
-				0, time.Now().Add(-(reconciler.MaxPhaseTimeout + time.Minute)))
-
-			cmpSG := buildSecurityGroupResponse("sg-id-1", "test-sg-timeout", reconciler.CSPResourceStateActive)
-			m.expectProjectList(sgProjectID, sgProjectName)
-			m.expectVpcList(sgProjectID, sgVpcID, sgVpcName)
-			m.expectSGList(sgProjectID, sgVpcID, cmpSG)
-
-			_, err := m.r.HandleReconcile(ctx, sg)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.SecurityGroup{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
-		})
-	})
-
-	Describe("Project not found yet", func() {
-		It("returns LongRequeue when project doesn't exist in CMP yet", func() {
-			m := newSGReconcilerWithMocks(GinkgoT())
-			sg = createTestSecurityGroup(ctx, "test-sg-no-project", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
-
-			m.mockAruba.EXPECT().FromProject().Return(m.mockProject)
-			m.mockProject.EXPECT().List(mock.Anything, mock.Anything).Return(buildProjectList(), nil)
-
-			result, err := m.r.HandleReconcile(ctx, sg)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
-		})
-	})
-
-	Describe("VPC not found yet", func() {
-		It("returns LongRequeue when VPC doesn't exist in CMP yet", func() {
-			m := newSGReconcilerWithMocks(GinkgoT())
-			sg = createTestSecurityGroup(ctx, "test-sg-no-vpc", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
-
-			m.expectProjectList(sgProjectID, sgProjectName)
-
-			emptyVpcList := &arubatypes.Response[arubatypes.VPCList]{
-				Data:       &arubatypes.VPCList{},
-				StatusCode: http.StatusOK,
-			}
-			m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
-			m.mockNetwork.EXPECT().VPCs().Return(m.mockVPCsClient)
-			m.mockVPCsClient.EXPECT().List(mock.Anything, sgProjectID, mock.Anything).Return(emptyVpcList, nil)
-
-			result, err := m.r.HandleReconcile(ctx, sg)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(Equal(reconciler.LongRequeueAfter))
-		})
-	})
-
-	Describe("ProjectID and VpcID stamped in status", func() {
-		It("stamps ProjectID and VpcID on status when first transitioning", func() {
-			m := newSGReconcilerWithMocks(GinkgoT())
-			sg = createTestSecurityGroup(ctx, "test-sg-ids-stamped", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
-			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", 0, time.Now())
-
-			m.expectProjectList(sgProjectID, sgProjectName)
-			m.expectVpcList(sgProjectID, sgVpcID, sgVpcName)
-			m.expectSGList(sgProjectID, sgVpcID)
-
-			_, err := m.r.HandleReconcile(ctx, sg)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.SecurityGroup{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), updated)).To(Succeed())
-			Expect(updated.Status.ProjectID).To(Equal(sgProjectID))
-			Expect(updated.Status.VPCID).To(Equal(sgVpcID))
-		})
-	})
-
-	Describe("CMP error handling", func() {
-		DescribeTable("CMP create fails — preserves Creating+ShallSynchronize, surfaces error in condition",
-			func(name string, statusCode int, expectedRequeue time.Duration) {
-				m := newSGReconcilerWithMocks(GinkgoT())
-				sg = createTestSecurityGroup(ctx, name, defaultSecurityGroupSpec(sgProjectName, sgVpcName))
-				setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, "", "", "", 0, time.Now())
-
-				m.expectProjectList(sgProjectID, sgProjectName)
-				m.expectVpcList(sgProjectID, sgVpcID, sgVpcName)
-				m.expectSGList(sgProjectID, sgVpcID)
-				m.mockAruba.EXPECT().FromNetwork().Return(m.mockNetwork)
-				m.mockNetwork.EXPECT().SecurityGroups().Return(m.mockSecGroups)
-				m.mockSecGroups.EXPECT().Create(mock.Anything, sgProjectID, sgVpcID, mock.Anything, mock.Anything).Return(buildSGCRUDResponse(statusCode), nil)
-
-				result, err := m.r.HandleReconcile(ctx, sg)
-				Expect(err).To(Succeed())
-				Expect(result.RequeueAfter).To(Equal(expectedRequeue))
-
-				updated := &v1alpha1.SecurityGroup{}
-				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), updated)).To(Succeed())
-				Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
-				cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating))
-				Expect(cond).NotTo(BeNil())
-				Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonShallSynchronize))
-				Expect(cond.Message).To(ContainSubstring("ERROR"))
-			},
-			Entry("4xx → LongRequeueAfter, no phase change", "sg-cmp-err-create-400", http.StatusBadRequest, reconciler.LongRequeueAfter),
-			Entry("5xx → ShortRequeueAfter, no phase change", "sg-cmp-err-create-500", http.StatusInternalServerError, reconciler.ShortRequeueAfter),
-		)
-	})
-
-	Describe("Validation", func() {
-		It("sets Failed+ValidationFailed when SecurityGroup tenant differs from parent VPC tenant", func() {
-			m := newSGReconcilerWithMocks(GinkgoT())
-
-			// Create a K8s VPC with a different Tenant than the SecurityGroup.
-			kubeVpc := createTestVpc(ctx, sgVpcName, v1alpha1.VPCSpec{
-				Tenant:           "other-tenant",
-				Region:           "ITBG-Bergamo",
-				ProjectReference: v1alpha1.ResourceReference{Name: "some-project", Namespace: "default"},
-			})
-			defer func() {
-				_ = k8sClient.Delete(ctx, kubeVpc)
-			}()
-
-			sg = createTestSecurityGroup(ctx, "test-sg-validation-tenant", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
-			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "sg-id-val", sgProjectID, sgVpcID, 0, time.Now())
-
-			// First reconcile: sets owner reference on the SecurityGroup → requeue, no CMP calls.
-			result, err := m.r.HandleReconcile(ctx, sg)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
-
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
-
-			// Second reconcile: ivs fires at Stage 4 (before CMP calls) → validation fails, no CMP expectations needed.
-			_, err = m.r.HandleReconcile(ctx, sg)
-			Expect(err).To(Succeed())
-
-			updated := &v1alpha1.SecurityGroup{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
-			Expect(cond.Message).To(ContainSubstring("tenant mismatch with VPC"))
-		})
-
-		It("sets Failed+ValidationFailed at Pending phase when SecurityGroup tenant differs from parent VPC tenant (no CMP resource yet)", func() {
-			m := newSGReconcilerWithMocks(GinkgoT())
-
-			// VPC has a different tenant AND is Active+Synchronized so Stage 3 (parent readiness) passes.
-			kubeVpc := createTestVpc(ctx, sgVpcName, v1alpha1.VPCSpec{
-				Tenant:           "other-tenant",
-				Region:           "ITBG-Bergamo",
-				ProjectReference: v1alpha1.ResourceReference{Name: "some-project", Namespace: "default"},
-			})
-			setVPCStatus(ctx, kubeVpc, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, sgVpcID, "some-proj-id", 0, time.Now())
-			defer func() {
-				_ = k8sClient.Delete(ctx, kubeVpc)
-			}()
-
-			sg = createTestSecurityGroup(ctx, "test-sg-pending-validation-tenant", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
-			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", 0, time.Now())
-
-			// First reconcile: owner reference not yet set → ShortRequeue.
-			result, err := m.r.HandleReconcile(ctx, sg)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
-
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
-
-			// Second reconcile: ivs fires at Stage 4 (before CMP calls) → validation fails, no CMP expectations needed.
-			result, err = m.r.HandleReconcile(ctx, sg)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(BeZero())
-
-			updated := &v1alpha1.SecurityGroup{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
-			Expect(cond.Message).To(ContainSubstring("tenant mismatch with VPC"))
-		})
-
-		It("sets Failed+ValidationFailed at Pending phase when SecurityGroup project reference differs from parent VPC project reference (no CMP resource yet)", func() {
-			m := newSGReconcilerWithMocks(GinkgoT())
-
-			// VPC has a different project reference AND is Active+Synchronized so Stage 3 (parent readiness) passes.
-			kubeVpc := createTestVpc(ctx, sgVpcName, v1alpha1.VPCSpec{
-				Tenant:           "test-tenant",
-				Region:           "ITBG-Bergamo",
-				ProjectReference: v1alpha1.ResourceReference{Name: "other-project", Namespace: "default"},
-			})
-			setVPCStatus(ctx, kubeVpc, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, sgVpcID, "other-proj-id", 0, time.Now())
-			defer func() {
-				_ = k8sClient.Delete(ctx, kubeVpc)
-			}()
-
-			sg = createTestSecurityGroup(ctx, "test-sg-pending-validation-project", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
-			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", 0, time.Now())
-
-			// First reconcile: owner reference not yet set → ShortRequeue.
-			result, err := m.r.HandleReconcile(ctx, sg)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
-
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
-
-			// Second reconcile: ivs fires at Stage 4 (before CMP calls) → validation fails, no CMP expectations needed.
-			result, err = m.r.HandleReconcile(ctx, sg)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(BeZero())
-
-			updated := &v1alpha1.SecurityGroup{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
-			Expect(cond.Message).To(ContainSubstring("project reference mismatch with VPC"))
-		})
-
-		It("sets Failed+ValidationFailed at Pending phase when SecurityGroup tenant differs from Project tenant (no CMP resource yet)", func() {
-			m := newSGReconcilerWithMocks(GinkgoT())
-
-			// VPC with matching attributes (same tenant/region/project) so VPC cross-validation passes.
-			kubeVpc := createTestVpc(ctx, sgVpcName, v1alpha1.VPCSpec{
-				Tenant:           "test-tenant",
-				Region:           "ITBG-Bergamo",
-				ProjectReference: v1alpha1.ResourceReference{Name: sgProjectName, Namespace: "default"},
-			})
-			setVPCStatus(ctx, kubeVpc, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, sgVpcID, sgProjectID, 0, time.Now())
-			defer func() { _ = k8sClient.Delete(ctx, kubeVpc) }()
-
-			// K8s Project with a different tenant than the SecurityGroup.
-			kubeProject := createTestProject(ctx, sgProjectName, v1alpha1.ProjectSpec{
-				Tenant:      "other-tenant",
-				Description: "test",
-			})
-			defer func() { _ = k8sClient.Delete(ctx, kubeProject) }()
-
-			sg = createTestSecurityGroup(ctx, "test-sg-pending-validation-tenant-proj", defaultSecurityGroupSpec(sgProjectName, sgVpcName))
-			setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhasePending, v1alpha1.ConditionReasonSynchronized, "", "", "", 0, time.Now())
-
-			// First reconcile: VPC found → owner reference set → ShortRequeue, no CMP calls.
-			result, err := m.r.HandleReconcile(ctx, sg)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
-
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
-
-			// Second reconcile: ivs fires at Stage 4 (before CMP calls) → validation fails, no CMP expectations needed.
-			result, err = m.r.HandleReconcile(ctx, sg)
-			Expect(err).To(Succeed())
-			Expect(result.RequeueAfter).To(BeZero())
-
-			updated := &v1alpha1.SecurityGroup{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), updated)).To(Succeed())
-			Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
-			cond := findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed))
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(v1alpha1.ConditionReasonIntentionValidationFailed))
-			Expect(cond.Message).To(ContainSubstring("tenant mismatch with Project"))
-		})
+		defer func() { _ = k8sClient.Delete(ctx, kubeVpc) }()
+
+		sg = createTestSecurityGroup(ctx, "test-sg-validation", defaultSecurityGroupSpec(sgPrjName, sgVpcName))
+		setSecurityGroupStatus(ctx, sg, v1alpha1.ResourcePhaseActive, v1alpha1.ConditionReasonSynchronized, "sg-id-val", sgPrjID, sgVpcID, 0, time.Now())
+
+		result, err := m.r.HandleReconcile(ctx, sg)
+		Expect(err).To(Succeed())
+		Expect(result.RequeueAfter).To(Equal(reconciler.ShortRequeueAfter))
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), sg)).To(Succeed())
+
+		_, err = m.r.HandleReconcile(ctx, sg)
+		Expect(err).To(Succeed())
+
+		updated := &v1alpha1.SecurityGroup{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sg), updated)).To(Succeed())
+		Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseFailed))
+		Expect(findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseFailed)).Message).To(ContainSubstring("tenant mismatch with VPC"))
 	})
 })

@@ -42,6 +42,8 @@ linters:
     errcheck:
       check-type-assertions: false
       check-blank: false
+    exhaustive:
+      default-signifies-exhaustive: true
     goconst:
       min-len: 3
       min-occurrences: 5

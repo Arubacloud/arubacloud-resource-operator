@@ -8,7 +8,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
+	"github.com/Arubacloud/sdk-go/pkg/aruba"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
 
@@ -17,7 +17,7 @@ import (
 )
 
 type testProject = *v1alpha1.Project
-type testCMP = *arubatypes.ProjectResponse
+type testCMP = *aruba.Project
 
 func newMinimalProject() testProject {
 	return &v1alpha1.Project{

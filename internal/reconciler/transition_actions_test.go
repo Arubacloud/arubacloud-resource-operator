@@ -11,7 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
-	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
+	"github.com/Arubacloud/sdk-go/pkg/aruba"
 )
 
 var _ = Describe("SetPhaseAndCondition", func() {
@@ -315,7 +315,7 @@ var _ = Describe("KubeDeleteFromPending", func() {
 	})
 
 	It("sets phase to Deleted and flips Pending condition to Synchronized/False", func() {
-		action := KubeDeleteFromPending[*v1alpha1.Project, *arubatypes.ProjectResponse](k8sClient)
+		action := KubeDeleteFromPending[*v1alpha1.Project, *aruba.Project](k8sClient)
 		Expect(action(ctx, proj, nil)).To(Succeed())
 
 		updated := &v1alpha1.Project{}
@@ -366,7 +366,7 @@ var _ = Describe("KubeSetErrorMessageOnCMPError", func() {
 
 		semanticErr := &CMPError{Category: CMPErrorCategorySemantic, StatusCode: 400,
 			Title: "Validation Error", Detail: "Validation: Tag: too short"}
-		action := KubeSetErrorMessageOnCMPError[*v1alpha1.Project, *arubatypes.ProjectResponse](k8sClient)
+		action := KubeSetErrorMessageOnCMPError[*v1alpha1.Project, *aruba.Project](k8sClient)
 		Expect(action(ctx, proj, nil, semanticErr)).To(Succeed())
 
 		updated := &v1alpha1.Project{}
@@ -385,7 +385,7 @@ var _ = Describe("KubeSetErrorMessageOnCMPError", func() {
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), proj)).To(Succeed())
 
 		semanticErr := &CMPError{Category: CMPErrorCategorySemantic, StatusCode: 400, Title: "Validation Error"}
-		action := KubeSetErrorMessageOnCMPError[*v1alpha1.Project, *arubatypes.ProjectResponse](k8sClient)
+		action := KubeSetErrorMessageOnCMPError[*v1alpha1.Project, *aruba.Project](k8sClient)
 		Expect(action(ctx, proj, nil, semanticErr)).To(Succeed())
 
 		updated := &v1alpha1.Project{}
@@ -402,7 +402,7 @@ var _ = Describe("KubeSetErrorMessageOnCMPError", func() {
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), proj)).To(Succeed())
 
 		semanticErr := &CMPError{Category: CMPErrorCategorySemantic, StatusCode: 400, Title: "Validation Error"}
-		action := KubeSetErrorMessageOnCMPError[*v1alpha1.Project, *arubatypes.ProjectResponse](k8sClient)
+		action := KubeSetErrorMessageOnCMPError[*v1alpha1.Project, *aruba.Project](k8sClient)
 		Expect(action(ctx, proj, nil, semanticErr)).To(Succeed())
 
 		updated := &v1alpha1.Project{}
@@ -419,7 +419,7 @@ var _ = Describe("KubeSetErrorMessageOnCMPError", func() {
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), proj)).To(Succeed())
 
 		transientErr := &CMPError{Category: CMPErrorCategoryTransient, StatusCode: 409, Title: "Conflict"}
-		action := KubeSetErrorMessageOnCMPError[*v1alpha1.Project, *arubatypes.ProjectResponse](k8sClient)
+		action := KubeSetErrorMessageOnCMPError[*v1alpha1.Project, *aruba.Project](k8sClient)
 		Expect(action(ctx, proj, nil, transientErr)).To(Succeed())
 
 		updated := &v1alpha1.Project{}
@@ -437,7 +437,7 @@ var _ = Describe("KubeSetErrorMessageOnCMPError", func() {
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), proj)).To(Succeed())
 
 		technicalErr := &CMPError{Category: CMPErrorCategoryTechnical, StatusCode: 500, Title: "Internal Server Error"}
-		action := KubeSetErrorMessageOnCMPError[*v1alpha1.Project, *arubatypes.ProjectResponse](k8sClient)
+		action := KubeSetErrorMessageOnCMPError[*v1alpha1.Project, *aruba.Project](k8sClient)
 		Expect(action(ctx, proj, nil, technicalErr)).To(Succeed())
 
 		updated := &v1alpha1.Project{}
@@ -476,7 +476,7 @@ var _ = Describe("KubeResetValidationFailedForDeletion", func() {
 			v1alpha1.ResourcePhaseFailed, v1alpha1.ConditionReasonIntentionValidationFailed, nil)).To(Succeed())
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), proj)).To(Succeed())
 
-		action := KubeResetValidationFailedForDeletion[*v1alpha1.Project, *arubatypes.ProjectResponse](k8sClient)
+		action := KubeResetValidationFailedForDeletion[*v1alpha1.Project, *aruba.Project](k8sClient)
 		Expect(action(ctx, proj, nil)).To(Succeed())
 
 		updated := &v1alpha1.Project{}
@@ -495,7 +495,7 @@ var _ = Describe("KubeResetValidationFailedForDeletion", func() {
 		Expect(k8sClient.Status().Update(ctx, proj)).To(Succeed())
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proj), proj)).To(Succeed())
 
-		action := KubeResetValidationFailedForDeletion[*v1alpha1.Project, *arubatypes.ProjectResponse](k8sClient)
+		action := KubeResetValidationFailedForDeletion[*v1alpha1.Project, *aruba.Project](k8sClient)
 		Expect(action(ctx, proj, nil)).To(Succeed())
 
 		updated := &v1alpha1.Project{}

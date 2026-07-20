@@ -9,27 +9,3 @@ packages:
       all: true
       dir: internal/mocks
       outpkg: mocks
-  github.com/Arubacloud/sdk-go/pkg/aruba:
-    config:
-      dir: internal/mocks/aruba
-      outpkg: arubamocks
-    interfaces:
-      Client:
-      ProjectClient:
-      StorageClient:
-      VolumesClient:
-      NetworkClient:
-      VPCsClient:
-      ElasticIPsClient:
-      ComputeClient:
-      CloudServersClient:
-      KeyPairsClient:
-      SubnetsClient:
-      SecurityGroupsClient:
-      SecurityGroupRulesClient:
-  github.com/Arubacloud/sdk-go/pkg/multitenant:
-    config:
-      dir: internal/mocks/aruba
-      outpkg: arubamocks
-    interfaces:
-      Multitenant:

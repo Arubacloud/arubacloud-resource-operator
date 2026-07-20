@@ -68,11 +68,11 @@ Cross-namespace children participate fully in cascade deletion. No special cases
 
 ## 5. CMP API Does Not Distinguish Dependency Errors from Permanent Errors
 
-**Status**: **Partially resolved** (SDK v0.1.24).
+**Status**: **Partially resolved** (SDK v1.0.4).
 
 **Context**: When the CMP API rejects a deletion because dependent resources still exist (e.g., deleting a Project with active VPCs), it returns a generic HTTP 4xx error. The error response does not use a distinct status code or error code to differentiate "has dependencies" from other semantic errors (invalid request, permission denied, etc.).
 
-**Current state**: The SDK v0.1.24 `ErrorResponse` now includes an `Errors []ValidationError` array for field-level validation failures. The operator uses this to split the former single `CMPErrorCategorySemantic` into two categories:
+**Current state**: The SDK `ErrorResponse` (surfaced through `aruba.HTTPError.ErrResp`) includes an `Errors []ValidationError` array for field-level validation failures. `CMPErrorFromResult` uses this to split the former single `CMPErrorCategorySemantic` into two categories:
 - `CMPErrorCategorySemantic` — 4xx with non-empty `Errors` (true validation failure; moves resource to `Failed+ValidationFailed` during Creating/Updating).
 - `CMPErrorCategoryTransient` — 4xx with empty `Errors` (temporary condition, e.g. dependency in wrong state; surfaces error in condition, long-requeue without phase change).
 
@@ -87,7 +87,25 @@ This means dependency-related 4xx errors are now correctly classified as Transie
 
 ---
 
-## 6. Ownership Setup Adds a K8s API Call Per Reconciliation
+## 6. SDK Leaks `pkg/types` Through Two High-Level Values
+
+**Context**: The operator deliberately imports only `github.com/Arubacloud/sdk-go/pkg/aruba` and never `pkg/types` (see `ai/CONVENTIONS.md`). Two fields the operator needs have no high-level accessor, so they are read by reaching through a `pkg/aruba` value into the `pkg/types` struct behind it:
+
+1. `aruba.HTTPError.ErrResp` is a bare `*types.ErrorResponse`. `cmpResponseError` reads its `Title`/`Detail`/`Instance`/`Errors` to categorize the error and build the condition message.
+2. `aruba.SecurityGroup` has no `regionalMixin` and therefore no `Region()`, so `checkSecurityGroupDeniedChanges` reads `sg.Raw().Metadata.LocationResponse.Value` — the same field the SDK's own `regionalMixin` is hydrated from for VPC and Subnet.
+
+**Impact**: Both compile without the import, so the rule holds in letter, but the structural dependency is real and **invisible**: an upstream field rename breaks these files with no import line to grep for. The `ErrResp` case also blocks the natural refactor seam — a `formatValidationErrors([]types.ValidationError) string` helper cannot be written because its parameter type cannot be named.
+
+**Current mitigation**: The validation-formatting logic is kept testable by copying the two fields it needs into a local `cmpValidationError` struct at the boundary and putting the logic behind `appendValidationDetail`, which has direct unit tests. The reach-through is reduced to a two-field copy. The SecurityGroup region read is nil-guarded (`Raw()`, `LocationResponse`, and empty `Value`) and annotated in place.
+
+**Potential future solutions**:
+- **Preferred (upstream)**: have `aruba.HTTPError` expose validation entries through a `pkg/aruba`-owned shape (e.g. `ValidationErrors() []aruba.ValidationError`), so consumers honoring the single-import principle never touch `pkg/types`. Worth filing against sdk-go — it defeats the principle exactly where every consumer needs it.
+- **Upstream**: add `regionalMixin` to `aruba.SecurityGroup` (its response already carries `Metadata.LocationResponse`), removing reach-through #2 entirely.
+- Re-check both sites on every SDK bump; if a high-level accessor has appeared, switch to it and delete the reach-through.
+
+---
+
+## 7. Ownership Setup Adds a K8s API Call Per Reconciliation
 
 **Context**: Each child controller's `HandleReconcile` fetches the parent K8s object (via `resolveOwnerObject`) to set the ownership annotation and label. This is a local API server call but adds latency to every reconciliation loop, even after the metadata is already set.
 

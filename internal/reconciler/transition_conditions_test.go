@@ -8,7 +8,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
-	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
+	"github.com/Arubacloud/sdk-go/pkg/aruba"
 )
 
 // projectOpt is a functional option for building test Project objects.
@@ -83,7 +83,7 @@ func newTestProject(opts ...projectOpt) *v1alpha1.Project {
 
 var _ = Describe("Transition Conditions", func() {
 	// nil aruba resource used throughout (conditions only check kube state)
-	var nilCMP *arubatypes.ProjectResponse
+	var nilCMP *aruba.Project
 
 	Describe("failedPhase", func() {
 		It("returns the phase whose condition has Status=False and Reason=Failed", func() {
@@ -176,7 +176,7 @@ var _ = Describe("Transition Conditions", func() {
 				withCondition(v1alpha1.ResourcePhaseCreating, metav1.ConditionTrue, v1alpha1.ConditionReasonShallSynchronize,
 					time.Now().Add(-(MaxPhaseTimeout+time.Minute))),
 			)
-			Expect(KubePhaseTimedOut[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeTrue())
+			Expect(KubePhaseTimedOut[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeTrue())
 		})
 
 		It("returns true when transitory phase, Synchronizing, and time exceeded", func() {
@@ -185,7 +185,7 @@ var _ = Describe("Transition Conditions", func() {
 				withCondition(v1alpha1.ResourcePhaseCreating, metav1.ConditionTrue, v1alpha1.ConditionReasonSynchronizing,
 					time.Now().Add(-(MaxPhaseTimeout+time.Minute))),
 			)
-			Expect(KubePhaseTimedOut[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeTrue())
+			Expect(KubePhaseTimedOut[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeTrue())
 		})
 
 		It("returns false when condition is fresh (not timed out)", func() {
@@ -193,7 +193,7 @@ var _ = Describe("Transition Conditions", func() {
 				withPhase(v1alpha1.ResourcePhaseCreating),
 				withCondition(v1alpha1.ResourcePhaseCreating, metav1.ConditionTrue, v1alpha1.ConditionReasonShallSynchronize, time.Now()),
 			)
-			Expect(KubePhaseTimedOut[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
+			Expect(KubePhaseTimedOut[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeFalse())
 		})
 
 		It("returns false when phase is final (Active)", func() {
@@ -202,7 +202,7 @@ var _ = Describe("Transition Conditions", func() {
 				withCondition(v1alpha1.ResourcePhaseActive, metav1.ConditionTrue, v1alpha1.ConditionReasonSynchronized,
 					time.Now().Add(-(MaxPhaseTimeout+time.Minute))),
 			)
-			Expect(KubePhaseTimedOut[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
+			Expect(KubePhaseTimedOut[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeFalse())
 		})
 
 		It("returns false when condition reason is Synchronized (not a polling reason)", func() {
@@ -211,12 +211,12 @@ var _ = Describe("Transition Conditions", func() {
 				withCondition(v1alpha1.ResourcePhaseCreating, metav1.ConditionTrue, v1alpha1.ConditionReasonSynchronized,
 					time.Now().Add(-(MaxPhaseTimeout+time.Minute))),
 			)
-			Expect(KubePhaseTimedOut[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
+			Expect(KubePhaseTimedOut[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeFalse())
 		})
 
 		It("returns false when no status", func() {
 			proj := &v1alpha1.Project{}
-			Expect(KubePhaseTimedOut[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
+			Expect(KubePhaseTimedOut[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeFalse())
 		})
 	})
 
@@ -227,7 +227,7 @@ var _ = Describe("Transition Conditions", func() {
 				withPhase(v1alpha1.ResourcePhaseActive),
 				withCondition(v1alpha1.ResourcePhaseActive, metav1.ConditionTrue, v1alpha1.ConditionReasonSynchronized, time.Now()),
 			)
-			Expect(KubeShouldDelete[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeTrue())
+			Expect(KubeShouldDelete[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeTrue())
 		})
 
 		It("returns false when not deleting", func() {
@@ -235,7 +235,7 @@ var _ = Describe("Transition Conditions", func() {
 				withPhase(v1alpha1.ResourcePhaseActive),
 				withCondition(v1alpha1.ResourcePhaseActive, metav1.ConditionTrue, v1alpha1.ConditionReasonSynchronized, time.Now()),
 			)
-			Expect(KubeShouldDelete[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
+			Expect(KubeShouldDelete[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeFalse())
 		})
 
 		It("returns false when phase is Deleted", func() {
@@ -244,7 +244,7 @@ var _ = Describe("Transition Conditions", func() {
 				withPhase(v1alpha1.ResourcePhaseDeleted),
 				withCondition(v1alpha1.ResourcePhaseDeleted, metav1.ConditionTrue, v1alpha1.ConditionReasonSynchronized, time.Now()),
 			)
-			Expect(KubeShouldDelete[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
+			Expect(KubeShouldDelete[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeFalse())
 		})
 
 		It("returns false when phase is transitory (Creating)", func() {
@@ -253,7 +253,7 @@ var _ = Describe("Transition Conditions", func() {
 				withPhase(v1alpha1.ResourcePhaseCreating),
 				withCondition(v1alpha1.ResourcePhaseCreating, metav1.ConditionTrue, v1alpha1.ConditionReasonSynchronized, time.Now()),
 			)
-			Expect(KubeShouldDelete[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
+			Expect(KubeShouldDelete[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeFalse())
 		})
 
 		It("returns false when reason is not Synchronized", func() {
@@ -262,7 +262,7 @@ var _ = Describe("Transition Conditions", func() {
 				withPhase(v1alpha1.ResourcePhaseActive),
 				withCondition(v1alpha1.ResourcePhaseActive, metav1.ConditionTrue, v1alpha1.ConditionReasonShallSynchronize, time.Now()),
 			)
-			Expect(KubeShouldDelete[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
+			Expect(KubeShouldDelete[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeFalse())
 		})
 	})
 
@@ -274,7 +274,7 @@ var _ = Describe("Transition Conditions", func() {
 				withCondition(v1alpha1.ResourcePhaseCreating, metav1.ConditionFalse, v1alpha1.ConditionReasonFailed, time.Now()),
 				withCondition(v1alpha1.ResourcePhaseFailed, metav1.ConditionTrue, v1alpha1.ConditionReasonFailed, time.Now()),
 			)
-			Expect(KubeShouldDeleteTimedOut[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeTrue())
+			Expect(KubeShouldDeleteTimedOut[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeTrue())
 		})
 
 		It("returns false when not deleting", func() {
@@ -283,7 +283,7 @@ var _ = Describe("Transition Conditions", func() {
 				withCondition(v1alpha1.ResourcePhaseCreating, metav1.ConditionFalse, v1alpha1.ConditionReasonFailed, time.Now()),
 				withCondition(v1alpha1.ResourcePhaseFailed, metav1.ConditionTrue, v1alpha1.ConditionReasonFailed, time.Now()),
 			)
-			Expect(KubeShouldDeleteTimedOut[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
+			Expect(KubeShouldDeleteTimedOut[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeFalse())
 		})
 
 		It("returns false when prev phase was Deleting", func() {
@@ -293,7 +293,7 @@ var _ = Describe("Transition Conditions", func() {
 				withCondition(v1alpha1.ResourcePhaseDeleting, metav1.ConditionFalse, v1alpha1.ConditionReasonFailed, time.Now()),
 				withCondition(v1alpha1.ResourcePhaseFailed, metav1.ConditionTrue, v1alpha1.ConditionReasonFailed, time.Now()),
 			)
-			Expect(KubeShouldDeleteTimedOut[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
+			Expect(KubeShouldDeleteTimedOut[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeFalse())
 		})
 
 		It("returns false when Failed condition has Reason=Synchronized (CMP failure, not timeout)", func() {
@@ -302,7 +302,7 @@ var _ = Describe("Transition Conditions", func() {
 				withPhase(v1alpha1.ResourcePhaseFailed),
 				withCondition(v1alpha1.ResourcePhaseFailed, metav1.ConditionTrue, v1alpha1.ConditionReasonSynchronized, time.Now()),
 			)
-			Expect(KubeShouldDeleteTimedOut[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
+			Expect(KubeShouldDeleteTimedOut[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeFalse())
 		})
 	})
 
@@ -313,7 +313,7 @@ var _ = Describe("Transition Conditions", func() {
 				withPhase(v1alpha1.ResourcePhaseDeleting),
 				withCondition(v1alpha1.ResourcePhaseDeleting, metav1.ConditionTrue, v1alpha1.ConditionReasonShallSynchronize, time.Now()),
 			)
-			Expect(KubeShouldBeDeletedOnCMP[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeTrue())
+			Expect(KubeShouldBeDeletedOnCMP[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeTrue())
 		})
 
 		It("returns false when not deleting", func() {
@@ -321,7 +321,7 @@ var _ = Describe("Transition Conditions", func() {
 				withPhase(v1alpha1.ResourcePhaseDeleting),
 				withCondition(v1alpha1.ResourcePhaseDeleting, metav1.ConditionTrue, v1alpha1.ConditionReasonShallSynchronize, time.Now()),
 			)
-			Expect(KubeShouldBeDeletedOnCMP[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
+			Expect(KubeShouldBeDeletedOnCMP[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeFalse())
 		})
 
 		It("returns false when wrong reason", func() {
@@ -330,7 +330,7 @@ var _ = Describe("Transition Conditions", func() {
 				withPhase(v1alpha1.ResourcePhaseDeleting),
 				withCondition(v1alpha1.ResourcePhaseDeleting, metav1.ConditionTrue, v1alpha1.ConditionReasonSynchronizing, time.Now()),
 			)
-			Expect(KubeShouldBeDeletedOnCMP[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
+			Expect(KubeShouldBeDeletedOnCMP[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeFalse())
 		})
 	})
 
@@ -341,7 +341,7 @@ var _ = Describe("Transition Conditions", func() {
 				withPhase(v1alpha1.ResourcePhaseDeleting),
 				withCondition(v1alpha1.ResourcePhaseDeleting, metav1.ConditionTrue, v1alpha1.ConditionReasonSynchronizing, time.Now()),
 			)
-			Expect(KubeWaitingDeletionOnCMP[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeTrue())
+			Expect(KubeWaitingDeletionOnCMP[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeTrue())
 		})
 	})
 
@@ -352,7 +352,7 @@ var _ = Describe("Transition Conditions", func() {
 				withPhase(v1alpha1.ResourcePhaseDeleting),
 				withCondition(v1alpha1.ResourcePhaseDeleting, metav1.ConditionTrue, v1alpha1.ConditionReasonSynchronized, time.Now()),
 			)
-			Expect(KubeDeletionAccomplished[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeTrue())
+			Expect(KubeDeletionAccomplished[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeTrue())
 		})
 	})
 
@@ -362,7 +362,7 @@ var _ = Describe("Transition Conditions", func() {
 				withPhase(v1alpha1.ResourcePhasePending),
 				withCondition(v1alpha1.ResourcePhasePending, metav1.ConditionTrue, v1alpha1.ConditionReasonSynchronized, time.Now()),
 			)
-			Expect(KubeIsFirstReconciliation[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeTrue())
+			Expect(KubeIsFirstReconciliation[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeTrue())
 		})
 
 		It("returns false when has ResourceID", func() {
@@ -371,12 +371,12 @@ var _ = Describe("Transition Conditions", func() {
 				withCondition(v1alpha1.ResourcePhasePending, metav1.ConditionTrue, v1alpha1.ConditionReasonSynchronized, time.Now()),
 				withResourceID("some-id"),
 			)
-			Expect(KubeIsFirstReconciliation[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
+			Expect(KubeIsFirstReconciliation[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeFalse())
 		})
 
 		It("returns false when Phase is empty (no Pending set)", func() {
 			proj := newTestProject()
-			Expect(KubeIsFirstReconciliation[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
+			Expect(KubeIsFirstReconciliation[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeFalse())
 		})
 
 		It("returns false when is deleting", func() {
@@ -385,7 +385,7 @@ var _ = Describe("Transition Conditions", func() {
 				withCondition(v1alpha1.ResourcePhasePending, metav1.ConditionTrue, v1alpha1.ConditionReasonSynchronized, time.Now()),
 				withDeleting(),
 			)
-			Expect(KubeIsFirstReconciliation[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
+			Expect(KubeIsFirstReconciliation[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeFalse())
 		})
 
 		It("returns false when Phase is not Pending", func() {
@@ -393,7 +393,7 @@ var _ = Describe("Transition Conditions", func() {
 				withPhase(v1alpha1.ResourcePhaseCreating),
 				withCondition(v1alpha1.ResourcePhaseCreating, metav1.ConditionTrue, v1alpha1.ConditionReasonShallSynchronize, time.Now()),
 			)
-			Expect(KubeIsFirstReconciliation[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
+			Expect(KubeIsFirstReconciliation[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeFalse())
 		})
 
 		It("returns false when Pending condition Reason is ShallSynchronize (not Synchronized)", func() {
@@ -401,7 +401,7 @@ var _ = Describe("Transition Conditions", func() {
 				withPhase(v1alpha1.ResourcePhasePending),
 				withCondition(v1alpha1.ResourcePhasePending, metav1.ConditionTrue, v1alpha1.ConditionReasonShallSynchronize, time.Now()),
 			)
-			Expect(KubeIsFirstReconciliation[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
+			Expect(KubeIsFirstReconciliation[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeFalse())
 		})
 	})
 
@@ -412,7 +412,7 @@ var _ = Describe("Transition Conditions", func() {
 				withCondition(v1alpha1.ResourcePhasePending, metav1.ConditionTrue, v1alpha1.ConditionReasonSynchronized, time.Now()),
 				withDeleting(),
 			)
-			Expect(KubePendingAndDeleting[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeTrue())
+			Expect(KubePendingAndDeleting[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeTrue())
 		})
 
 		It("returns false when not deleting", func() {
@@ -420,7 +420,7 @@ var _ = Describe("Transition Conditions", func() {
 				withPhase(v1alpha1.ResourcePhasePending),
 				withCondition(v1alpha1.ResourcePhasePending, metav1.ConditionTrue, v1alpha1.ConditionReasonSynchronized, time.Now()),
 			)
-			Expect(KubePendingAndDeleting[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
+			Expect(KubePendingAndDeleting[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeFalse())
 		})
 
 		It("returns false when Phase is not Pending", func() {
@@ -429,7 +429,7 @@ var _ = Describe("Transition Conditions", func() {
 				withCondition(v1alpha1.ResourcePhaseCreating, metav1.ConditionTrue, v1alpha1.ConditionReasonShallSynchronize, time.Now()),
 				withDeleting(),
 			)
-			Expect(KubePendingAndDeleting[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
+			Expect(KubePendingAndDeleting[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeFalse())
 		})
 
 		It("returns false when ResourceID is set", func() {
@@ -439,7 +439,7 @@ var _ = Describe("Transition Conditions", func() {
 				withResourceID("some-id"),
 				withDeleting(),
 			)
-			Expect(KubePendingAndDeleting[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
+			Expect(KubePendingAndDeleting[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeFalse())
 		})
 	})
 
@@ -449,7 +449,7 @@ var _ = Describe("Transition Conditions", func() {
 				withPhase(v1alpha1.ResourcePhaseCreating),
 				withCondition(v1alpha1.ResourcePhaseCreating, metav1.ConditionTrue, v1alpha1.ConditionReasonShallSynchronize, time.Now()),
 			)
-			Expect(KubeShouldBeCreatedOnCMP[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeTrue())
+			Expect(KubeShouldBeCreatedOnCMP[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeTrue())
 		})
 
 		It("returns false when ResourceID is set", func() {
@@ -458,7 +458,7 @@ var _ = Describe("Transition Conditions", func() {
 				withResourceID("some-id"),
 				withCondition(v1alpha1.ResourcePhaseCreating, metav1.ConditionTrue, v1alpha1.ConditionReasonShallSynchronize, time.Now()),
 			)
-			Expect(KubeShouldBeCreatedOnCMP[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
+			Expect(KubeShouldBeCreatedOnCMP[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeFalse())
 		})
 	})
 
@@ -468,7 +468,7 @@ var _ = Describe("Transition Conditions", func() {
 				withPhase(v1alpha1.ResourcePhaseCreating),
 				withCondition(v1alpha1.ResourcePhaseCreating, metav1.ConditionTrue, v1alpha1.ConditionReasonSynchronizing, time.Now()),
 			)
-			Expect(KubeWaitingCreationInCMP[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeTrue())
+			Expect(KubeWaitingCreationInCMP[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeTrue())
 		})
 	})
 
@@ -478,7 +478,7 @@ var _ = Describe("Transition Conditions", func() {
 				withPhase(v1alpha1.ResourcePhaseCreating),
 				withCondition(v1alpha1.ResourcePhaseCreating, metav1.ConditionTrue, v1alpha1.ConditionReasonSynchronized, time.Now()),
 			)
-			Expect(KubeIsCreatedOnCMP[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeTrue())
+			Expect(KubeIsCreatedOnCMP[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeTrue())
 		})
 	})
 
@@ -488,7 +488,7 @@ var _ = Describe("Transition Conditions", func() {
 				withPhase(v1alpha1.ResourcePhaseUpdating),
 				withCondition(v1alpha1.ResourcePhaseUpdating, metav1.ConditionTrue, v1alpha1.ConditionReasonShallSynchronize, time.Now()),
 			)
-			Expect(KubeShouldBeUpdatedOnCMP[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeTrue())
+			Expect(KubeShouldBeUpdatedOnCMP[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeTrue())
 		})
 	})
 
@@ -498,7 +498,7 @@ var _ = Describe("Transition Conditions", func() {
 				withPhase(v1alpha1.ResourcePhaseUpdating),
 				withCondition(v1alpha1.ResourcePhaseUpdating, metav1.ConditionTrue, v1alpha1.ConditionReasonSynchronizing, time.Now()),
 			)
-			Expect(KubeWaitingUpdateOnCMP[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeTrue())
+			Expect(KubeWaitingUpdateOnCMP[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeTrue())
 		})
 	})
 
@@ -508,7 +508,7 @@ var _ = Describe("Transition Conditions", func() {
 				withPhase(v1alpha1.ResourcePhaseUpdating),
 				withCondition(v1alpha1.ResourcePhaseUpdating, metav1.ConditionTrue, v1alpha1.ConditionReasonSynchronized, time.Now()),
 			)
-			Expect(KubeUpdateAccomplished[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeTrue())
+			Expect(KubeUpdateAccomplished[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeTrue())
 		})
 	})
 
@@ -596,7 +596,7 @@ var _ = Describe("Transition Conditions", func() {
 				withObservedGeneration(1),
 				withCondition(v1alpha1.ResourcePhaseActive, metav1.ConditionTrue, v1alpha1.ConditionReasonSynchronized, time.Now()),
 			)
-			Expect(KubeActiveAndGenerationChanged[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeTrue())
+			Expect(KubeActiveAndGenerationChanged[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeTrue())
 		})
 
 		It("returns false when same generation", func() {
@@ -607,7 +607,7 @@ var _ = Describe("Transition Conditions", func() {
 				withObservedGeneration(1),
 				withCondition(v1alpha1.ResourcePhaseActive, metav1.ConditionTrue, v1alpha1.ConditionReasonSynchronized, time.Now()),
 			)
-			Expect(KubeActiveAndGenerationChanged[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
+			Expect(KubeActiveAndGenerationChanged[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeFalse())
 		})
 
 		It("returns false when no ResourceID", func() {
@@ -617,7 +617,7 @@ var _ = Describe("Transition Conditions", func() {
 				withObservedGeneration(1),
 				withCondition(v1alpha1.ResourcePhaseActive, metav1.ConditionTrue, v1alpha1.ConditionReasonSynchronized, time.Now()),
 			)
-			Expect(KubeActiveAndGenerationChanged[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
+			Expect(KubeActiveAndGenerationChanged[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeFalse())
 		})
 
 		It("returns false when phase is not Active", func() {
@@ -628,7 +628,7 @@ var _ = Describe("Transition Conditions", func() {
 				withObservedGeneration(1),
 				withCondition(v1alpha1.ResourcePhaseActive, metav1.ConditionTrue, v1alpha1.ConditionReasonSynchronized, time.Now()),
 			)
-			Expect(KubeActiveAndGenerationChanged[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
+			Expect(KubeActiveAndGenerationChanged[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeFalse())
 		})
 
 		It("returns false when is deleting", func() {
@@ -640,7 +640,7 @@ var _ = Describe("Transition Conditions", func() {
 				withObservedGeneration(1),
 				withCondition(v1alpha1.ResourcePhaseActive, metav1.ConditionTrue, v1alpha1.ConditionReasonSynchronized, time.Now()),
 			)
-			Expect(KubeActiveAndGenerationChanged[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
+			Expect(KubeActiveAndGenerationChanged[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeFalse())
 		})
 	})
 
@@ -752,7 +752,7 @@ var _ = Describe("Transition Conditions", func() {
 				withPhase(v1alpha1.ResourcePhaseFailed),
 				withCondition(v1alpha1.ResourcePhaseFailed, metav1.ConditionTrue, v1alpha1.ConditionReasonIntentionValidationFailed, time.Now()),
 			)
-			Expect(KubeAnyValidationFailedAndDeleting[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeTrue())
+			Expect(KubeAnyValidationFailedAndDeleting[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeTrue())
 		})
 
 		It("returns false when the resource does not satisfy IsAnyValidationFailedAndDeleting", func() {
@@ -760,7 +760,7 @@ var _ = Describe("Transition Conditions", func() {
 				withPhase(v1alpha1.ResourcePhaseFailed),
 				withCondition(v1alpha1.ResourcePhaseFailed, metav1.ConditionTrue, v1alpha1.ConditionReasonValidationFailed, time.Now()),
 			)
-			Expect(KubeAnyValidationFailedAndDeleting[*v1alpha1.Project, *arubatypes.ProjectResponse](proj, nilCMP)).To(BeFalse())
+			Expect(KubeAnyValidationFailedAndDeleting[*v1alpha1.Project, *aruba.Project](proj, nilCMP)).To(BeFalse())
 		})
 	})
 

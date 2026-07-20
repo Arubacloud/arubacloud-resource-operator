@@ -28,7 +28,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/Arubacloud/sdk-go/pkg/aruba"
-	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
 	"github.com/Arubacloud/arubacloud-resource-operator/internal/reconciler"
@@ -53,7 +52,7 @@ type kubeSubnetBundle struct {
 }
 
 type cmpSubnetBundle struct {
-	CMPVpc *arubatypes.VPCResponse // from the VPC list fetch
+	CMPVpc *aruba.VPC // from the VPC list fetch
 }
 
 type subnetBundle struct {
@@ -72,9 +71,9 @@ type subnetBundle struct {
 // SubnetReconciler reconciles a Subnet object
 type SubnetReconciler struct {
 	*reconciler.Reconciler
-	ivs *reconciler.ValidationSet[*v1alpha1.Subnet, *arubatypes.SubnetResponse, *kubeSubnetBundle]
-	vs  *reconciler.ValidationSet[*v1alpha1.Subnet, *arubatypes.SubnetResponse, *subnetBundle]
-	ts  *reconciler.TransitionSet[*v1alpha1.Subnet, *arubatypes.SubnetResponse]
+	ivs *reconciler.ValidationSet[*v1alpha1.Subnet, *aruba.Subnet, *kubeSubnetBundle]
+	vs  *reconciler.ValidationSet[*v1alpha1.Subnet, *aruba.Subnet, *subnetBundle]
+	ts  *reconciler.TransitionSet[*v1alpha1.Subnet, *aruba.Subnet]
 }
 
 // ---------------------------------------------------------------------------
@@ -282,7 +281,7 @@ func (r *SubnetReconciler) fetchCMPDependencies(
 	kubeSubnet *v1alpha1.Subnet,
 	arubaClient aruba.Client,
 	isDeleting bool,
-) (cmpSubnet *arubatypes.SubnetResponse, cmpVpc *arubatypes.VPCResponse, prjID string, vpcID string, result ctrl.Result, err error) {
+) (cmpSubnet *aruba.Subnet, cmpVpc *aruba.VPC, prjID string, vpcID string, result ctrl.Result, err error) {
 	logger := log.FromContext(ctx)
 
 	subnetName := kubeSubnet.Name
@@ -296,35 +295,30 @@ func (r *SubnetReconciler) fetchCMPDependencies(
 	if isDeleting && kubeSubnet.Status.ProjectID != "" {
 		prjID = kubeSubnet.Status.ProjectID
 	} else {
-		cmpProjectList, listErr := arubaClient.FromProject().List(ctx, &arubatypes.RequestParameters{Filter: &prjFilter})
+		cmpProjectList, listErr := arubaClient.FromProject().List(ctx, aruba.WithFilter(prjFilter))
 		if listErr != nil {
 			return nil, nil, "", "", ctrl.Result{}, fmt.Errorf(
 				"failed to find project in Aruba cloud: %w, project_name: '%s', project_filter: '%s'",
 				listErr, projectName, prjFilter,
 			)
 		}
-		if cmpProjectList.IsError() {
-			return nil, nil, "", "", ctrl.Result{}, fmt.Errorf(
-				"failed to find project in Aruba cloud: status_code: %d, project_name: '%s', project_filter: '%s'",
-				cmpProjectList.StatusCode, projectName, prjFilter,
-			)
-		}
-		if cmpProjectList.Data.Total == 0 && kubeSubnet.Status.ProjectID != "" {
+		cmpProjects := cmpProjectList.Items()
+		if len(cmpProjects) == 0 && kubeSubnet.Status.ProjectID != "" {
 			return nil, nil, "", "", ctrl.Result{}, fmt.Errorf(
 				"inconsistent data in project list: expected: 1, project not found: project_name: '%s', project_filter: '%s'", projectName, prjFilter,
 			)
 		}
-		if cmpProjectList.Data.Total > 1 {
+		if len(cmpProjects) > 1 {
 			return nil, nil, "", "", ctrl.Result{}, fmt.Errorf(
 				"inconsistent data in project list: expected: 1, found: %d, project_name: '%s', project_filter: '%s'",
-				cmpProjectList.Data.Total, projectName, prjFilter,
+				len(cmpProjects), projectName, prjFilter,
 			)
 		}
-		if cmpProjectList.Data.Total == 0 {
+		if len(cmpProjects) == 0 {
 			logger.V(1).Info("parent project not found on CMP, requeuing", "projectName", projectName)
 			return nil, nil, "", "", ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
 		}
-		prjID = *(cmpProjectList.Data.Values[0].Metadata.ID)
+		prjID = cmpProjects[0].ID()
 	}
 
 	if kubeSubnet.Status.ProjectID != "" && kubeSubnet.Status.ProjectID != prjID {
@@ -338,38 +332,36 @@ func (r *SubnetReconciler) fetchCMPDependencies(
 	if isDeleting && kubeSubnet.Status.VPCID != "" {
 		vpcID = kubeSubnet.Status.VPCID
 	} else {
-		cmpVpcList, listErr := arubaClient.FromNetwork().VPCs().List(ctx, prjID, &arubatypes.RequestParameters{Filter: &vpcFilter})
-		if listErr != nil {
+		cmpVpcList, listErr := arubaClient.FromNetwork().VPCs().List(ctx, aruba.URI("/projects/"+prjID), aruba.WithFilter(vpcFilter))
+		if listErr != nil && !isCMPNotFound(listErr) {
 			return nil, nil, "", "", ctrl.Result{}, fmt.Errorf(
 				"failed to find vpc in Aruba cloud: %w, vpc_name: '%s', vpc_filter: '%s', project_name: '%s'",
 				listErr, vpcName, vpcFilter, projectName,
 			)
 		}
-		if cmpVpcList.IsError() {
-			return nil, nil, "", "", ctrl.Result{}, fmt.Errorf(
-				"failed to find vpc in Aruba cloud: status_code: %d, vpc_name: '%s', project_name: '%s'",
-				cmpVpcList.StatusCode, vpcName, projectName,
-			)
+		// Client-side name filter workaround: the CMP API ignores name:eq() on
+		// network-domain List endpoints (issue https://jira.aruba.it/browse/DEV-66643).
+		var cmpVpcs []*aruba.VPC
+		if cmpVpcList != nil {
+			cmpVpcs = filterByName(cmpVpcList.Items(), vpcName, func(v *aruba.VPC) string { return v.Name() })
 		}
-		// TODO: Remove once CMP API name:eq() filter is fixed (issue https://jira.aruba.it/browse/DEV-66643).
-		applyNameFilterToVPCList(cmpVpcList, vpcName, logger)
-		if cmpVpcList.Data.Total == 0 && kubeSubnet.Status.VPCID != "" {
+		if len(cmpVpcs) == 0 && kubeSubnet.Status.VPCID != "" {
 			return nil, nil, "", "", ctrl.Result{}, fmt.Errorf(
 				"inconsistent data in vpc list: expected: 1, vpc not found: vpc_name: '%s', vpc_filter: '%s'", vpcName, vpcFilter,
 			)
 		}
-		if cmpVpcList.Data.Total > 1 {
+		if len(cmpVpcs) > 1 {
 			return nil, nil, "", "", ctrl.Result{}, fmt.Errorf(
 				"inconsistent data in vpc list: expected: 1, found: %d, vpc_name: '%s', vpc_filter: '%s'",
-				cmpVpcList.Data.Total, vpcName, vpcFilter,
+				len(cmpVpcs), vpcName, vpcFilter,
 			)
 		}
-		if cmpVpcList.Data.Total == 0 {
+		if len(cmpVpcs) == 0 {
 			logger.V(1).Info("parent vpc not found on CMP, requeuing", "vpcName", vpcName)
 			return nil, nil, "", "", ctrl.Result{RequeueAfter: reconciler.LongRequeueAfter}, nil
 		}
-		cmpVpc = &cmpVpcList.Data.Values[0]
-		vpcID = *(cmpVpc.Metadata.ID)
+		cmpVpc = cmpVpcs[0]
+		vpcID = cmpVpc.ID()
 	}
 
 	if kubeSubnet.Status.VPCID != "" && kubeSubnet.Status.VPCID != vpcID {
@@ -380,30 +372,27 @@ func (r *SubnetReconciler) fetchCMPDependencies(
 	}
 
 	// Stage 3c: Fetch CMP Subnet.
-	cmpSubnetList, listErr := arubaClient.FromNetwork().Subnets().List(ctx, prjID, vpcID, &arubatypes.RequestParameters{Filter: &subnetFilter})
-	if listErr != nil {
+	cmpSubnetList, listErr := arubaClient.FromNetwork().Subnets().List(ctx, aruba.VPCRef(prjID, vpcID), aruba.WithFilter(subnetFilter))
+	if listErr != nil && !isCMPNotFound(listErr) {
 		return nil, nil, "", "", ctrl.Result{}, fmt.Errorf(
 			"failed to find subnet in Aruba cloud: %w, subnet_name: '%s', subnet_filter: '%s', project_name: '%s', vpc_name: '%s'",
 			listErr, subnetName, subnetFilter, projectName, vpcName,
 		)
 	}
-	if cmpSubnetList.IsError() && cmpSubnetList.StatusCode != http.StatusNotFound {
-		return nil, nil, "", "", ctrl.Result{}, fmt.Errorf(
-			"failed to find subnet in Aruba cloud: status_code: %d, subnet_name: '%s', project_name: '%s', vpc_name: '%s'",
-			cmpSubnetList.StatusCode, subnetName, projectName, vpcName,
-		)
+	// Client-side name filter workaround (issue https://jira.aruba.it/browse/DEV-66643).
+	var cmpSubnets []*aruba.Subnet
+	if cmpSubnetList != nil {
+		cmpSubnets = filterByName(cmpSubnetList.Items(), subnetName, func(s *aruba.Subnet) string { return s.Name() })
 	}
-	// TODO: Remove once CMP API name:eq() filter is fixed (issue https://jira.aruba.it/browse/DEV-66643).
-	applyNameFilterToSubnetList(cmpSubnetList, subnetName, logger)
-	if !cmpSubnetList.IsError() && (cmpSubnetList.Data.Total < 0 || cmpSubnetList.Data.Total > 1) {
+	if len(cmpSubnets) > 1 {
 		return nil, nil, "", "", ctrl.Result{}, fmt.Errorf(
 			"inconsistent data in subnet list: subnet_name: '%s', subnet_filter: '%s', project_name: '%s', vpc_name: '%s', instances: %d",
-			subnetName, subnetFilter, projectName, vpcName, cmpSubnetList.Data.Total,
+			subnetName, subnetFilter, projectName, vpcName, len(cmpSubnets),
 		)
 	}
 
-	if cmpSubnetList.Data != nil && cmpSubnetList.Data.Total == 1 {
-		cmpSubnet = &cmpSubnetList.Data.Values[0]
+	if len(cmpSubnets) == 1 {
+		cmpSubnet = cmpSubnets[0]
 	}
 	logger.V(1).Info("CMP Subnet state", "found", cmpSubnet != nil, "projectID", prjID, "vpcID", vpcID)
 
@@ -412,23 +401,23 @@ func (r *SubnetReconciler) fetchCMPDependencies(
 
 // newIntentionValidationSet returns K8s-only validation rules that run at Stage 4,
 // before any CMP calls. All rules nil-guard bundle fields to handle an empty bundle.
-func (r *SubnetReconciler) newIntentionValidationSet() *reconciler.ValidationSet[*v1alpha1.Subnet, *arubatypes.SubnetResponse, *kubeSubnetBundle] {
-	ivs := &reconciler.ValidationSet[*v1alpha1.Subnet, *arubatypes.SubnetResponse, *kubeSubnetBundle]{}
+func (r *SubnetReconciler) newIntentionValidationSet() *reconciler.ValidationSet[*v1alpha1.Subnet, *aruba.Subnet, *kubeSubnetBundle] {
+	ivs := &reconciler.ValidationSet[*v1alpha1.Subnet, *aruba.Subnet, *kubeSubnetBundle]{}
 	// 1. Required references
-	ivs.Add("ProjectReferenceRequired", func(k *v1alpha1.Subnet, _ *arubatypes.SubnetResponse, _ *kubeSubnetBundle) error {
+	ivs.Add("ProjectReferenceRequired", func(k *v1alpha1.Subnet, _ *aruba.Subnet, _ *kubeSubnetBundle) error {
 		if k.Spec.ProjectReference.Name == "" {
 			return fmt.Errorf("project reference is required")
 		}
 		return nil
 	})
-	ivs.Add("VPCReferenceRequired", func(k *v1alpha1.Subnet, _ *arubatypes.SubnetResponse, _ *kubeSubnetBundle) error {
+	ivs.Add("VPCReferenceRequired", func(k *v1alpha1.Subnet, _ *aruba.Subnet, _ *kubeSubnetBundle) error {
 		if k.Spec.VPCReference.Name == "" {
 			return fmt.Errorf("vpc reference is required")
 		}
 		return nil
 	})
 	// 2. Cross-resource rules (nil-guarded — VPC/Project may not be resolved yet)
-	ivs.Add("TenantMustMatchVPC", func(k *v1alpha1.Subnet, _ *arubatypes.SubnetResponse, b *kubeSubnetBundle) error {
+	ivs.Add("TenantMustMatchVPC", func(k *v1alpha1.Subnet, _ *aruba.Subnet, b *kubeSubnetBundle) error {
 		if b.KubeVpc == nil {
 			return nil
 		}
@@ -437,7 +426,7 @@ func (r *SubnetReconciler) newIntentionValidationSet() *reconciler.ValidationSet
 		}
 		return nil
 	})
-	ivs.Add("ProjectMustMatchVPC", func(k *v1alpha1.Subnet, _ *arubatypes.SubnetResponse, b *kubeSubnetBundle) error {
+	ivs.Add("ProjectMustMatchVPC", func(k *v1alpha1.Subnet, _ *aruba.Subnet, b *kubeSubnetBundle) error {
 		if b.KubeVpc == nil {
 			return nil
 		}
@@ -446,7 +435,7 @@ func (r *SubnetReconciler) newIntentionValidationSet() *reconciler.ValidationSet
 		}
 		return nil
 	})
-	ivs.Add("TenantMustMatchProject", func(k *v1alpha1.Subnet, _ *arubatypes.SubnetResponse, b *kubeSubnetBundle) error {
+	ivs.Add("TenantMustMatchProject", func(k *v1alpha1.Subnet, _ *aruba.Subnet, b *kubeSubnetBundle) error {
 		if b.KubeProject == nil {
 			return nil
 		}
@@ -458,21 +447,21 @@ func (r *SubnetReconciler) newIntentionValidationSet() *reconciler.ValidationSet
 	return ivs
 }
 
-func (r *SubnetReconciler) newValidationSet() *reconciler.ValidationSet[*v1alpha1.Subnet, *arubatypes.SubnetResponse, *subnetBundle] {
-	vs := &reconciler.ValidationSet[*v1alpha1.Subnet, *arubatypes.SubnetResponse, *subnetBundle]{}
-	vs.Add("TenantMustMatchVPC", reconciler.FieldMustMatch[*v1alpha1.Subnet, *arubatypes.SubnetResponse, *subnetBundle](
+func (r *SubnetReconciler) newValidationSet() *reconciler.ValidationSet[*v1alpha1.Subnet, *aruba.Subnet, *subnetBundle] {
+	vs := &reconciler.ValidationSet[*v1alpha1.Subnet, *aruba.Subnet, *subnetBundle]{}
+	vs.Add("TenantMustMatchVPC", reconciler.FieldMustMatch[*v1alpha1.Subnet, *aruba.Subnet, *subnetBundle](
 		"tenant",
 		func(k *v1alpha1.Subnet) string { return k.Spec.Tenant },
 		func(b *subnetBundle) string { return b.KubeVpc.Spec.Tenant },
 		"VPC",
 	))
-	vs.Add("ProjectMustMatchVPC", reconciler.FieldMustMatch[*v1alpha1.Subnet, *arubatypes.SubnetResponse, *subnetBundle](
+	vs.Add("ProjectMustMatchVPC", reconciler.FieldMustMatch[*v1alpha1.Subnet, *aruba.Subnet, *subnetBundle](
 		"project reference",
 		func(k *v1alpha1.Subnet) string { return k.Spec.ProjectReference.Name },
 		func(b *subnetBundle) string { return b.KubeVpc.Spec.ProjectReference.Name },
 		"VPC",
 	))
-	vs.Add("TenantMustMatchProject", func(k *v1alpha1.Subnet, _ *arubatypes.SubnetResponse, b *subnetBundle) error {
+	vs.Add("TenantMustMatchProject", func(k *v1alpha1.Subnet, _ *aruba.Subnet, b *subnetBundle) error {
 		if b.KubeProject == nil {
 			return nil
 		}
@@ -484,244 +473,244 @@ func (r *SubnetReconciler) newValidationSet() *reconciler.ValidationSet[*v1alpha
 	return vs
 }
 
-func (r *SubnetReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alpha1.Subnet, *arubatypes.SubnetResponse] {
-	ts := &reconciler.TransitionSet[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
-		DefaultRequeue:        reconciler.NoRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		DefaultRequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+func (r *SubnetReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alpha1.Subnet, *aruba.Subnet] {
+	ts := &reconciler.TransitionSet[*v1alpha1.Subnet, *aruba.Subnet]{
+		DefaultRequeue:        reconciler.NoRequeue[*v1alpha1.Subnet, *aruba.Subnet],
+		DefaultRequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *aruba.Subnet],
 	}
 
 	// 0. PhaseTimedOut — safety net: fail if stuck in a transitory phase too long
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *aruba.Subnet]{
 		Name:           "PhaseTimedOut",
-		KCondition:     reconciler.KubePhaseTimedOut[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		ACondition:     reconciler.AlwaysTrue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		KCondition:     reconciler.KubePhaseTimedOut[*v1alpha1.Subnet, *aruba.Subnet],
+		ACondition:     reconciler.AlwaysTrue[*v1alpha1.Subnet, *aruba.Subnet],
 		KAction:        r.kubeSetFailedOnTimeout,
-		Requeue:        reconciler.NoRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		Requeue:        reconciler.NoRequeue[*v1alpha1.Subnet, *aruba.Subnet],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *aruba.Subnet],
 	})
 
 	// 1. ValidationFailedAndDeleting — unblock deletion for resources stuck in any *ValidationFailed state
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *aruba.Subnet]{
 		Name:           "ValidationFailedAndDeleting",
-		KCondition:     reconciler.KubeAnyValidationFailedAndDeleting[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		ACondition:     reconciler.AlwaysTrue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		KAction:        reconciler.KubeResetValidationFailedForDeletion[*v1alpha1.Subnet, *arubatypes.SubnetResponse](r.Client),
-		Requeue:        reconciler.ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		RequeueOnError: reconciler.NoRequeueAndPropagateError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		KCondition:     reconciler.KubeAnyValidationFailedAndDeleting[*v1alpha1.Subnet, *aruba.Subnet],
+		ACondition:     reconciler.AlwaysTrue[*v1alpha1.Subnet, *aruba.Subnet],
+		KAction:        reconciler.KubeResetValidationFailedForDeletion[*v1alpha1.Subnet, *aruba.Subnet](r.Client),
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.Subnet, *aruba.Subnet],
+		RequeueOnError: reconciler.NoRequeueAndPropagateError[*v1alpha1.Subnet, *aruba.Subnet],
 	})
 
 	// 2. PendingAndDeleting — resource deleted while still in Pending; skip CMP entirely
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *aruba.Subnet]{
 		Name:       "PendingAndDeleting",
-		KCondition: reconciler.KubePendingAndDeleting[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		ACondition: reconciler.AlwaysTrue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		KAction:    reconciler.KubeDeleteFromPending[*v1alpha1.Subnet, *arubatypes.SubnetResponse](r.Client),
-		Requeue:    reconciler.NoRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		KCondition: reconciler.KubePendingAndDeleting[*v1alpha1.Subnet, *aruba.Subnet],
+		ACondition: reconciler.AlwaysTrue[*v1alpha1.Subnet, *aruba.Subnet],
+		KAction:    reconciler.KubeDeleteFromPending[*v1alpha1.Subnet, *aruba.Subnet](r.Client),
+		Requeue:    reconciler.NoRequeue[*v1alpha1.Subnet, *aruba.Subnet],
 	})
 
 	// 3. ShouldBeDeleted
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *aruba.Subnet]{
 		Name:           "ShouldBeDeleted",
-		KCondition:     reconciler.KubeShouldDelete[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		KCondition:     reconciler.KubeShouldDelete[*v1alpha1.Subnet, *aruba.Subnet],
 		ACondition:     cmpSubnetIsFinal,
 		KAction:        r.kubeMarkToDelete,
-		Requeue:        reconciler.ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.Subnet, *aruba.Subnet],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *aruba.Subnet],
 	})
 
 	// 4. ShouldDeleteTimedOut — enter deletion flow for timed-out resources (except those that timed out during Deleting)
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *aruba.Subnet]{
 		Name:           "ShouldDeleteTimedOut",
-		KCondition:     reconciler.KubeShouldDeleteTimedOut[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		ACondition:     reconciler.AlwaysTrue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		KCondition:     reconciler.KubeShouldDeleteTimedOut[*v1alpha1.Subnet, *aruba.Subnet],
+		ACondition:     reconciler.AlwaysTrue[*v1alpha1.Subnet, *aruba.Subnet],
 		KAction:        r.kubeMarkToDelete,
-		Requeue:        reconciler.ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.Subnet, *aruba.Subnet],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *aruba.Subnet],
 	})
 
 	// 5. ShouldBeDeletedOnCMP
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *aruba.Subnet]{
 		Name:              "ShouldBeDeletedOnCMP",
-		KCondition:        reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		KCondition:        reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.Subnet, *aruba.Subnet],
 		ACondition:        cmpSubnetIsFinal,
 		AAction:           r.cmpDelete,
 		KActionOnASuccess: r.kubeMarkDeleting,
-		KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.Subnet, *arubatypes.SubnetResponse](r.Client),
-		Requeue:           reconciler.ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.Subnet, *aruba.Subnet](r.Client),
+		Requeue:           reconciler.ShortRequeue[*v1alpha1.Subnet, *aruba.Subnet],
+		RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.Subnet, *aruba.Subnet],
 	})
 
 	// 6. DeletionOnCMPNotNeeded — resource marked for deletion but CMP resource doesn't exist; skip CMP delete
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *aruba.Subnet]{
 		Name:           "DeletionOnCMPNotNeeded",
-		KCondition:     reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		KCondition:     reconciler.KubeShouldBeDeletedOnCMP[*v1alpha1.Subnet, *aruba.Subnet],
 		ACondition:     cmpSubnetNotExists,
 		KAction:        r.kubeMarkDeletingDone,
-		Requeue:        reconciler.ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.Subnet, *aruba.Subnet],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *aruba.Subnet],
 	})
 
 	// 7. WaitingDeletionOnCMP
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *aruba.Subnet]{
 		Name:           "WaitingDeletionOnCMP",
-		KCondition:     reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		KCondition:     reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.Subnet, *aruba.Subnet],
 		ACondition:     cmpSubnetIsTransitory,
-		Requeue:        reconciler.LongRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		Requeue:        reconciler.LongRequeue[*v1alpha1.Subnet, *aruba.Subnet],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *aruba.Subnet],
 	})
 
 	// 8. DeletionConfirmedOnCMP
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *aruba.Subnet]{
 		Name:           "DeletionConfirmedOnCMP",
-		KCondition:     reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		KCondition:     reconciler.KubeWaitingDeletionOnCMP[*v1alpha1.Subnet, *aruba.Subnet],
 		ACondition:     cmpSubnetNotExists,
 		KAction:        r.kubeMarkDeletingDone,
-		Requeue:        reconciler.ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.Subnet, *aruba.Subnet],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *aruba.Subnet],
 	})
 
 	// 9. DeletionAccomplished
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *aruba.Subnet]{
 		Name:           "DeletionAccomplished",
-		KCondition:     reconciler.KubeDeletionAccomplished[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		KCondition:     reconciler.KubeDeletionAccomplished[*v1alpha1.Subnet, *aruba.Subnet],
 		ACondition:     cmpSubnetNotExists,
 		KAction:        r.kubeMarkDeleted,
-		Requeue:        reconciler.ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.Subnet, *aruba.Subnet],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *aruba.Subnet],
 	})
 
 	// 10. HasDeniedChanges — surface immutable field violations before attempting update
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *aruba.Subnet]{
 		Name:       "HasDeniedChanges",
 		KCondition: kubeSubnetHasDeniedChanges,
 		ACondition: cmpSubnetIsFinal,
-		KAction: func(ctx context.Context, kubeSubnet *v1alpha1.Subnet, cmpSubnet *arubatypes.SubnetResponse) error {
+		KAction: func(ctx context.Context, kubeSubnet *v1alpha1.Subnet, cmpSubnet *aruba.Subnet) error {
 			return fmt.Errorf("subnet update rejected: %w", checkSubnetDeniedChanges(kubeSubnet, cmpSubnet))
 		},
-		Requeue:        reconciler.NoRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		RequeueOnError: reconciler.LongRequeueAndIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		Requeue:        reconciler.NoRequeue[*v1alpha1.Subnet, *aruba.Subnet],
+		RequeueOnError: reconciler.LongRequeueAndIgnoreError[*v1alpha1.Subnet, *aruba.Subnet],
 	})
 
 	// 11. SpecAlreadyInSyncWithCMP — generation changed but spec identical to CMP; just re-stamp ObservedGeneration
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *aruba.Subnet]{
 		Name:           "SpecAlreadyInSyncWithCMP",
 		KCondition:     kubeSubnetSpecInSyncWithCMP,
 		ACondition:     cmpSubnetIsActive,
 		KAction:        r.kubeSetActiveAndSetID,
-		Requeue:        reconciler.NoRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		Requeue:        reconciler.NoRequeue[*v1alpha1.Subnet, *aruba.Subnet],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *aruba.Subnet],
 	})
 
 	// 12. ShouldBeUpdated — spec changed and CMP is ready
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *aruba.Subnet]{
 		Name:           "ShouldBeUpdated",
 		KCondition:     kubeSubnetShouldUpdate,
 		ACondition:     cmpSubnetIsFinal,
 		KAction:        r.kubeMarkToUpdate,
-		Requeue:        reconciler.ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.Subnet, *aruba.Subnet],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *aruba.Subnet],
 	})
 
 	// 13. ShouldBeUpdatedOnCMP — send update to CMP
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *aruba.Subnet]{
 		Name:              "ShouldBeUpdatedOnCMP",
-		KCondition:        reconciler.KubeShouldBeUpdatedOnCMP[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		KCondition:        reconciler.KubeShouldBeUpdatedOnCMP[*v1alpha1.Subnet, *aruba.Subnet],
 		ACondition:        cmpSubnetIsFinal,
 		AAction:           r.cmpUpdate,
 		KActionOnASuccess: r.kubeMarkUpdating,
-		KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.Subnet, *arubatypes.SubnetResponse](r.Client),
-		Requeue:           reconciler.ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.Subnet, *aruba.Subnet](r.Client),
+		Requeue:           reconciler.ShortRequeue[*v1alpha1.Subnet, *aruba.Subnet],
+		RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.Subnet, *aruba.Subnet],
 	})
 
 	// 14. WaitingUpdateOnCMP — CMP is still processing the update
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *aruba.Subnet]{
 		Name:           "WaitingUpdateOnCMP",
-		KCondition:     reconciler.KubeWaitingUpdateOnCMP[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		KCondition:     reconciler.KubeWaitingUpdateOnCMP[*v1alpha1.Subnet, *aruba.Subnet],
 		ACondition:     cmpSubnetIsTransitory,
-		Requeue:        reconciler.LongRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		Requeue:        reconciler.LongRequeue[*v1alpha1.Subnet, *aruba.Subnet],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *aruba.Subnet],
 	})
 
 	// 15. UpdateConfirmedOnCMP — CMP has settled; advance to Synchronized
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *aruba.Subnet]{
 		Name:           "UpdateConfirmedOnCMP",
-		KCondition:     reconciler.KubeWaitingUpdateOnCMP[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		KCondition:     reconciler.KubeWaitingUpdateOnCMP[*v1alpha1.Subnet, *aruba.Subnet],
 		ACondition:     cmpSubnetIsFinal,
 		KAction:        r.kubeMarkUpdatingDone,
-		Requeue:        reconciler.ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.Subnet, *aruba.Subnet],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *aruba.Subnet],
 	})
 
 	// 16. UpdateAccomplished — transition back to Active and stamp generation
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *aruba.Subnet]{
 		Name:           "UpdateAccomplished",
-		KCondition:     reconciler.KubeUpdateAccomplished[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		KCondition:     reconciler.KubeUpdateAccomplished[*v1alpha1.Subnet, *aruba.Subnet],
 		ACondition:     cmpSubnetIsActive,
 		KAction:        r.kubeSetActiveAndSetID,
-		Requeue:        reconciler.NoRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		Requeue:        reconciler.NoRequeue[*v1alpha1.Subnet, *aruba.Subnet],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *aruba.Subnet],
 	})
 
 	// 17. ShouldBeCreated
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *aruba.Subnet]{
 		Name:           "ShouldBeCreated",
-		KCondition:     reconciler.KubeIsFirstReconciliation[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		KCondition:     reconciler.KubeIsFirstReconciliation[*v1alpha1.Subnet, *aruba.Subnet],
 		ACondition:     cmpSubnetNotExists,
 		KAction:        r.kubeMarkToCreate,
-		Requeue:        reconciler.ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.Subnet, *aruba.Subnet],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *aruba.Subnet],
 	})
 
 	// 18. ShouldBeCreatedInCMP
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *aruba.Subnet]{
 		Name:              "ShouldBeCreatedInCMP",
-		KCondition:        reconciler.KubeShouldBeCreatedOnCMP[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		KCondition:        reconciler.KubeShouldBeCreatedOnCMP[*v1alpha1.Subnet, *aruba.Subnet],
 		ACondition:        cmpSubnetNotExists,
 		AAction:           r.cmpCreate,
 		KActionOnASuccess: r.kubeMarkCreating,
-		KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.Subnet, *arubatypes.SubnetResponse](r.Client),
-		Requeue:           reconciler.ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		KActionOnAError:   reconciler.KubeSetErrorMessageOnCMPError[*v1alpha1.Subnet, *aruba.Subnet](r.Client),
+		Requeue:           reconciler.ShortRequeue[*v1alpha1.Subnet, *aruba.Subnet],
+		RequeueOnError:    reconciler.SmartRequeueOnError[*v1alpha1.Subnet, *aruba.Subnet],
 	})
 
 	// 19. WaitingCreationInCMP
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *aruba.Subnet]{
 		Name:           "WaitingCreationInCMP",
-		KCondition:     reconciler.KubeWaitingCreationInCMP[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		KCondition:     reconciler.KubeWaitingCreationInCMP[*v1alpha1.Subnet, *aruba.Subnet],
 		ACondition:     cmpSubnetNotExistsOrTransitory,
-		Requeue:        reconciler.LongRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		Requeue:        reconciler.LongRequeue[*v1alpha1.Subnet, *aruba.Subnet],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *aruba.Subnet],
 	})
 
 	// 20. CreationConfirmedOnCMP
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *aruba.Subnet]{
 		Name:           "CreationConfirmedOnCMP",
-		KCondition:     reconciler.KubeWaitingCreationInCMP[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		KCondition:     reconciler.KubeWaitingCreationInCMP[*v1alpha1.Subnet, *aruba.Subnet],
 		ACondition:     cmpSubnetIsActive,
 		KAction:        r.kubeMarkCreatingDone,
-		Requeue:        reconciler.ShortRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		Requeue:        reconciler.ShortRequeue[*v1alpha1.Subnet, *aruba.Subnet],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *aruba.Subnet],
 	})
 
 	// 21. CreationAccomplished
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *aruba.Subnet]{
 		Name:           "CreationAccomplished",
-		KCondition:     reconciler.KubeIsCreatedOnCMP[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		KCondition:     reconciler.KubeIsCreatedOnCMP[*v1alpha1.Subnet, *aruba.Subnet],
 		ACondition:     cmpSubnetIsActive,
 		KAction:        r.kubeSetActiveAndSetID,
-		Requeue:        reconciler.NoRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		Requeue:        reconciler.NoRequeue[*v1alpha1.Subnet, *aruba.Subnet],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *aruba.Subnet],
 	})
 
 	// 22. IsInError
-	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *arubatypes.SubnetResponse]{
+	ts.Add(&reconciler.AbstractTransition[*v1alpha1.Subnet, *aruba.Subnet]{
 		Name:           "IsInError",
-		KCondition:     reconciler.AlwaysTrue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		KCondition:     reconciler.AlwaysTrue[*v1alpha1.Subnet, *aruba.Subnet],
 		ACondition:     cmpSubnetIsFailed,
 		KAction:        r.kubeSetFailed,
-		Requeue:        reconciler.NoRequeue[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
-		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *arubatypes.SubnetResponse],
+		Requeue:        reconciler.NoRequeue[*v1alpha1.Subnet, *aruba.Subnet],
+		RequeueOnError: reconciler.NoRequeueButIgnoreError[*v1alpha1.Subnet, *aruba.Subnet],
 	})
 
 	return ts
@@ -731,7 +720,7 @@ func (r *SubnetReconciler) newTransitionSet() *reconciler.TransitionSet[*v1alpha
 // Kube conditions
 // ---------------------------------------------------------------------------
 
-func kubeSubnetHasDeniedChanges(kubeSubnet *v1alpha1.Subnet, cmpSubnet *arubatypes.SubnetResponse) bool {
+func kubeSubnetHasDeniedChanges(kubeSubnet *v1alpha1.Subnet, cmpSubnet *aruba.Subnet) bool {
 	if !kubeSubnet.DeletionTimestamp.IsZero() {
 		return false
 	}
@@ -741,13 +730,13 @@ func kubeSubnetHasDeniedChanges(kubeSubnet *v1alpha1.Subnet, cmpSubnet *arubatyp
 	return checkSubnetDeniedChanges(kubeSubnet, cmpSubnet) != nil
 }
 
-func kubeSubnetSpecInSyncWithCMP(kubeSubnet *v1alpha1.Subnet, cmpSubnet *arubatypes.SubnetResponse) bool {
+func kubeSubnetSpecInSyncWithCMP(kubeSubnet *v1alpha1.Subnet, cmpSubnet *aruba.Subnet) bool {
 	return reconciler.KubeActiveAndGenerationChanged(kubeSubnet, cmpSubnet) &&
 		checkSubnetDeniedChanges(kubeSubnet, cmpSubnet) == nil &&
 		!kubeSubnetNeedsUpdate(kubeSubnet, cmpSubnet)
 }
 
-func kubeSubnetShouldUpdate(kubeSubnet *v1alpha1.Subnet, cmpSubnet *arubatypes.SubnetResponse) bool {
+func kubeSubnetShouldUpdate(kubeSubnet *v1alpha1.Subnet, cmpSubnet *aruba.Subnet) bool {
 	return reconciler.KubeActiveAndGenerationChanged(kubeSubnet, cmpSubnet) &&
 		checkSubnetDeniedChanges(kubeSubnet, cmpSubnet) == nil &&
 		kubeSubnetNeedsUpdate(kubeSubnet, cmpSubnet)
@@ -757,41 +746,28 @@ func kubeSubnetShouldUpdate(kubeSubnet *v1alpha1.Subnet, cmpSubnet *arubatypes.S
 // CMP conditions
 // ---------------------------------------------------------------------------
 
-func cmpSubnetNotExists(_ *v1alpha1.Subnet, cmpSubnet *arubatypes.SubnetResponse) bool {
+func cmpSubnetNotExists(_ *v1alpha1.Subnet, cmpSubnet *aruba.Subnet) bool {
 	return cmpSubnet == nil
 }
 
-func cmpSubnetIsFinal(_ *v1alpha1.Subnet, cmpSubnet *arubatypes.SubnetResponse) bool {
-	if cmpSubnet == nil || cmpSubnet.Status.State == nil {
-		return false
-	}
-	return reconciler.AssessCSPResourceStateNature(&cmpSubnet.Status) == reconciler.CSPResourceStateNatureFinal
+func cmpSubnetIsFinal(_ *v1alpha1.Subnet, cmpSubnet *aruba.Subnet) bool {
+	return cmpSubnet != nil && reconciler.IsFinalState(cmpSubnet.State())
 }
 
-func cmpSubnetIsTransitory(_ *v1alpha1.Subnet, cmpSubnet *arubatypes.SubnetResponse) bool {
-	if cmpSubnet == nil || cmpSubnet.Status.State == nil {
-		return false
-	}
-	return reconciler.AssessCSPResourceStateNature(&cmpSubnet.Status) == reconciler.CSPResourceStateNatureTransitory
+func cmpSubnetIsTransitory(_ *v1alpha1.Subnet, cmpSubnet *aruba.Subnet) bool {
+	return cmpSubnet != nil && cmpSubnet.State().IsTransitory()
 }
 
-func cmpSubnetNotExistsOrTransitory(_ *v1alpha1.Subnet, cmpSubnet *arubatypes.SubnetResponse) bool {
-	if cmpSubnet == nil {
-		return true
-	}
-	if cmpSubnet.Status.State == nil {
-		return false
-	}
-	return reconciler.AssessCSPResourceStateNature(&cmpSubnet.Status) == reconciler.CSPResourceStateNatureTransitory
+func cmpSubnetNotExistsOrTransitory(_ *v1alpha1.Subnet, cmpSubnet *aruba.Subnet) bool {
+	return cmpSubnet == nil || cmpSubnet.State().IsTransitory()
 }
 
-func cmpSubnetIsActive(_ *v1alpha1.Subnet, cmpSubnet *arubatypes.SubnetResponse) bool {
-	return cmpSubnet != nil && cmpSubnet.Status.State != nil &&
-		*cmpSubnet.Status.State == reconciler.CSPResourceStateActive
+func cmpSubnetIsActive(_ *v1alpha1.Subnet, cmpSubnet *aruba.Subnet) bool {
+	return cmpSubnet != nil && cmpSubnet.State() == aruba.StateActive
 }
 
-func cmpSubnetIsFailed(_ *v1alpha1.Subnet, cmpSubnet *arubatypes.SubnetResponse) bool {
-	return cmpSubnet != nil && cmpSubnet.Status.State != nil && *cmpSubnet.Status.State == reconciler.CSPResourceStateFailed
+func cmpSubnetIsFailed(_ *v1alpha1.Subnet, cmpSubnet *aruba.Subnet) bool {
+	return cmpSubnet != nil && cmpSubnet.State().IsFailure()
 }
 
 // ---------------------------------------------------------------------------
@@ -812,50 +788,50 @@ func (r *SubnetReconciler) kubeSetPhaseAndCondition(ctx context.Context, kubeSub
 	return reconciler.SetPhaseAndCondition(r.Client, ctx, kubeSubnet, phase, reason, nil, prePatches...)
 }
 
-func (r *SubnetReconciler) kubeMarkToDelete(ctx context.Context, kubeSubnet *v1alpha1.Subnet, _ *arubatypes.SubnetResponse) error {
+func (r *SubnetReconciler) kubeMarkToDelete(ctx context.Context, kubeSubnet *v1alpha1.Subnet, _ *aruba.Subnet) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeSubnet, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonShallSynchronize, nil)
 }
 
-func (r *SubnetReconciler) kubeMarkDeleting(ctx context.Context, kubeSubnet *v1alpha1.Subnet, _ *arubatypes.SubnetResponse) error {
+func (r *SubnetReconciler) kubeMarkDeleting(ctx context.Context, kubeSubnet *v1alpha1.Subnet, _ *aruba.Subnet) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeSubnet, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronizing, nil)
 }
 
-func (r *SubnetReconciler) kubeMarkDeletingDone(ctx context.Context, kubeSubnet *v1alpha1.Subnet, _ *arubatypes.SubnetResponse) error {
+func (r *SubnetReconciler) kubeMarkDeletingDone(ctx context.Context, kubeSubnet *v1alpha1.Subnet, _ *aruba.Subnet) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeSubnet, v1alpha1.ResourcePhaseDeleting, v1alpha1.ConditionReasonSynchronized, nil)
 }
 
-func (r *SubnetReconciler) kubeMarkDeleted(ctx context.Context, kubeSubnet *v1alpha1.Subnet, _ *arubatypes.SubnetResponse) error {
+func (r *SubnetReconciler) kubeMarkDeleted(ctx context.Context, kubeSubnet *v1alpha1.Subnet, _ *aruba.Subnet) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeSubnet, v1alpha1.ResourcePhaseDeleted, v1alpha1.ConditionReasonSynchronized, nil)
 }
 
-func (r *SubnetReconciler) kubeMarkToUpdate(ctx context.Context, kubeSubnet *v1alpha1.Subnet, _ *arubatypes.SubnetResponse) error {
+func (r *SubnetReconciler) kubeMarkToUpdate(ctx context.Context, kubeSubnet *v1alpha1.Subnet, _ *aruba.Subnet) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeSubnet, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonShallSynchronize, nil)
 }
 
-func (r *SubnetReconciler) kubeMarkUpdating(ctx context.Context, kubeSubnet *v1alpha1.Subnet, _ *arubatypes.SubnetResponse) error {
+func (r *SubnetReconciler) kubeMarkUpdating(ctx context.Context, kubeSubnet *v1alpha1.Subnet, _ *aruba.Subnet) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeSubnet, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonSynchronizing, nil)
 }
 
-func (r *SubnetReconciler) kubeMarkUpdatingDone(ctx context.Context, kubeSubnet *v1alpha1.Subnet, _ *arubatypes.SubnetResponse) error {
+func (r *SubnetReconciler) kubeMarkUpdatingDone(ctx context.Context, kubeSubnet *v1alpha1.Subnet, _ *aruba.Subnet) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeSubnet, v1alpha1.ResourcePhaseUpdating, v1alpha1.ConditionReasonSynchronized, nil)
 }
 
-func (r *SubnetReconciler) kubeMarkToCreate(ctx context.Context, kubeSubnet *v1alpha1.Subnet, _ *arubatypes.SubnetResponse) error {
+func (r *SubnetReconciler) kubeMarkToCreate(ctx context.Context, kubeSubnet *v1alpha1.Subnet, _ *aruba.Subnet) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeSubnet, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, nil)
 }
 
-func (r *SubnetReconciler) kubeMarkCreating(ctx context.Context, kubeSubnet *v1alpha1.Subnet, _ *arubatypes.SubnetResponse) error {
+func (r *SubnetReconciler) kubeMarkCreating(ctx context.Context, kubeSubnet *v1alpha1.Subnet, _ *aruba.Subnet) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeSubnet, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronizing, nil)
 }
 
-func (r *SubnetReconciler) kubeMarkCreatingDone(ctx context.Context, kubeSubnet *v1alpha1.Subnet, _ *arubatypes.SubnetResponse) error {
+func (r *SubnetReconciler) kubeMarkCreatingDone(ctx context.Context, kubeSubnet *v1alpha1.Subnet, _ *aruba.Subnet) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeSubnet, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonSynchronized, nil)
 }
 
-func (r *SubnetReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeSubnet *v1alpha1.Subnet, cmpSubnet *arubatypes.SubnetResponse) error {
+func (r *SubnetReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeSubnet *v1alpha1.Subnet, cmpSubnet *aruba.Subnet) error {
 	cmpID := ""
-	if cmpSubnet != nil && cmpSubnet.Metadata.ID != nil {
-		cmpID = *cmpSubnet.Metadata.ID
+	if cmpSubnet != nil {
+		cmpID = cmpSubnet.ID()
 	}
 	return reconciler.SetActiveAndSetID(r.Client, ctx, kubeSubnet, cmpID, nil, func(subnet *v1alpha1.Subnet) {
 		if prjID, ok := ctx.Value(projectIDKey).(string); ok && subnet.Status.ProjectID != "" {
@@ -867,7 +843,7 @@ func (r *SubnetReconciler) kubeSetActiveAndSetID(ctx context.Context, kubeSubnet
 	})
 }
 
-func (r *SubnetReconciler) kubeSetFailedOnTimeout(ctx context.Context, kubeSubnet *v1alpha1.Subnet, _ *arubatypes.SubnetResponse) error {
+func (r *SubnetReconciler) kubeSetFailedOnTimeout(ctx context.Context, kubeSubnet *v1alpha1.Subnet, _ *aruba.Subnet) error {
 	return reconciler.SetFailedOnTimeout(r.Client, ctx, kubeSubnet, func(subnet *v1alpha1.Subnet) {
 		if prjID, ok := ctx.Value(projectIDKey).(string); ok && subnet.Status.ProjectID == "" {
 			subnet.Status.ProjectID = prjID
@@ -878,7 +854,7 @@ func (r *SubnetReconciler) kubeSetFailedOnTimeout(ctx context.Context, kubeSubne
 	})
 }
 
-func (r *SubnetReconciler) kubeSetFailed(ctx context.Context, kubeSubnet *v1alpha1.Subnet, _ *arubatypes.SubnetResponse) error {
+func (r *SubnetReconciler) kubeSetFailed(ctx context.Context, kubeSubnet *v1alpha1.Subnet, _ *aruba.Subnet) error {
 	return r.kubeSetPhaseAndCondition(ctx, kubeSubnet, v1alpha1.ResourcePhaseFailed, v1alpha1.ConditionReasonSynchronized, nil)
 }
 
@@ -886,22 +862,13 @@ func (r *SubnetReconciler) kubeSetFailed(ctx context.Context, kubeSubnet *v1alph
 // CMP actions
 // ---------------------------------------------------------------------------
 
-func (r *SubnetReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.Subnet, cmpSubnet *arubatypes.SubnetResponse) error {
-	prjID := ctx.Value(projectIDKey).(string)
-	vID := ctx.Value(vpcIDKey).(string)
+func (r *SubnetReconciler) cmpDelete(ctx context.Context, _ *v1alpha1.Subnet, cmpSubnet *aruba.Subnet) error {
 	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
-
-	cmpSubnetResp, err := arubaClient.FromNetwork().Subnets().Delete(ctx, prjID, vID, *cmpSubnet.Metadata.ID, nil)
-	if err != nil {
-		return reconciler.CMPTransportError("delete", *cmpSubnet.Metadata.Name, err)
-	}
-	return reconciler.CMPCheckResponse("delete", *cmpSubnet.Metadata.Name, cmpSubnetResp,
-		http.StatusOK, http.StatusAccepted, http.StatusNoContent, http.StatusNotFound)
+	err := arubaClient.FromNetwork().Subnets().Delete(ctx, cmpSubnet)
+	return reconciler.CMPErrorFromResult("delete", cmpSubnet.Name(), err, http.StatusNotFound)
 }
 
-func (r *SubnetReconciler) cmpUpdate(ctx context.Context, kubeSubnet *v1alpha1.Subnet, cmpSubnet *arubatypes.SubnetResponse) error {
-	prjID := ctx.Value(projectIDKey).(string)
-	vID := ctx.Value(vpcIDKey).(string)
+func (r *SubnetReconciler) cmpUpdate(ctx context.Context, kubeSubnet *v1alpha1.Subnet, cmpSubnet *aruba.Subnet) error {
 	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
 
 	// Guard: should have been caught by HasDeniedChanges, but double-check.
@@ -909,150 +876,72 @@ func (r *SubnetReconciler) cmpUpdate(ctx context.Context, kubeSubnet *v1alpha1.S
 		return err
 	}
 
-	request := buildSubnetUpdateRequest(kubeSubnet, cmpSubnet)
-
-	cmpSubnetResp, err := arubaClient.FromNetwork().Subnets().Update(ctx, prjID, vID, *cmpSubnet.Metadata.ID, *request, nil)
-	if err != nil {
-		return reconciler.CMPTransportError("update", kubeSubnet.Name, err)
-	}
-	return reconciler.CMPCheckResponse("update", kubeSubnet.Name, cmpSubnetResp,
-		http.StatusOK, http.StatusAccepted, http.StatusNoContent)
+	// Mutable fields are tags and DHCP-enabled; type/CIDR/default round-trip from
+	// the fetched wrapper unchanged.
+	cmpSubnet.RetaggedAs(kubeSubnet.Spec.Tags...).WithDHCP(subnetDHCP(kubeSubnet))
+	_, err := arubaClient.FromNetwork().Subnets().Update(ctx, cmpSubnet)
+	return reconciler.CMPErrorFromResult("update", kubeSubnet.Name, err)
 }
 
-func (r *SubnetReconciler) cmpCreate(ctx context.Context, kubeSubnet *v1alpha1.Subnet, _ *arubatypes.SubnetResponse) error {
+func (r *SubnetReconciler) cmpCreate(ctx context.Context, kubeSubnet *v1alpha1.Subnet, _ *aruba.Subnet) error {
 	prjID := ctx.Value(projectIDKey).(string)
 	vID := ctx.Value(vpcIDKey).(string)
 	arubaClient := ctx.Value(reconciler.ArubaClientKey).(aruba.Client)
 
-	cmpSubnetResp, err := arubaClient.FromNetwork().Subnets().Create(ctx, prjID, vID, *cmpSubnetRequestFromKube(kubeSubnet), nil)
-	if err != nil {
-		return reconciler.CMPTransportError("create", kubeSubnet.Name, err)
-	}
-	return reconciler.CMPCheckResponse("create", kubeSubnet.Name, cmpSubnetResp,
-		http.StatusOK, http.StatusCreated, http.StatusAccepted)
+	subnet := aruba.NewSubnet().
+		InVPC(aruba.VPCRef(prjID, vID)).
+		Named(kubeSubnet.Name).
+		Tagged(kubeSubnet.Spec.Tags...).
+		InRegion(aruba.Region(kubeSubnet.Spec.Region)).
+		OfType(aruba.SubnetType(kubeSubnet.Spec.Type)).
+		WithCIDR(kubeSubnet.Spec.CIDR).
+		NotDefault().
+		WithDHCP(subnetDHCP(kubeSubnet))
+	_, err := arubaClient.FromNetwork().Subnets().Create(ctx, subnet)
+	return reconciler.CMPErrorFromResult("create", kubeSubnet.Name, err)
 }
 
 // ---------------------------------------------------------------------------
 // Other helpers
 // ---------------------------------------------------------------------------
 
-func checkSubnetDeniedChanges(kubeSubnet *v1alpha1.Subnet, cmpSubnet *arubatypes.SubnetResponse) error {
+// subnetDHCP builds the DHCP sub-block from the operator-managed Enabled flag.
+// The operator does not manage DHCP ranges, routes or DNS servers.
+func subnetDHCP(kubeSubnet *v1alpha1.Subnet) *aruba.SubnetDHCPCommon {
+	dhcp := aruba.NewSubnetDHCP()
+	if kubeSubnet.Spec.DHCP.Enabled {
+		dhcp.Enabled()
+	}
+	return dhcp
+}
+
+func checkSubnetDeniedChanges(kubeSubnet *v1alpha1.Subnet, cmpSubnet *aruba.Subnet) error {
 	if cmpSubnet == nil {
 		return nil
 	}
-
-	locationValue := ""
-	if cmpSubnet.Metadata.LocationResponse != nil {
-		locationValue = cmpSubnet.Metadata.LocationResponse.Value
-	}
-	if kubeSubnet.Spec.Region != locationValue {
+	if kubeSubnet.Spec.Region != string(cmpSubnet.Region()) {
 		return fmt.Errorf("%w: %w", reconciler.ErrNotAllowedChanges, errors.New("change the 'location' is not allowed"))
 	}
-
-	if cmpSubnet.Properties.Network != nil && kubeSubnet.Spec.CIDR != cmpSubnet.Properties.Network.Address {
+	if cmpSubnet.CIDR() != "" && kubeSubnet.Spec.CIDR != cmpSubnet.CIDR() {
 		return fmt.Errorf("%w: %w", reconciler.ErrNotAllowedChanges, errors.New("change the 'network.address' is not allowed"))
 	}
-
-	if string(cmpSubnet.Properties.Type) != "" && kubeSubnet.Spec.Type != string(cmpSubnet.Properties.Type) {
+	if string(cmpSubnet.Type()) != "" && kubeSubnet.Spec.Type != string(cmpSubnet.Type()) {
 		return fmt.Errorf("%w: %w", reconciler.ErrNotAllowedChanges, errors.New("change the 'type' is not allowed"))
 	}
-
 	return nil
 }
 
-func kubeSubnetNeedsUpdate(kubeSubnet *v1alpha1.Subnet, cmpSubnet *arubatypes.SubnetResponse) bool {
+func kubeSubnetNeedsUpdate(kubeSubnet *v1alpha1.Subnet, cmpSubnet *aruba.Subnet) bool {
 	if cmpSubnet == nil {
 		return false
 	}
-	if !reconciler.TagsAreEqual(kubeSubnet.Spec.Tags, cmpSubnet.Metadata.Tags) {
+	if !reconciler.TagsAreEqual(kubeSubnet.Spec.Tags, cmpSubnet.Tags()) {
 		return true
 	}
-	if cmpSubnet.Properties.DHCP != nil && kubeSubnet.Spec.DHCP.Enabled != cmpSubnet.Properties.DHCP.Enabled {
+	if dhcp := cmpSubnet.DHCP(); dhcp != nil && kubeSubnet.Spec.DHCP.Enabled != dhcp.IsEnabled() {
 		return true
 	}
 	return false
-}
-
-func buildSubnetUpdateRequest(kubeSubnet *v1alpha1.Subnet, cmpSubnet *arubatypes.SubnetResponse) *arubatypes.SubnetRequest {
-	request := cmpSubnetRequestFromCMP(cmpSubnet)
-	if request == nil {
-		return nil
-	}
-	tags := make([]string, len(kubeSubnet.Spec.Tags))
-	copy(tags, kubeSubnet.Spec.Tags)
-	request.Metadata.Tags = tags
-	if request.Properties.DHCP != nil {
-		request.Properties.DHCP.Enabled = kubeSubnet.Spec.DHCP.Enabled
-	} else {
-		request.Properties.DHCP = &arubatypes.SubnetDHCP{Enabled: kubeSubnet.Spec.DHCP.Enabled}
-	}
-	return request
-}
-
-func cmpSubnetRequestFromCMP(cmpSubnet *arubatypes.SubnetResponse) *arubatypes.SubnetRequest {
-	if cmpSubnet == nil {
-		return nil
-	}
-	name := ""
-	if cmpSubnet.Metadata.Name != nil {
-		name = *cmpSubnet.Metadata.Name
-	}
-	tags := make([]string, len(cmpSubnet.Metadata.Tags))
-	copy(tags, cmpSubnet.Metadata.Tags)
-
-	location := arubatypes.LocationRequest{}
-	if cmpSubnet.Metadata.LocationResponse != nil {
-		location.Value = cmpSubnet.Metadata.LocationResponse.Value
-	}
-
-	req := &arubatypes.SubnetRequest{
-		Metadata: arubatypes.RegionalResourceMetadataRequest{
-			ResourceMetadataRequest: arubatypes.ResourceMetadataRequest{
-				Name: name,
-				Tags: tags,
-			},
-			Location: location,
-		},
-		Properties: arubatypes.SubnetPropertiesRequest{
-			Type:    cmpSubnet.Properties.Type,
-			Default: cmpSubnet.Properties.Default,
-		},
-	}
-	if cmpSubnet.Properties.Network != nil {
-		req.Properties.Network = &arubatypes.SubnetNetwork{
-			Address: cmpSubnet.Properties.Network.Address,
-		}
-	}
-	if cmpSubnet.Properties.DHCP != nil {
-		req.Properties.DHCP = &arubatypes.SubnetDHCP{
-			Enabled: cmpSubnet.Properties.DHCP.Enabled,
-		}
-	}
-	return req
-}
-
-func cmpSubnetRequestFromKube(kubeSubnet *v1alpha1.Subnet) *arubatypes.SubnetRequest {
-	tags := make([]string, len(kubeSubnet.Spec.Tags))
-	copy(tags, kubeSubnet.Spec.Tags)
-	return &arubatypes.SubnetRequest{
-		Metadata: arubatypes.RegionalResourceMetadataRequest{
-			ResourceMetadataRequest: arubatypes.ResourceMetadataRequest{
-				Name: kubeSubnet.Name,
-				Tags: tags,
-			},
-			Location: arubatypes.LocationRequest{Value: kubeSubnet.Spec.Region},
-		},
-		Properties: arubatypes.SubnetPropertiesRequest{
-			Type:    arubatypes.SubnetType(kubeSubnet.Spec.Type),
-			Default: false,
-			Network: &arubatypes.SubnetNetwork{
-				Address: kubeSubnet.Spec.CIDR,
-			},
-			DHCP: &arubatypes.SubnetDHCP{
-				Enabled: kubeSubnet.Spec.DHCP.Enabled,
-			},
-		},
-	}
 }
 
 // ---------------------------------------------------------------------------

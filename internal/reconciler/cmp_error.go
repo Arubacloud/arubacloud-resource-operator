@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	arubatypes "github.com/Arubacloud/sdk-go/pkg/types"
+	"github.com/Arubacloud/sdk-go/pkg/aruba"
 )
 
 // CMPErrorCategory classifies a CMP error as semantic or technical.
@@ -93,9 +93,68 @@ func sanitizeCMPString(s string) string {
 	return strings.TrimSpace(s)
 }
 
-// CMPTransportError creates a CMPError for a Go-level transport or network failure
-// (e.g., connection refused, context cancellation). Always classified as Technical.
-func CMPTransportError(operation, resource string, err error) *CMPError {
+// cmpValidationError is a local, nameable copy of one field-level validation entry
+// from a CMP error body. The SDK carries these on aruba.HTTPError.ErrResp as
+// pkg/types values, which this repo does not import (see ai/CONVENTIONS.md) — so
+// they are copied here to give appendValidationDetail a testable signature.
+type cmpValidationError struct {
+	Field   string
+	Message string
+}
+
+// appendValidationDetail renders field-level validation entries as "field: message"
+// pairs joined by "; ", prefixes them with "Validation: ", and merges the result into
+// detail. Entries carrying neither field nor message are skipped; detail is returned
+// unchanged when nothing renders.
+func appendValidationDetail(detail string, errs []cmpValidationError) string {
+	parts := make([]string, 0, len(errs))
+	for _, ve := range errs {
+		switch {
+		case ve.Field != "" && ve.Message != "":
+			parts = append(parts, ve.Field+": "+ve.Message)
+		case ve.Message != "":
+			parts = append(parts, ve.Message)
+		case ve.Field != "":
+			parts = append(parts, ve.Field+": invalid")
+		}
+	}
+	if len(parts) == 0 {
+		return detail
+	}
+	validationDetail := sanitizeCMPString(strings.Join(parts, "; "))
+	if detail != "" {
+		return detail + " | Validation: " + validationDetail
+	}
+	return "Validation: " + validationDetail
+}
+
+// CMPErrorFromResult classifies the error returned by a high-level SDK call
+// (Create/Update/Delete on an aruba resource client) into a *CMPError, or
+// returns nil when err is nil. It is the single categorization entry point that
+// replaces the former CMPTransportError + CMPCheckResponse pair now that the SDK
+// returns a plain error instead of a typed *Response.
+//
+//   - err == nil                                → nil (success)
+//   - err is *aruba.HTTPError (non-2xx reply)   → categorized by status code
+//     (4xx with field-level errors → Semantic, 4xx without → Transient, else Technical)
+//   - any other error (network, context cancel,
+//     builder/setter validation from Err())     → Technical
+//
+// okStatusCodes lets a caller treat specific non-2xx replies as success — used by
+// delete flows to accept HTTP 404 (resource already gone).
+func CMPErrorFromResult(operation, resource string, err error, okStatusCodes ...int) error {
+	if err == nil {
+		return nil
+	}
+	var httpErr *aruba.HTTPError
+	if errors.As(err, &httpErr) {
+		if slices.Contains(okStatusCodes, httpErr.StatusCode) {
+			return nil
+		}
+		return cmpResponseError(operation, resource, httpErr)
+	}
+	// Transport / builder-time failure (network, timeout, context cancel, or an
+	// accumulated wrapper setter error surfaced by Create/Update).
 	return &CMPError{
 		Category:  CMPErrorCategoryTechnical,
 		Operation: operation,
@@ -104,11 +163,13 @@ func CMPTransportError(operation, resource string, err error) *CMPError {
 	}
 }
 
-// cmpResponseError creates a CMPError from a non-success HTTP response.
-// For HTTP 4xx: Semantic when ErrorResponse.Errors is non-empty (field-level validation
-// failures), Transient otherwise (temporary condition, e.g. dependency in wrong state).
-// For everything else: Technical.
-func cmpResponseError(operation, resource string, statusCode int, errResp *arubatypes.ErrorResponse) *CMPError {
+// cmpResponseError creates a CMPError from a non-success HTTP reply carried by an
+// *aruba.HTTPError. For HTTP 4xx: Semantic when the error body carries field-level
+// validation errors, Transient otherwise (temporary condition, e.g. dependency in
+// a wrong state). For everything else: Technical.
+func cmpResponseError(operation, resource string, httpErr *aruba.HTTPError) *CMPError {
+	statusCode := httpErr.StatusCode
+	errResp := httpErr.ErrResp
 	category := CMPErrorCategoryTechnical
 	if statusCode >= 400 && statusCode < 500 {
 		if errResp != nil && len(errResp.Errors) > 0 {
@@ -130,25 +191,11 @@ func cmpResponseError(operation, resource string, statusCode int, errResp *aruba
 			instance = sanitizeCMPString(*errResp.Instance)
 		}
 		if len(errResp.Errors) > 0 {
-			parts := make([]string, 0, len(errResp.Errors))
+			ves := make([]cmpValidationError, 0, len(errResp.Errors))
 			for _, ve := range errResp.Errors {
-				switch {
-				case ve.Field != "" && ve.Message != "":
-					parts = append(parts, ve.Field+": "+ve.Message)
-				case ve.Message != "":
-					parts = append(parts, ve.Message)
-				case ve.Field != "":
-					parts = append(parts, ve.Field+": invalid")
-				}
+				ves = append(ves, cmpValidationError{Field: ve.Field, Message: ve.Message})
 			}
-			if len(parts) > 0 {
-				validationDetail := sanitizeCMPString(strings.Join(parts, "; "))
-				if detail != "" {
-					detail = detail + " | Validation: " + validationDetail
-				} else {
-					detail = "Validation: " + validationDetail
-				}
-			}
+			detail = appendValidationDetail(detail, ves)
 		}
 	}
 
@@ -161,16 +208,6 @@ func cmpResponseError(operation, resource string, statusCode int, errResp *aruba
 		Operation:  operation,
 		Resource:   resource,
 	}
-}
-
-// CMPCheckResponse inspects a CMP API response and returns nil if the status code
-// is in successCodes, or a *CMPError otherwise. This replaces the repeated
-// status-code switch blocks in cmpCreate / cmpUpdate / cmpDelete methods.
-func CMPCheckResponse[T any](operation, resource string, resp *arubatypes.Response[T], successCodes ...int) error {
-	if slices.Contains(successCodes, resp.StatusCode) {
-		return nil
-	}
-	return cmpResponseError(operation, resource, resp.StatusCode, resp.Error)
 }
 
 // CMPErrorIsSemantic reports whether err (or any error in its chain) is a *CMPError

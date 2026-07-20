@@ -6,8 +6,8 @@ metadata:
 spec:
   tenant: __TENANT__
   tags:
-    - tag-4
-    - tag-3
+    - aruba-operator
+    - sample
   region: ITBG-Bergamo
   projectReference:
     name: __NAME__

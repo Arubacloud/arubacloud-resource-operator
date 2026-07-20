@@ -11,12 +11,6 @@ RUN mkdir -p ${DEVTOOLS_BIN}
 
 # --- Precompiled binaries (no build required) ---
 
-# mockery v2.53.5
-RUN curl -sSfL https://github.com/vektra/mockery/releases/download/v2.53.5/mockery_2.53.5_Linux_x86_64.tar.gz \
-    | tar xz -C ${DEVTOOLS_BIN} mockery && \
-    mv ${DEVTOOLS_BIN}/mockery ${DEVTOOLS_BIN}/mockery-v2.53.5 && \
-    ln -s mockery-v2.53.5 ${DEVTOOLS_BIN}/mockery
-
 # kustomize v5.6.0
 RUN curl -sSfL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.6.0/kustomize_v5.6.0_linux_amd64.tar.gz" \
     | tar xz -C ${DEVTOOLS_BIN} kustomize && \

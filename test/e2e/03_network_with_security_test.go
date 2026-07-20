@@ -35,6 +35,11 @@ var _ = Describe("03-NetworkWithSecurity", Ordered, func() {
 		securityRuleName  = "aruba-test-network-sec"
 		subnetName        = "aruba-test-network-sec"
 		testTimeout       = 20 * time.Minute
+
+		// The securityrule sample holds two documents and names them by prefixing
+		// __NAME__, so applying it creates these two rules — not securityRuleName.
+		egressRuleName  = "egress-" + securityRuleName
+		ingressRuleName = "ingress-" + securityRuleName
 	)
 
 	BeforeAll(func() {
@@ -51,7 +56,8 @@ var _ = Describe("03-NetworkWithSecurity", Ordered, func() {
 			name string
 		}{
 			{"subnet", subnetName},
-			{"securityrule", securityRuleName},
+			{"securityrule", egressRuleName},
+			{"securityrule", ingressRuleName},
 			{"securitygroup", securityGroupName},
 			{"vpc", vpcName},
 			{"project", projectName},
@@ -83,7 +89,7 @@ var _ = Describe("03-NetworkWithSecurity", Ordered, func() {
 					"-o", "jsonpath={.status.phase}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("Created"))
+				g.Expect(output).To(Equal("Active"))
 			}, testTimeout, 5*time.Second).Should(Succeed())
 
 			By("applying the VPC manifest")
@@ -104,7 +110,7 @@ var _ = Describe("03-NetworkWithSecurity", Ordered, func() {
 					"-o", "jsonpath={.status.phase}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("Created"))
+				g.Expect(output).To(Equal("Active"))
 			}, testTimeout, 5*time.Second).Should(Succeed())
 
 			By("applying the SecurityGroup manifest")
@@ -125,7 +131,7 @@ var _ = Describe("03-NetworkWithSecurity", Ordered, func() {
 					"-o", "jsonpath={.status.phase}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("Created"))
+				g.Expect(output).To(Equal("Active"))
 			}, testTimeout, 5*time.Second).Should(Succeed())
 
 			By("applying the SecurityRule manifest")
@@ -140,14 +146,16 @@ var _ = Describe("03-NetworkWithSecurity", Ordered, func() {
 			_, err = utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("waiting for SecurityRule to be created")
-			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "securityrule", securityRuleName, "-n", namespace,
-					"-o", "jsonpath={.status.phase}")
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("Created"))
-			}, testTimeout, 5*time.Second).Should(Succeed())
+			By("waiting for both SecurityRules to be created")
+			for _, ruleName := range []string{egressRuleName, ingressRuleName} {
+				Eventually(func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", "securityrule", ruleName, "-n", namespace,
+						"-o", "jsonpath={.status.phase}")
+					output, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(output).To(Equal("Active"))
+				}, testTimeout, 5*time.Second).Should(Succeed())
+			}
 
 			By("applying the Subnet manifest")
 			subnetManifest, err := utils.LoadSampleManifest("arubacloud.com_v1alpha1_subnet.yaml", map[string]string{
@@ -167,7 +175,7 @@ var _ = Describe("03-NetworkWithSecurity", Ordered, func() {
 					"-o", "jsonpath={.status.phase}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("Created"))
+				g.Expect(output).To(Equal("Active"))
 			}, testTimeout, 5*time.Second).Should(Succeed())
 
 			By("verifying all resources have proper IDs")
@@ -180,7 +188,8 @@ var _ = Describe("03-NetworkWithSecurity", Ordered, func() {
 				{"project", projectName, ".status.resourceID", "Project"},
 				{"vpc", vpcName, ".status.resourceID", "VPC"},
 				{"securitygroup", securityGroupName, ".status.resourceID", "SecurityGroup"},
-				{"securityrule", securityRuleName, ".status.resourceID", "SecurityRule"},
+				{"securityrule", egressRuleName, ".status.resourceID", "SecurityRule"},
+				{"securityrule", ingressRuleName, ".status.resourceID", "SecurityRule"},
 				{"subnet", subnetName, ".status.resourceID", "Subnet"},
 			}
 

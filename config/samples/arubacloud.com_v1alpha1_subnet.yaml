@@ -6,8 +6,8 @@ metadata:
 spec:
   tenant: __TENANT__
   tags:
-    - tag-1
-    - tag-2
+    - aruba-operator
+    - sample
   region: ITBG-Bergamo
   type: Advanced
   cidr: 192.168.1.0/24

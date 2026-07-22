@@ -66,7 +66,7 @@ var _ = Describe("01-ProjectOnly", Ordered, func() {
 					"-o", "jsonpath={.status.phase}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("Created"), "Project should reach Created state")
+				g.Expect(output).To(Equal("Active"), "Project should reach Active state")
 			}, testTimeout, 5*time.Second).Should(Succeed())
 
 			By("verifying project has a project ID")

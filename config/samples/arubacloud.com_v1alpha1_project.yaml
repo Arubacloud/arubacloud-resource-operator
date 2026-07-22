@@ -7,5 +7,5 @@ spec:
   tenant: __TENANT__
   description: Test project for local development
   tags:
-    - test-ciao
-    - local
+    - aruba-operator
+    - sample

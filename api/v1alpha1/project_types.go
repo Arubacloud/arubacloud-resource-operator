@@ -21,7 +21,6 @@ import (
 )
 
 // ProjectSpec defines the desired state of Project.
-// +kubebuilder:validation:XValidation:rule="self.tenant == oldSelf.tenant",message="tenant is immutable"
 type ProjectSpec struct {
 	// Description provides a description for the project
 	// +kubebuilder:validation:Optional

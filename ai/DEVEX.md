@@ -61,7 +61,6 @@ The devtools image (`ci/devtools/Dockerfile`) is based on `golang:1.24-bookworm`
 | Tool | Version | Install method |
 |------|---------|----------------|
 | golangci-lint | v2.1.6 | `go install` (built with Go 1.24; v2 required for `.golangci.yml` v2 config format) |
-| mockery | v2.53.5 | Precompiled binary |
 | kustomize | v5.6.0 | Precompiled binary |
 | controller-gen | v0.18.0 | `go install` |
 | helmify | v0.4.19 | `go install` |

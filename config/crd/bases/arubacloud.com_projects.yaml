@@ -68,9 +68,6 @@ spec:
                 description: Tenant is the owning account/tenant of this project
                 type: string
             type: object
-            x-kubernetes-validations:
-            - message: tenant is immutable
-              rule: self.tenant == oldSelf.tenant
           status:
             description: Common status for all resources
             properties:

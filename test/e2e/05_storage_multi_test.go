@@ -79,7 +79,7 @@ var _ = Describe("05-StorageMulti", Ordered, func() {
 					"-o", "jsonpath={.status.phase}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("Created"))
+				g.Expect(output).To(Equal("Active"))
 			}, testTimeout, 5*time.Second).Should(Succeed())
 
 			By("applying the boot BlockStorage manifest")
@@ -118,7 +118,7 @@ var _ = Describe("05-StorageMulti", Ordered, func() {
 						"-o", "jsonpath={.status.phase}")
 					output, err := utils.Run(cmd)
 					g.Expect(err).NotTo(HaveOccurred())
-					g.Expect(output).To(Equal("Created"))
+					g.Expect(output).To(Equal("Active"))
 				}, testTimeout, 5*time.Second).Should(Succeed())
 			}
 

@@ -156,7 +156,12 @@ func (r *Reconciler) ArubaClient(tenant string) (aruba.Client, error) {
 		return c, nil
 	}
 
-	options := aruba.NewOptions().WithBaseURL(r.config.APIGateway).WithDefaultTokenIssuerURL()
+	// The SDK uses the issuer URL verbatim as the OAuth2 token endpoint, while config holds
+	// the Keycloak base URL and realm separately: compose the Keycloak token path here.
+	tokenIssuerURL := fmt.Sprintf("%s/realms/%s/protocol/openid-connect/token",
+		strings.TrimSuffix(r.config.KeycloakURL, "/"), r.config.RealmAPI)
+
+	options := aruba.NewOptions().WithBaseURL(r.config.APIGateway).WithTokenIssuerURL(tokenIssuerURL)
 
 	if r.config.VaultIsEnabled {
 		options = options.WithVaultCredentialsRepository(

@@ -10,6 +10,8 @@ The Arubacloud Resource Operator is a Kubernetes operator that enables declarati
 
 ## Installation
 
+Requirements: Kubernetes v1.21+, Helm v3, an Aruba Cloud account with API credentials.
+
 ### Install the Chart
 
 Add the arubacloud Helm repository (if not already added):
@@ -17,6 +19,8 @@ Add the arubacloud Helm repository (if not already added):
 helm repo add arubacloud https://arubacloud.github.io/helm-charts/
 helm repo update
 ```
+
+The CRDs are installed automatically as a chart dependency (`crds.enabled=true`, the default). To manage them yourself, install with `--set crds.enabled=false` and install the `arubacloud-resource-operator-crd` chart separately.
 
 #### Single-Tenant Installation (Default)
 
@@ -33,21 +37,23 @@ helm install arubacloud-operator arubacloud/arubacloud-resource-operator \
 
 #### Multi-Tenant Installation (Vault-based)
 
-For multi-tenant deployments using HashiCorp Vault:
+Multi-tenant deployments read per-tenant credentials from HashiCorp Vault via AppRole. `config.auth.multi.setup` selects how Vault is provisioned: `manual` (your own Vault, requires `vault.enabled=false`) or `auto` (the chart installs Vault in dev mode — development/demo only, requires `vault.enabled=true`).
 
 ```bash
 helm install arubacloud-operator arubacloud/arubacloud-resource-operator \
   --namespace aruba-system \
   --create-namespace \
   --set config.auth.mode=multi \
+  --set config.auth.multi.setup=manual \
+  --set vault.enabled=false \
   --set config.auth.multi.vault.address=<vault-address> \
+  --set config.auth.multi.vault.kvMount=<vault-kv-mount> \
   --set config.auth.multi.vault.rolePath=<vault-role-path> \
   --set config.auth.multi.vault.roleId=<vault-role-id> \
-  --set config.auth.multi.vault.roleSecret=<vault-role-secret> \ 
-  --set config.auth.multi.vault.kvMount=<vault-role-kvMount>
+  --set config.auth.multi.vault.roleSecret=<vault-role-secret>
 ```
 
-For detailed configuration options, values, and advanced usage, please refer to the [Helm chart documentation](https://github.com/Arubacloud/helm-charts/tree/main/charts/arubacloud-resource-operator).
+For all values, Vault AppRole setup, and troubleshooting, see the [installation guide](https://arubacloud.github.io/arubacloud-resource-operator/installation) or the [Helm chart documentation](https://github.com/Arubacloud/helm-charts/tree/main/charts/arubacloud-resource-operator).
 
 #### Verify Installation
 

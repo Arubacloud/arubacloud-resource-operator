@@ -2,8 +2,6 @@
 
 [![GitHub release](https://img.shields.io/github/tag/arubacloud/arubacloud-resource-operator.svg?label=release)](https://github.com/arubacloud/arubacloud-resource-operator/releases/latest) [![Tests](https://github.com/arubacloud/arubacloud-resource-operator/actions/workflows/test.yml/badge.svg)](https://github.com/arubacloud/arubacloud-resource-operator/actions/workflows/test.yml) [![Release](https://github.com/arubacloud/arubacloud-resource-operator/actions/workflows/release.yml/badge.svg)](https://github.com/arubacloud/arubacloud-resource-operator/actions/workflows/release.yml)
 
-> ** Development Status**: This operator is currently under active development and is **not production-ready yet**. APIs and resource schemas may change. Use at your own risk in production environments.
-
 ## Overview
 
 The Arubacloud Resource Operator is a Kubernetes operator that enables declarative management of Aruba Cloud resources through Kubernetes Custom Resources. This operator allows you to provision and manage Aruba Cloud infrastructure using familiar Kubernetes tools and workflows.

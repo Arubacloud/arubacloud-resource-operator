@@ -4,27 +4,34 @@
 
 :root {
   --ifm-color-primary: #0066cc;
-  --ifm-color-primary-dark: #005bb3;
-  --ifm-color-primary-darker: #0056a6;
-  --ifm-color-primary-darkest: #004788;
-  --ifm-color-primary-light: #1a75d9;
-  --ifm-color-primary-lighter: #267ad9;
-  --ifm-color-primary-lightest: #4d8fe0;
+  --ifm-color-primary-dark: #005bb8;
+  --ifm-color-primary-darker: #0056ad;
+  --ifm-color-primary-darkest: #00478f;
+  --ifm-color-primary-light: #1a75d6;
+  --ifm-color-primary-lighter: #267cd9;
+  --ifm-color-primary-lightest: #4d93e0;
   --ifm-code-font-size: 95%;
   --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.1);
   --ifm-navbar-height: 60px;
   --ifm-navbar-padding-horizontal: 1.5rem;
+  --ifm-navbar-background-color: #ffffff;
+  --ifm-footer-background-color: #1a1a1a;
+  --ifm-footer-color: #ffffff;
+  --ifm-footer-link-color: rgba(255, 255, 255, 0.8);
+  --ifm-footer-link-hover-color: #ffffff;
 }
 
 [data-theme='dark'] {
-  --ifm-color-primary: #4d8fe0;
-  --ifm-color-primary-dark: #3d7fd0;
-  --ifm-color-primary-darker: #3777c8;
-  --ifm-color-primary-darkest: #2d62a5;
-  --ifm-color-primary-light: #5d9fe8;
-  --ifm-color-primary-lighter: #67a5ea;
-  --ifm-color-primary-lightest: #7db3ed;
+  --ifm-color-primary: #4da6ff;
+  --ifm-color-primary-dark: #3399ff;
+  --ifm-color-primary-darker: #2692ff;
+  --ifm-color-primary-darkest: #0073e6;
+  --ifm-color-primary-light: #67b3ff;
+  --ifm-color-primary-lighter: #73baff;
+  --ifm-color-primary-lightest: #9dceff;
   --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
+  --ifm-navbar-background-color: #242526;
+  --ifm-footer-background-color: #1a1a1a;
 }
 
 body {
@@ -84,5 +91,25 @@ table td {
 
 .theme-doc-sidebar-container {
   border-right: 1px solid var(--ifm-color-emphasis-200);
+}
+
+.footer {
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.footer__copyright {
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+.navbar__logo {
+  height: 32px;
+  width: 32px;
+}
+
+.navbar__logo img {
+  height: 32px;
+  width: 32px;
+  object-fit: contain;
 }
 

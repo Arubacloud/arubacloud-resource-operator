@@ -8,7 +8,7 @@ const versions = require('./versions.json');
 const config = {
   title: 'Aruba Cloud Resource Operator',
   tagline: 'Declarative Aruba Cloud resources via Kubernetes CRDs',
-  favicon: 'img/logo.svg',
+  favicon: 'img/favicon.ico',
 
   url: 'https://arubacloud.github.io',
   baseUrl: '/arubacloud-resource-operator/',
@@ -99,8 +99,11 @@ const config = {
       navbar: {
         title: 'Aruba Cloud Resource Operator',
         logo: {
-          alt: 'Aruba Cloud',
-          src: 'img/logo.svg',
+          alt: 'Aruba Cloud Resource Operator',
+          src: 'img/logo-cloud.png',
+          srcDark: 'img/logo-cloud.png',
+          width: 32,
+          height: 32,
         },
         items: [
           {
@@ -160,8 +163,7 @@ const config = {
             ],
           },
         ],
-        copyright:
-          'Copyright © 2025 Aruba S.p.A. - via San Clemente, 53 - 24036 Ponte San Pietro (BG) P.IVA 01573850516 - C.F. 04552920482 - C.S. € 4.000.000,00 i.v. - Numero REA: BG – 434483 - All rights reserved',
+        copyright: `Copyright © ${new Date().getFullYear()} Aruba S.p.A. - via San Clemente, 53 - 24036 Ponte San Pietro (BG) P.IVA 01573850516 - C.F. 04552920482 - C.S. € 4.000.000,00 i.v. - Numero REA: BG – 434483 - All rights reserved`,
       },
       prism: {
         theme: lightCodeTheme,

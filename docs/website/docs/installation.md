@@ -84,7 +84,7 @@ helm upgrade --install arubacloud-operator arubacloud/arubacloud-resource-operat
 
 ### Multi-Tenant (`config.auth.mode=multi`)
 
-In multi mode the operator retrieves per-tenant credentials from Vault using AppRole authentication. Each unique `spec.tenant` value on your resources triggers a separate Vault lookup at `<kv-mount>/data/<tenant>`.
+In multi mode the operator retrieves per-tenant credentials from Vault using AppRole authentication. Each unique `spec.tenant` value on your resources triggers a separate Vault lookup at `<kv-mount>/data/<tenant>` (or `<kv-mount>/data/<kv-prefix>/<tenant>` when a prefix is configured).
 
 Two sub-modes control how Vault is provisioned:
 
@@ -108,6 +108,7 @@ helm install arubacloud-operator arubacloud/arubacloud-resource-operator \
   --set vault.enabled=false \
   --set config.auth.multi.vault.address=<vault-address> \
   --set config.auth.multi.vault.kvMount=<kv-mount> \
+  --set config.auth.multi.vault.kvPrefix=<kv-prefix> \
   --set config.auth.multi.vault.rolePath=<approle-path> \
   --set config.auth.multi.vault.roleId=<vault-role-id> \
   --set config.auth.multi.vault.roleSecret=<vault-role-secret>
@@ -328,6 +329,7 @@ The chart renders the values above into a **ConfigMap** and a **Secret** named `
 | `vault-address` | No | Yes | — | Vault server URL |
 | `role-path` | No | Yes | `approle` | Vault AppRole auth mount path |
 | `kv-mount` | No | Yes | `kv` | Vault KV secrets engine mount path |
+| `kv-prefix` | No | No | — | Optional path prefix prepended to the tenant: `<kv-mount>/<kv-prefix>/<tenant>` |
 | `role-namespace` | No | No | — | Vault namespace (Vault Enterprise) |
 
 | Secret Key | Required (single) | Required (multi) | Description |

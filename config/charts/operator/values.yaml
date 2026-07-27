@@ -2,6 +2,7 @@ controllerManager:
   apiGateway: https://api.arubacloud.com
   keycloakUrl: https://login.aruba.it/auth
   kvMount: kw
+  kvPrefix: ""
   manager:
     args:
     - --metrics-bind-address=:9080

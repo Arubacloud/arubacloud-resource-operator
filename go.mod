@@ -3,7 +3,7 @@ module github.com/Arubacloud/arubacloud-resource-operator
 go 1.24.0
 
 require (
-	github.com/Arubacloud/sdk-go v1.0.7
+	github.com/Arubacloud/sdk-go v1.0.8
 	github.com/onsi/ginkgo/v2 v2.22.0
 	github.com/onsi/gomega v1.36.1
 	k8s.io/api v0.33.0

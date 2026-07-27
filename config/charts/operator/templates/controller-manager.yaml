@@ -8,6 +8,7 @@ data:
   api-gateway: {{ .Values.controllerManager.apiGateway | quote }}
   keycloak-url: {{ .Values.controllerManager.keycloakUrl | quote }}
   kv-mount: {{ .Values.controllerManager.kvMount | quote }}
+  kv-prefix: {{ .Values.controllerManager.kvPrefix | default "" | quote }}
   realm-api: {{ .Values.controllerManager.realmApi | quote }}
   role-path: {{ .Values.controllerManager.rolePath | quote }}
   vault-address: {{ .Values.controllerManager.vaultAddress | quote }}

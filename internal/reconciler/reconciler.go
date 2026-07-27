@@ -110,6 +110,9 @@ type ReconcilerConfig struct {
 	RoleSecret string
 	// KVMount is the Vault KV secrets engine mount path where credentials are stored.
 	KVMount string
+	// KVPrefix is an optional path segment prepended to the tenant when building the
+	// Vault KV secret path: <kvMount>/<kvPrefix>/<tenant>. Empty means no prefix.
+	KVPrefix string
 	// HTTPClient is an optional custom HTTP client injected for testing or proxy support.
 	HTTPClient *http.Client
 }
@@ -165,7 +168,7 @@ func (r *Reconciler) ArubaClient(tenant string) (aruba.Client, error) {
 
 	if r.config.VaultIsEnabled {
 		options = options.WithVaultCredentialsRepository(
-			r.config.VaultAddress, r.config.KVMount, tenant, r.config.Namespace, r.config.RolePath, r.config.RoleID, r.config.RoleSecret,
+			r.config.VaultAddress, r.config.KVMount, r.config.KVPrefix, tenant, r.config.Namespace, r.config.RolePath, r.config.RoleID, r.config.RoleSecret,
 		)
 	} else {
 		ctrl.Log.Info("vault disabled, using direct credentials", "tenant", tenant)

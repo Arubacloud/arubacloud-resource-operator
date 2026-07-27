@@ -18,6 +18,7 @@ type MainConfig struct {
 	Namespace      string
 	RolePath       string
 	KVMount        string
+	KVPrefix       string
 	RoleID         string
 	RoleSecretID   string
 	ClientID       string
@@ -75,6 +76,7 @@ func (c *MainConfig) ToReconcilerConfig() reconciler.ReconcilerConfig {
 		Namespace:      c.Namespace,
 		RolePath:       c.RolePath,
 		KVMount:        c.KVMount,
+		KVPrefix:       c.KVPrefix,
 		RoleID:         c.RoleID,
 		RoleSecret:     c.RoleSecretID,
 	}

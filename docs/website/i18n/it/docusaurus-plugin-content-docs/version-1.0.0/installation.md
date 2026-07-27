@@ -100,19 +100,25 @@ I due valori devono essere coerenti. `setup=manual` con `vault.enabled=true` (o 
 #### `setup=manual` — usa il tuo Vault
 
 ```bash
-helm install arubacloud-operator arubacloud/arubacloud-resource-operator \
+helm upgrade --install arubacloud-operator arubacloud/arubacloud-resource-operator \
   --namespace aruba-system \
   --create-namespace \
   --set config.auth.mode=multi \
   --set config.auth.multi.setup=manual \
+  --set config.gateway=<gateway-url> \
+  --set config.auth.idp=<idp-url> \
+  --set config.auth.realm=<realm-name> \
   --set vault.enabled=false \
   --set config.auth.multi.vault.address=<vault-address> \
   --set config.auth.multi.vault.kvMount=<kv-mount> \
   --set config.auth.multi.vault.kvPrefix=<kv-prefix> \
+  --set config.auth.multi.vault.roleNamespace=<vault-namespace> \
   --set config.auth.multi.vault.rolePath=<approle-path> \
   --set config.auth.multi.vault.roleId=<vault-role-id> \
   --set config.auth.multi.vault.roleSecret=<vault-role-secret>
 ```
+
+`kvPrefix` e `roleNamespace` sono opzionali. Ometti `kvPrefix` se i secret per tenant sono archiviati direttamente sotto `<kv-mount>/<tenant>` senza percorso intermedio. Ometti `roleNamespace` a meno che tu non utilizzi namespace Vault Enterprise.
 
 Vedi [Configurare Vault](#configurare-vault-per-la-modalità-multi-tenant) per ottenere questi valori AppRole.
 
@@ -300,7 +306,9 @@ vpcs.arubacloud.com
 | `config.auth.multi.setup` | Provisioning di Vault: `manual` (il tuo Vault) o `auto` (installato dalla chart, solo dev/demo) | `auto` |
 | `config.auth.multi.vault.address` | Indirizzo del server Vault (obbligatorio in modalità `multi`) | `http://vault:8200` |
 | `config.auth.multi.vault.kvMount` | Percorso di mount del motore KV Vault | `kv` |
+| `config.auth.multi.vault.kvPrefix` | Prefisso di percorso opzionale anteposto al tenant nel mount KV: `<kv-mount>/<kv-prefix>/<tenant>` | `""` |
 | `config.auth.multi.vault.rolePath` | Percorso di mount dell'autenticazione AppRole Vault | `approle` |
+| `config.auth.multi.vault.roleNamespace` | Namespace Vault per l'autenticazione AppRole (solo Vault Enterprise) | `""` |
 | `config.auth.multi.vault.roleId` | Role ID dell'AppRole Vault (obbligatorio se `roleIdFrom` non è impostato) | `""` |
 | `config.auth.multi.vault.roleSecret` | Secret ID dell'AppRole Vault (obbligatorio se `roleSecretFrom` non è impostato) | `""` |
 | `config.auth.multi.vault.roleIdFrom.secretKeyRef` | Riferimento a un Secret esistente per il role ID AppRole | — |

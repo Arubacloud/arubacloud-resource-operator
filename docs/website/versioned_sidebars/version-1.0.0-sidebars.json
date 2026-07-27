@@ -1,4 +1,4 @@
-{
+﻿{
   "operatorSidebar": [
     {
       "type": "doc",
@@ -39,6 +39,11 @@
       "type": "doc",
       "id": "examples",
       "label": "Examples"
+    },
+    {
+      "type": "doc",
+      "id": "changelog",
+      "label": "Changelog"
     },
     {
       "type": "doc",

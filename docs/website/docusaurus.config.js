@@ -2,6 +2,7 @@
 
 const lightCodeTheme = require('prism-react-renderer').themes.github;
 const darkCodeTheme = require('prism-react-renderer').themes.dracula;
+const versions = require('./versions.json');
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
@@ -60,6 +61,8 @@ const config = {
                     path: 'next',
                   },
                 },
+          lastVersion:
+            process.env.DISABLE_VERSIONING === 'true' ? 'current' : versions[0],
           onlyIncludeVersions:
             process.env.DISABLE_VERSIONING === 'true' ? ['current'] : undefined,
           showLastUpdateTime: true,
@@ -98,7 +101,6 @@ const config = {
         logo: {
           alt: 'Aruba Cloud',
           src: 'img/logo.svg',
-          href: 'next/intro',
         },
         items: [
           {

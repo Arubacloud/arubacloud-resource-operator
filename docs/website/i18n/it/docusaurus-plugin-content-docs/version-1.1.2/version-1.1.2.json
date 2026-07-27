@@ -1,0 +1,10 @@
+{
+  "version.label": {
+    "message": "1.1.2",
+    "description": "The label for version current"
+  },
+  "sidebar.operatorSidebar.category.CRDs": {
+    "message": "CRD",
+    "description": "The label for category CRDs in sidebar operatorSidebar"
+  }
+}

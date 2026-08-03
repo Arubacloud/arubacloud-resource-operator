@@ -158,7 +158,7 @@ const config = {
               },
               {
                 label: 'Changelog',
-                href: 'https://github.com/Arubacloud/arubacloud-resource-operator/releases',
+                to: '/changelog',
               },
             ],
           },

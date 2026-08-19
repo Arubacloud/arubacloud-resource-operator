@@ -41,6 +41,7 @@ func defaultCSSpec(projectName, vpcName, bootVolName, subnetName, sgName string)
 		KeyPairReference:        v1alpha1.ResourceReference{Name: csKPName, Namespace: "default"},
 		SubnetReferences:        []v1alpha1.ResourceReference{{Name: subnetName, Namespace: "default"}},
 		SecurityGroupReferences: []v1alpha1.ResourceReference{{Name: sgName, Namespace: "default"}},
+		UserData:                nil, // optional
 	}
 }
 

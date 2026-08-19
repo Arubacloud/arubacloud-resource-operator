@@ -43,6 +43,10 @@ type CloudServerSpec struct {
 	// +kubebuilder:validation:Required
 	VPCReference ResourceReference `json:"vpcReference"`
 
+	// UserData is the user data script to be executed on the cloud server (optional)
+	// +kubebuilder:validation:Optional
+	UserData *string `json:"userData,omitempty"`
+
 	// FlavorName specifies the flavor/size of the cloud server
 	// +kubebuilder:validation:Required
 	FlavorName string `json:"flavorName"`

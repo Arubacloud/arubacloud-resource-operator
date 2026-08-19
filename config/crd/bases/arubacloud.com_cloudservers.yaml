@@ -182,6 +182,10 @@ spec:
               tenant:
                 description: Tenant is the owning account/tenant of this cloud server
                 type: string
+              userData:
+                description: UserData is the user data script to be executed on the
+                  cloud server (optional)
+                type: string
               vpcReference:
                 description: VPCReference references the VPC where the cloud server
                   will be created

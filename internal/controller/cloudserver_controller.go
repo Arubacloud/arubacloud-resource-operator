@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
@@ -1611,6 +1612,11 @@ func (r *CloudServerReconciler) cmpCreate(ctx context.Context, kubeCS *v1alpha1.
 	}
 	if elasticIPID != "" {
 		server.WithElasticIP(aruba.URI(buildElasticIPURI(prjID, elasticIPID)))
+	}
+
+	if kubeCS.Spec.UserData != nil {
+		userData := base64.StdEncoding.EncodeToString([]byte(*kubeCS.Spec.UserData))
+		server.WithUserData(userData)
 	}
 
 	_, err := arubaClient.FromCompute().CloudServers().Create(ctx, server)

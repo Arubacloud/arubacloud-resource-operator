@@ -1614,7 +1614,7 @@ func (r *CloudServerReconciler) cmpCreate(ctx context.Context, kubeCS *v1alpha1.
 		server.WithElasticIP(aruba.URI(buildElasticIPURI(prjID, elasticIPID)))
 	}
 
-	if kubeCS.Spec.UserData != nil {
+	if kubeCS.Spec.UserData != nil && *kubeCS.Spec.UserData != "" {
 		userData := base64.StdEncoding.EncodeToString([]byte(*kubeCS.Spec.UserData))
 		server.WithUserData(userData)
 	}
@@ -1666,6 +1666,8 @@ func checkCSDeniedChanges(kubeCS *v1alpha1.CloudServer, cmpCS *aruba.CloudServer
 
 	// vpcPreset is immutable but has no comparable getter on the CloudServer wrapper;
 	// its enforcement is a CRD-level concern (webhook) and cannot be detected from CMP state.
+	// userData is likewise immutable and enforced by a CEL rule on CloudServerSpec: CMP
+	// never returns it, so there is nothing here to compare against.
 
 	return nil
 }

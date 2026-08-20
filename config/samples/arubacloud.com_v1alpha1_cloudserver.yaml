@@ -16,8 +16,6 @@ spec:
   flavorName: CSO4A8
   userData: |
     #cloud-config
-    package_update: true
-    package_upgrade: true
     write_files:
       - path: /tmp/test.txt
         content: |

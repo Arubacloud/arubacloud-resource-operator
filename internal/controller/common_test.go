@@ -2,6 +2,7 @@ package controller
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -37,7 +38,8 @@ type fakeCMP struct {
 
 	mu           sync.Mutex
 	collections  map[string][]map[string]any
-	getStatus    int // 0/200 = success; >=400 makes every list call fail
+	posts        map[string][]byte // last POST body per collection, for payload assertions
+	getStatus    int               // 0/200 = success; >=400 makes every list call fail
 	postStatus   int
 	putStatus    int
 	deleteStatus int
@@ -47,6 +49,7 @@ type fakeCMP struct {
 func newFakeCMP() *fakeCMP {
 	f := &fakeCMP{
 		collections:  map[string][]map[string]any{},
+		posts:        map[string][]byte{},
 		postStatus:   http.StatusCreated,
 		putStatus:    http.StatusOK,
 		deleteStatus: http.StatusNoContent,
@@ -62,6 +65,16 @@ func (f *fakeCMP) stage(collection string, items ...map[string]any) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.collections[collection] = append(f.collections[collection], items...)
+}
+
+// lastPost returns the decoded body of the most recent POST to a collection,
+// letting tests assert on what the operator actually put on the wire.
+func (f *fakeCMP) lastPost(collection string) map[string]any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var body map[string]any
+	ExpectWithOffset(1, json.Unmarshal(f.posts[collection], &body)).To(Succeed())
+	return body
 }
 
 func (f *fakeCMP) handle(w http.ResponseWriter, r *http.Request) {
@@ -82,6 +95,8 @@ func (f *fakeCMP) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"values": items, "total": len(items)})
 	case http.MethodPost:
+		body, _ := io.ReadAll(r.Body)
+		f.posts[lastPathSegment(r.URL.Path)] = body
 		f.writeCUD(w, f.postStatus)
 	case http.MethodPut:
 		f.writeCUD(w, f.putStatus)

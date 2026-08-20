@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"encoding/base64"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -41,7 +42,6 @@ func defaultCSSpec(projectName, vpcName, bootVolName, subnetName, sgName string)
 		KeyPairReference:        v1alpha1.ResourceReference{Name: csKPName, Namespace: "default"},
 		SubnetReferences:        []v1alpha1.ResourceReference{{Name: subnetName, Namespace: "default"}},
 		SecurityGroupReferences: []v1alpha1.ResourceReference{{Name: sgName, Namespace: "default"}},
-		UserData:                nil, // optional
 	}
 }
 
@@ -146,6 +146,74 @@ var _ = Describe("CloudServerReconciler", func() {
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), updated)).To(Succeed())
 		Expect(updated.Status.Phase).To(Equal(v1alpha1.ResourcePhaseCreating))
 		Expect(findCondition(updated.Status.Conditions, string(v1alpha1.ResourcePhaseCreating)).Reason).To(Equal(v1alpha1.ConditionReasonSynchronizing))
+	})
+
+	It("sends the cloud-init user data base64-encoded in the create payload", func() {
+		userData := "#cloud-config\nwrite_files:\n  - path: /tmp/test.txt\n    content: hello\n"
+		m := newCSReconcilerWithFake()
+		spec := defaultCSSpec(csPrjName, csVpcName, csVolName, csSubName, csSGName)
+		spec.UserData = &userData
+		cs = createTestCloudServer(ctx, "test-cs-userdata", spec)
+		setCSStatus(ctx, cs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, "", "", "", "", "", nil, nil, 0, time.Now())
+		m.stageDeps(csPrjID, csPrjName, csVpcID, csVpcName, csVolID, csVolName, csSubID, csSubName, csSGID, csSGName, csKPID)
+
+		_, err := m.r.HandleReconcile(ctx, cs)
+		Expect(err).To(Succeed())
+
+		Expect(m.f.lastPost("cloudServers")).To(HaveKeyWithValue("properties",
+			HaveKeyWithValue("userData", base64.StdEncoding.EncodeToString([]byte(userData)))))
+	})
+
+	It("omits user data from the create payload when it is empty", func() {
+		m := newCSReconcilerWithFake()
+		spec := defaultCSSpec(csPrjName, csVpcName, csVolName, csSubName, csSGName)
+		empty := ""
+		spec.UserData = &empty
+		cs = createTestCloudServer(ctx, "test-cs-userdata-empty", spec)
+		setCSStatus(ctx, cs, v1alpha1.ResourcePhaseCreating, v1alpha1.ConditionReasonShallSynchronize, "", "", "", "", "", nil, nil, 0, time.Now())
+		m.stageDeps(csPrjID, csPrjName, csVpcID, csVpcName, csVolID, csVolName, csSubID, csSubName, csSGID, csSGName, csKPID)
+
+		_, err := m.r.HandleReconcile(ctx, cs)
+		Expect(err).To(Succeed())
+
+		Expect(m.f.lastPost("cloudServers")["properties"]).NotTo(HaveKey("userData"))
+	})
+
+	It("rejects changing or clearing userData after creation, but allows unrelated edits", func() {
+		userData := "#cloud-config\nruncmd: [echo hi]\n"
+		spec := defaultCSSpec(csPrjName, csVpcName, csVolName, csSubName, csSGName)
+		spec.UserData = &userData
+		cs = createTestCloudServer(ctx, "test-cs-userdata-immutable", spec)
+
+		fetch := func() *v1alpha1.CloudServer {
+			c := &v1alpha1.CloudServer{}
+			ExpectWithOffset(1, k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), c)).To(Succeed())
+			return c
+		}
+
+		changed := fetch()
+		other := "#cloud-config\nruncmd: [echo bye]\n"
+		changed.Spec.UserData = &other
+		Expect(k8sClient.Update(ctx, changed)).To(MatchError(ContainSubstring("userData is immutable")))
+
+		cleared := fetch()
+		cleared.Spec.UserData = nil
+		Expect(k8sClient.Update(ctx, cleared)).To(MatchError(ContainSubstring("userData is immutable")))
+
+		// The rule must not block edits that leave userData alone.
+		retagged := fetch()
+		retagged.Spec.Tags = []string{"tag2"}
+		Expect(k8sClient.Update(ctx, retagged)).To(Succeed())
+	})
+
+	It("rejects adding userData to a cloud server created without it", func() {
+		cs = createTestCloudServer(ctx, "test-cs-userdata-added", defaultCSSpec(csPrjName, csVpcName, csVolName, csSubName, csSGName))
+
+		added := &v1alpha1.CloudServer{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cs), added)).To(Succeed())
+		userData := "#cloud-config\nruncmd: [echo late]\n"
+		added.Spec.UserData = &userData
+		Expect(k8sClient.Update(ctx, added)).To(MatchError(ContainSubstring("userData is immutable")))
 	})
 
 	It("transitions to Active+Synchronized when the CMP cloud server is running", func() {

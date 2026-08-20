@@ -25,6 +25,7 @@ Un CloudServer è un'istanza di macchina virtuale su Aruba Cloud. È la risorsa 
 | `zone` | string | Sì | `ITBG-1` | — | Zona di disponibilità. Deve corrispondere alla zona del volume di avvio. |
 | `flavorName` | string | Sì | — | — | Identificatore del flavor/dimensione dell'istanza Aruba Cloud (es. `CSO4A8` per 4 vCPU / 8 GB RAM) |
 | `vpcReference` | ResourceReference | Sì | — | — | Riferimento al [VPC](./VPC) per la connettività di rete |
+| `userData` | string | No | — | Immutabile | Dati cloud-init applicati al primo avvio. L'operatore li codifica in Base64 prima di inviarli ad Aruba Cloud — qui va scritto testo in chiaro. |
 | `subnetReferences` | []ResourceReference | Sì | — | Min elementi: 1 | Una o più [Subnet](./Subnet) a cui collegare il server |
 | `securityGroupReferences` | []ResourceReference | Sì | — | Min elementi: 1 | Uno o più [SecurityGroup](./SecurityGroup) che governano il traffico del server |
 | `keyPairReference` | ResourceReference | Sì | — | — | Riferimento al [KeyPair](./KeyPair) per l'accesso SSH |
@@ -72,7 +73,10 @@ Un CloudServer è un'istanza di macchina virtuale su Aruba Cloud. È la risorsa 
 - **Validazione incrociata**: L'operatore verifica che tutte le risorse referenziate condividano lo stesso `tenant` e `region`. Verifica anche che i `projectReference` e `vpcReference` di tutte le Subnet referenziate corrispondano ai propri riferimenti del CloudServer. I mismatch causano `Failed+IntentionValidationFailed`.
 - **Coerenza della zona**: La `zone` del CloudServer deve corrispondere alla `zone` del BlockStorage di avvio.
 - **Comportamento all'eliminazione**: I CloudServer non hanno figli. Quando elimini un CloudServer, l'operatore chiama l'API Aruba Cloud per spegnerlo ed eliminarlo, poi rimuove il finalizer. Le risorse referenziate (volumi, coppie di chiavi, ecc.) **non** vengono eliminate automaticamente.
-- **Comportamento all'aggiornamento**: `tags` può essere aggiornato. La modifica delle risorse referenziate (aggiunta/rimozione di subnet, cambio del flavor) innesca un ciclo di aggiornamento. Alcuni aggiornamenti potrebbero non essere supportati dall'API Aruba Cloud — in tal caso, la risorsa entra brevemente in `Updating+Failed` e lo spec viene ripristinato per corrispondere allo stato cloud.
+- **Comportamento all'aggiornamento**: `tags` e `region` vengono confrontati con lo stato cloud e innescano un ciclo di aggiornamento quando differiscono. Alcuni aggiornamenti potrebbero non essere supportati dall'API Aruba Cloud — in tal caso, la risorsa entra brevemente in `Updating+Failed` e lo spec viene ripristinato per corrispondere allo stato cloud.
+- **Campi immutabili**: `zone`, `flavorName` e `userData` non possono essere modificati dopo la creazione.
+  - `zone` e `flavorName` vengono confrontati con lo stato cloud; modificando uno dei due la risorsa resta in stato di aggiornamento rifiutato finché non si ripristina il valore originale.
+  - `userData` viene rifiutato dall'API server in fase di admission — l'aggiornamento è respinto direttamente, quindi un `kubectl apply` che lo modifica fallisce con `userData is immutable`. cloud-init rilegge i dati utente a ogni avvio, perciò in linea di principio un nuovo valore potrebbe essere applicato al riavvio successivo, ma Aruba Cloud non restituisce `userData` in lettura e non offre alcun modo di modificarlo dopo la creazione. Il rifiuto è deliberato: l'alternativa sarebbe accettare una modifica che non raggiungerebbe mai il server. Per usare dati utente diversi, elimina il CloudServer e ricrealo.
 
 ## Esempi
 
@@ -89,6 +93,13 @@ spec:
   region: ITBG-Bergamo
   zone: ITBG-1
   flavorName: "CSO4A8"
+  userData: |
+    #cloud-config
+    package_update: true
+    packages:
+      - nginx
+    runcmd:
+      - [ systemctl, enable, --now, nginx ]
   projectReference:
     name: my-project
     namespace: default

@@ -239,6 +239,15 @@ spec:
   region: ITBG-Bergamo
   zone: ITBG-1
   flavorName: "CSO4A8"
+  # Optional cloud-init user data, applied at first boot. Plain text — the
+  # operator Base64-encodes it. Immutable once the server exists.
+  userData: |
+    #cloud-config
+    package_update: true
+    packages:
+      - nginx
+    runcmd:
+      - [ systemctl, enable, --now, nginx ]
   projectReference:
     name: my-project
     namespace: default

@@ -214,6 +214,11 @@ func (in *CloudServerSpec) DeepCopyInto(out *CloudServerSpec) {
 		copy(*out, *in)
 	}
 	out.VPCReference = in.VPCReference
+	if in.UserData != nil {
+		in, out := &in.UserData, &out.UserData
+		*out = new(string)
+		**out = **in
+	}
 	if in.ElasticIPReference != nil {
 		in, out := &in.ElasticIPReference, &out.ElasticIPReference
 		*out = new(ResourceReference)

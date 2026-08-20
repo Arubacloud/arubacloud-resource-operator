@@ -25,6 +25,7 @@ A CloudServer is a virtual machine instance on Aruba Cloud. It is the most refer
 | `zone` | string | Yes | `ITBG-1` | — | Availability zone. Must match the boot volume's zone. |
 | `flavorName` | string | Yes | — | — | Aruba Cloud instance flavor/size identifier (e.g., `CSO4A8` for 4 vCPU / 8 GB RAM) |
 | `vpcReference` | ResourceReference | Yes | — | — | Reference to the [VPC](./VPC) for network connectivity |
+| `userData` | string | No | — | Immutable | cloud-init user data applied at first boot. Base64-encoded by the operator before it is sent to Aruba Cloud — write plain text here. |
 | `subnetReferences` | []ResourceReference | Yes | — | Min items: 1 | One or more [Subnets](./Subnet) to attach the server to |
 | `securityGroupReferences` | []ResourceReference | Yes | — | Min items: 1 | One or more [SecurityGroups](./SecurityGroup) governing the server's traffic |
 | `keyPairReference` | ResourceReference | Yes | — | — | Reference to the [KeyPair](./KeyPair) for SSH access |
@@ -72,7 +73,10 @@ A CloudServer is a virtual machine instance on Aruba Cloud. It is the most refer
 - **Cross-validation**: The operator validates that all referenced resources share the same `tenant` and `region`. It also validates that all referenced Subnets' `projectReference` and `vpcReference` match the CloudServer's own references. Mismatches cause `Failed+IntentionValidationFailed`.
 - **Zone consistency**: The `zone` of the CloudServer must match the `zone` of the boot BlockStorage.
 - **Deletion behaviour**: CloudServers have no children. When you delete a CloudServer, the operator calls the Aruba Cloud API to power it down and delete it, then removes the finalizer. Referenced resources (volumes, key pairs, etc.) are **not** deleted automatically.
-- **Update behaviour**: `tags` can be updated. Modifying referenced resources (adding/removing subnets, changing flavor) triggers an update cycle. Some updates may not be supported by the Aruba Cloud API — in that case, the resource enters `Updating+Failed` briefly and the spec is rolled back to match the cloud state.
+- **Update behaviour**: `tags` and `region` are compared against the cloud state and trigger an update cycle when they differ. Some updates may not be supported by the Aruba Cloud API — in that case, the resource enters `Updating+Failed` briefly and the spec is rolled back to match the cloud state.
+- **Immutable fields**: `zone`, `flavorName`, and `userData` cannot be changed after creation.
+  - `zone` and `flavorName` are checked against the cloud state; editing either leaves the resource in an update-rejected state until you restore the original value.
+  - `userData` is rejected by the API server at admission — the update is refused outright, so a `kubectl apply` that changes it fails with `userData is immutable`. cloud-init re-reads user data on every boot, so a new value could in principle apply on the next restart, but Aruba Cloud does not return `userData` on read and offers no way to change it after creation. Rejecting the edit is deliberate: the alternative is accepting a change that would never reach the server. To use different user data, delete the CloudServer and create it again.
 
 ## Example
 
@@ -89,6 +93,13 @@ spec:
   region: ITBG-Bergamo
   zone: ITBG-1
   flavorName: "CSO4A8"
+  userData: |
+    #cloud-config
+    package_update: true
+    packages:
+      - nginx
+    runcmd:
+      - [ systemctl, enable, --now, nginx ]
   projectReference:
     name: my-project
     namespace: default

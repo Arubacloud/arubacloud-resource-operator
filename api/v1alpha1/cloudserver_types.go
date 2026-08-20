@@ -21,6 +21,10 @@ import (
 )
 
 // CloudServerSpec defines the desired state of CloudServer.
+// The userData rule lives here rather than on the field itself: a transition rule
+// on an optional field is skipped when the old value is absent, which would let
+// userData be added to an already-created server and silently do nothing.
+// +kubebuilder:validation:XValidation:rule="has(self.userData) == has(oldSelf.userData) && (!has(self.userData) || self.userData == oldSelf.userData)",message="userData is immutable: cloud-init user data can only be set at creation time"
 type CloudServerSpec struct {
 	// Tenant is the owning account/tenant of this cloud server
 	Tenant string `json:"tenant,omitempty"`
@@ -42,6 +46,17 @@ type CloudServerSpec struct {
 	// VPCReference references the VPC where the cloud server will be created
 	// +kubebuilder:validation:Required
 	VPCReference ResourceReference `json:"vpcReference"`
+
+	// UserData is the cloud-init user data applied to the cloud server (optional).
+	//
+	// Immutable. Cloud-init re-reads user data on every boot, so a changed value could
+	// in principle take effect on the next restart for per-boot modules. The operator
+	// cannot offer that today: CMP does not return userData on read (there is no such
+	// field on the cloud server response) and the SDK wrapper never hydrates it, so the
+	// operator can neither detect drift nor send a new value on update — an edit would
+	// be silently dropped. Rejected at admission until the API supports it.
+	// +kubebuilder:validation:Optional
+	UserData *string `json:"userData,omitempty"`
 
 	// FlavorName specifies the flavor/size of the cloud server
 	// +kubebuilder:validation:Required

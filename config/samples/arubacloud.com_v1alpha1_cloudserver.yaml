@@ -14,6 +14,14 @@ spec:
     name: __NAME__
     namespace: __NAMESPACE__
   flavorName: CSO4A8
+  userData: |
+    #cloud-config
+    write_files:
+      - path: /tmp/test.txt
+        content: |
+          This server was initialized with cloud-init.
+        owner: root:root
+        permissions: '0644'
   subnetReferences:
     - name: __NAME__
       namespace: __NAMESPACE__

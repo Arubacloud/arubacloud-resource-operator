@@ -23,8 +23,6 @@ import (
 	"net/http"
 
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/Arubacloud/sdk-go/pkg/aruba"
@@ -613,41 +611,6 @@ func kubeProjectNeedsUpdate(kubeProj *v1alpha1.Project, cmpProj *aruba.Project) 
 func (r *ProjectReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.Project{}).
-		Watches(&v1alpha1.VPC{}, handler.EnqueueRequestsFromMapFunc(
-			childToParentMapFunc(func(o client.Object) *v1alpha1.ResourceReference {
-				if v, ok := o.(*v1alpha1.VPC); ok {
-					return &v.Spec.ProjectReference
-				}
-				return nil
-			}))).
-		Watches(&v1alpha1.BlockStorage{}, handler.EnqueueRequestsFromMapFunc(
-			childToParentMapFunc(func(o client.Object) *v1alpha1.ResourceReference {
-				if v, ok := o.(*v1alpha1.BlockStorage); ok {
-					return &v.Spec.ProjectReference
-				}
-				return nil
-			}))).
-		Watches(&v1alpha1.KeyPair{}, handler.EnqueueRequestsFromMapFunc(
-			childToParentMapFunc(func(o client.Object) *v1alpha1.ResourceReference {
-				if v, ok := o.(*v1alpha1.KeyPair); ok {
-					return &v.Spec.ProjectReference
-				}
-				return nil
-			}))).
-		Watches(&v1alpha1.ElasticIP{}, handler.EnqueueRequestsFromMapFunc(
-			childToParentMapFunc(func(o client.Object) *v1alpha1.ResourceReference {
-				if v, ok := o.(*v1alpha1.ElasticIP); ok {
-					return &v.Spec.ProjectReference
-				}
-				return nil
-			}))).
-		Watches(&v1alpha1.CloudServer{}, handler.EnqueueRequestsFromMapFunc(
-			childToParentMapFunc(func(o client.Object) *v1alpha1.ResourceReference {
-				if v, ok := o.(*v1alpha1.CloudServer); ok {
-					return &v.Spec.ProjectReference
-				}
-				return nil
-			}))).
 		Named("project").
 		Complete(r)
 }

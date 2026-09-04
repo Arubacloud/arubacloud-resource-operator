@@ -153,7 +153,6 @@ Ownership helpers in `internal/controller/owner_reference.go` follow the "no pre
 | `ownerLabelKey` | Derives the label key from the owner's GVK |
 | `hasOwnedChildren` | Cluster-wide label query — used in WaitingChildrenDeletion condition |
 | `deleteOwnedChildren` | Cluster-wide label query + delete — used in WaitingChildrenDeletion action |
-| `childToParentMapFunc` | Returns a `handler.MapFunc` for `Watches()` in parent controllers |
 
 ## Context usage
 

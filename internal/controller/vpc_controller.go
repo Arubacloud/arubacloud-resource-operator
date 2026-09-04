@@ -24,8 +24,6 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/Arubacloud/sdk-go/pkg/aruba"
@@ -858,20 +856,6 @@ func kubeVpcNeedsUpdate(kubeVpc *v1alpha1.VPC, cmpVpc *aruba.VPC) bool {
 func (r *VPCReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.VPC{}).
-		Watches(&v1alpha1.Subnet{}, handler.EnqueueRequestsFromMapFunc(
-			childToParentMapFunc(func(o client.Object) *v1alpha1.ResourceReference {
-				if v, ok := o.(*v1alpha1.Subnet); ok {
-					return &v.Spec.VPCReference
-				}
-				return nil
-			}))).
-		Watches(&v1alpha1.SecurityGroup{}, handler.EnqueueRequestsFromMapFunc(
-			childToParentMapFunc(func(o client.Object) *v1alpha1.ResourceReference {
-				if v, ok := o.(*v1alpha1.SecurityGroup); ok {
-					return &v.Spec.VPCReference
-				}
-				return nil
-			}))).
 		Named("vpc").
 		Complete(r)
 }

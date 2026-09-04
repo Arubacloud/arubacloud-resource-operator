@@ -52,7 +52,7 @@ Key elements of the `Reconciler` struct:
 One file per concern:
 
 - `<resource>_controller.go` — embeds `*reconciler.Reconciler`, wires a `reconciler.TransitionSet` and two `reconciler.ValidationSet` instances (`ivs` for K8s-only intention validation at Stage 4 and `vs` for CMP-aware drift validation at Stage 7), and implements `Object()`, `Finalizer()`, `HandleReconcile()`.
-- `owner_reference.go` — custom two-layer ownership system (annotation + label, replacing standard K8s OwnerReferences): `resolveOwnerObject`, `ensureOwnerReference`, `setArubaControllerReference`, `parseArubaOwnerReferences`, `marshalArubaOwnerReferences`, `hasArubaOwnerReference`, `ownerLabelKey`, `hasOwnedChildren`, `deleteOwnedChildren`, `childToParentMapFunc`. Used by all child controllers in `HandleReconcile` (to set ownership metadata) and by parent controllers in the `WaitingChildrenDeletion` transition and `SetupWithManager`.
+- `owner_reference.go` — custom two-layer ownership system (annotation + label, replacing standard K8s OwnerReferences): `resolveOwnerObject`, `ensureOwnerReference`, `setArubaControllerReference`, `parseArubaOwnerReferences`, `marshalArubaOwnerReferences`, `hasArubaOwnerReference`, `ownerLabelKey`, `hasOwnedChildren`, `deleteOwnedChildren`. Used by all child controllers in `HandleReconcile` (to set ownership metadata) and by parent controllers in the `WaitingChildrenDeletion` transition.
 - `cmp_name_filter.go` — helper for filtering CMP list results by name.
 
 ### `internal/config/`

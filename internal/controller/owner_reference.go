@@ -12,9 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/Arubacloud/arubacloud-resource-operator/api/v1alpha1"
 )
@@ -277,25 +275,4 @@ func deleteOwnedChildren(
 	}
 
 	return nil
-}
-
-// childToParentMapFunc returns a handler.MapFunc that enqueues the parent resource
-// by reading the child's spec reference via extractRef. Works for both same-namespace
-// and cross-namespace parent-child relationships, replacing Owns()-based watches.
-func childToParentMapFunc(
-	extractRef func(client.Object) *v1alpha1.ResourceReference,
-) handler.MapFunc {
-	return func(ctx context.Context, obj client.Object) []reconcile.Request {
-		ref := extractRef(obj)
-		if ref == nil {
-			return nil
-		}
-		ns := ref.Namespace
-		if ns == "" {
-			ns = obj.GetNamespace()
-		}
-		return []reconcile.Request{{
-			NamespacedName: types.NamespacedName{Name: ref.Name, Namespace: ns},
-		}}
-	}
 }

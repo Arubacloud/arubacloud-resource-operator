@@ -25,7 +25,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/Arubacloud/sdk-go/pkg/aruba"
@@ -982,13 +981,6 @@ func kubeSecurityGroupNeedsUpdate(kubeSG *v1alpha1.SecurityGroup, cmpSG *aruba.S
 func (r *SecurityGroupReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.SecurityGroup{}).
-		Watches(&v1alpha1.SecurityRule{}, handler.EnqueueRequestsFromMapFunc(
-			childToParentMapFunc(func(o client.Object) *v1alpha1.ResourceReference {
-				if v, ok := o.(*v1alpha1.SecurityRule); ok {
-					return &v.Spec.SecurityGroupReference
-				}
-				return nil
-			}))).
 		Named("securitygroup").
 		Complete(r)
 }

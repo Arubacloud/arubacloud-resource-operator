@@ -273,9 +273,15 @@ The transition has two responsibilities:
 1. **`kAction` — explicitly delete owned children**: calls `deleteOwnedChildren` (`owner_reference.go`), which does a cluster-wide label-selector query and issues `c.Delete()` on each child not yet being deleted. Children have finalizers, so the K8s API sets their `DeletionTimestamp` and they enter their own deletion flow.
 2. **Block CMP deletion**: after kicking off child deletion, requeues with `LongRequeueAfter`. The `hasOwnedChildren` check (also cluster-wide label query) keeps this transition matched until all children are fully gone (finalizers removed, evicted from etcd).
 
-### Child watches
+### No child watches
 
-Parent controllers register `Watches()` in `SetupWithManager` for each child type via `childToParentMapFunc`. When a child event fires, `childToParentMapFunc` reads the child's spec reference field (e.g. `Spec.ProjectReference`) to produce the parent's `reconcile.Request`. This works for both same-namespace and cross-namespace children, replacing the `Owns()` mechanism which relied on OwnerReferences.
+Parent controllers deliberately do **not** watch their children. `SetupWithManager` registers only `For(&Parent{})`.
+
+Children are only ever consulted from `WaitingChildrenDeletion`, i.e. during deletion, and that transition re-drives itself with `LongRequeueAfter` (20s) for as long as children remain. A watch would therefore only shorten the gap between the last child disappearing and the parent noticing — worth little, since children take minutes to delete CMP-side — while costing one parent reconcile (and one CMP `List`) for *every* child event, including the frequent status patches children emit while polling the CMP.
+
+Note this does not reduce informer or cache load: `hasOwnedChildren` / `deleteOwnedChildren` read child types through the manager's cache-backed client, and each child type has its own controller anyway, so the shared informers exist regardless. The `watch` RBAC verb on child resources is still required.
+
+Trade-off: cascade deletion can take up to 20s longer per level of the hierarchy.
 
 ### Deletion flow with cascade
 
@@ -284,7 +290,7 @@ When a parent is deleted:
 1. K8s sets `DeletionTimestamp` on the parent → parent's `ShouldBeDeleted` marks `Deleting+ShallSynchronize`
 2. `WaitingChildrenDeletion` fires → `kAction` calls `c.Delete()` on each owned child not yet being deleted (found via cluster-wide label query)
 3. Children receive `DeletionTimestamp` (because they have finalizers) → their controllers run the standard deletion flow (CMP delete → finalizer removed → evicted from etcd)
-4. `Watches()` triggers a parent reconciliation as each child disappears; `WaitingChildrenDeletion` keeps matching until all children are gone
+4. The parent re-reconciles every `LongRequeueAfter` (20s); `WaitingChildrenDeletion` keeps matching until all children are gone
 5. Once no owned children remain, `WaitingChildrenDeletion` no longer matches → `ShouldBeDeletedOnCMP` fires → parent deleted from CMP → finalizer removed → parent evicted from etcd
 
 See `ai/KNOWN_ISSUES.md` for edge cases (concurrent sibling deletion order, stuck children, envtest limitations).

@@ -211,19 +211,12 @@ Work through each sub-step in order. Do not proceed to the next sub-step until t
     6. **fetchCMPDependencies**: resolve CMP parent IDs + fetch primary CMP resource
     7. **vs.Run** (CMP-aware): gated by `!isDeleting && kubeBdl != nil && cmpObj != nil`; set `Failed+ValidationFailed` on failure; no recovery block
     8. **ts.Run**: `return r.ts.Run(ctx, kubeObj, cmpObj)`
-- [ ] **Parent controllers only** — `SetupWithManager`: register `Watches()` for each owned child type using `childToParentMapFunc`. Do **not** use `Owns()` — this operator does not set K8s OwnerReferences, so `Owns()` would never trigger. Add `delete` verb to RBAC markers for each child resource:
+- [ ] **Parent controllers only** — `SetupWithManager`: register `For()` only. Do **not** watch child types: `Owns()` would never trigger (this operator does not set K8s OwnerReferences), and explicit child `Watches()` were removed because every child status patch woke the parent for no reason — cascade deletion self-drives on the `WaitingChildrenDeletion` requeue instead (see `ai/ARCHITECTURE.md` § "No child watches"). Keep `watch` in the RBAC markers — the cache-backed `List` still needs it — and add `delete` for each child resource:
   ```go
   // +kubebuilder:rbac:groups=arubacloud.com,resources=<children>,verbs=get;list;watch;delete
   func (r *<Resource>Reconciler) SetupWithManager(mgr ctrl.Manager) error {
       return ctrl.NewControllerManagedBy(mgr).
           For(&v1alpha1.<Resource>{}).
-          Watches(&v1alpha1.<Child>{}, handler.EnqueueRequestsFromMapFunc(
-              childToParentMapFunc(func(o client.Object) *v1alpha1.ResourceReference {
-                  if v, ok := o.(*v1alpha1.<Child>); ok {
-                      return &v.Spec.<Resource>Reference
-                  }
-                  return nil
-              }))).
           Named("<resource>").
           Complete(r)
   }

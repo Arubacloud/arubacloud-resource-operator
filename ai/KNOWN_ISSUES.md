@@ -60,7 +60,7 @@ Note: in production this is less of an issue than originally thought, because th
 1. **`arubacloud.com/owner-references` annotation** — JSON `[]ArubaOwnerReference` storing the full owner identity including `Namespace`. Source of truth. Set by `ensureOwnerReference` via `setArubaControllerReference`.
 2. **`arubacloud.com/owner-<kind>` label** — UID-valued label for efficient cluster-wide label-selector queries in `hasOwnedChildren` / `deleteOwnedChildren`.
 
-`Owns()` watches in `SetupWithManager` have been replaced by `Watches()` with `childToParentMapFunc`, which reads the parent reference from the child's spec and works for both same and cross-namespace relationships.
+`Owns()` watches in `SetupWithManager` were dropped entirely: the parent finds its children with a cluster-wide label query and re-drives itself on the `WaitingChildrenDeletion` 20s requeue, so no owner-based watch is needed. See ARCHITECTURE.md § "No child watches".
 
 Cross-namespace children participate fully in cascade deletion. No special cases.
 
